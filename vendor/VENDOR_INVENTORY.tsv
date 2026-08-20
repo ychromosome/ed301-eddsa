@@ -1,0 +1,33 @@
+name	version	license	lock_checksum	vendor_directory
+autocfg	1.5.1	Apache-2.0 OR MIT	f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53	autocfg
+block-buffer	0.12.1	MIT OR Apache-2.0	d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa	block-buffer
+cc	1.2.66	MIT OR Apache-2.0	f5d6cac793997bd970000024b2934968efe83b382de4fdcf4fcb46b6ee4ad996	cc
+cfg-if	1.0.4	MIT OR Apache-2.0	9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801	cfg-if
+cmov	0.5.4	Apache-2.0 OR MIT	0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a	cmov
+cpubits	0.1.1	MIT OR Apache-2.0	15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae	cpubits
+cpufeatures	0.3.0	MIT OR Apache-2.0	8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201	cpufeatures
+crypto-bigint	0.7.5	Apache-2.0 OR MIT	1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271	crypto-bigint
+crypto-common	0.2.2	MIT OR Apache-2.0	ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453	crypto-common
+ctutils	0.4.2	Apache-2.0 OR MIT	7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e	ctutils
+digest	0.11.3	MIT OR Apache-2.0	f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2	digest
+find-msvc-tools	0.1.10	MIT OR Apache-2.0	26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de	find-msvc-tools
+hybrid-array	0.4.13	MIT OR Apache-2.0	818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c	hybrid-array
+itoa	1.0.18	MIT OR Apache-2.0	8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682	itoa
+keccak	0.2.0	Apache-2.0 OR MIT	9e24a010dd405bd7ed803e5253182815b41bf2e6a80cc3bfc066658e03a198aa	keccak
+libc	0.2.189	MIT OR Apache-2.0	3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2	libc
+memchr	2.8.3	Unlicense OR MIT	cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98	memchr
+num-traits	0.2.19	MIT OR Apache-2.0	071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841	num-traits
+proc-macro2	1.0.107	MIT OR Apache-2.0	985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9	proc-macro2
+quote	1.0.47	MIT OR Apache-2.0	1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001	quote
+serde	1.0.229	MIT OR Apache-2.0	4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba	serde
+serde_core	1.0.229	MIT OR Apache-2.0	67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48	serde_core
+serde_derive	1.0.229	MIT OR Apache-2.0	e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348	serde_derive
+serde_json	1.0.150	MIT OR Apache-2.0	e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9	serde_json
+shake	0.1.0	MIT OR Apache-2.0	09057cb2149ad4cbd2da1e26b351f9a4c354219421229c69c3063e6f61947c4a	shake
+shlex	2.0.1	MIT OR Apache-2.0	f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba	shlex
+sponge-cursor	0.1.0	MIT OR Apache-2.0	3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620	sponge-cursor
+syn	3.0.3	MIT OR Apache-2.0	53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3	syn
+typenum	1.20.1	MIT OR Apache-2.0	b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20	typenum
+unicode-ident	1.0.24	(MIT OR Apache-2.0) AND Unicode-3.0	e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75	unicode-ident
+zeroize	1.9.0	Apache-2.0 OR MIT	e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e	zeroize
+zmij	1.0.23	MIT	29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b	zmij

@@ -1,0 +1,24 @@
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "ed301-eddsa-downstream-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ed301-eddsa = { path = "../../crates/ed301-eddsa" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+overflow-checks = true
+
+# Cargo profiles are not transitive. Every top-level release workspace which
+# consumes ed301-eddsa must repeat this package override and recheck codegen.
+[profile.release.package."crypto-bigint:0.7.5"]
+overflow-checks = false

@@ -1,0 +1,152 @@
+{
+  "schema": "ED301-parameter-set-v1",
+  "status": "technically-audited-not-production-standardized",
+  "derivation": {
+    "fixed_symbolic_values": {
+      "301": "d and field bit length",
+      "99": "pseudo-Mersenne subtraction exponent",
+      "947": "field constant and search offset"
+    },
+    "field_formula": "p = 2^301 - 2^99 + 947",
+    "edwards_d": "301",
+    "edwards_a_rule": "s = 947 + c; a = s^2 mod p; choose the smallest c >= 0 satisfying the published group-order and security predicate",
+    "first_passing_counter": "44730",
+    "s": "45677",
+    "a": "2086388329",
+    "contiguous_search_checked_through": "50687"
+  },
+  "field": {
+    "p_decimal": "4074071952668972172536891376818756322102936787331872501272280264883462485411972664015193011",
+    "p_hex": "1ffffffffffffffffffffffffffffffffffffffffffffffffff80000000000000000000003b3",
+    "bit_length": 301,
+    "p_mod_4": 3,
+    "p_mod_8": 3,
+    "formal_primality_proof": "ECPP certificate plus independent certificate verification"
+  },
+  "edwards": {
+    "equation": "a*x^2 + y^2 = 1 + d*x^2*y^2 over F_p",
+    "a_decimal": "2086388329",
+    "a_hex": "7c5bc269",
+    "d_decimal": "301",
+    "d_hex": "12d",
+    "a_legendre": 1,
+    "d_legendre": -1,
+    "addition_complete": true,
+    "identity": {
+      "x": "0",
+      "y": "1"
+    },
+    "order_2_point": {
+      "x": "0",
+      "y": "4074071952668972172536891376818756322102936787331872501272280264883462485411972664015193010"
+    },
+    "order_4_point": {
+      "x": "2519704285809016876637414484207147275421064523548512340148037688179123305227756371005740363",
+      "y": "0",
+      "derivation": "x = 1/45677 mod p"
+    }
+  },
+  "group": {
+    "order_N_decimal": "4074071952668972172536891376818756322102936789371269161834491587034136893877719336157337612",
+    "order_N_hex": "200000000000000000000000000000000000005b7320224a02611fed28c4980b8e8742fa580c",
+    "factorization": "4 * q",
+    "cofactor_h": 4,
+    "q_decimal": "1018517988167243043134222844204689080525734197342817290458622896758534223469429834039334403",
+    "q_hex": "800000000000000000000000000000000000016dcc80892809847fb4a312602e3a1d0be9603",
+    "q_bit_length": 300,
+    "q_log2": "299.0000000000000000000000000000000000000000000007221834770667529256710206396096680099336041538274653",
+    "q_formally_prime": true,
+    "abstract_group_cyclic": true,
+    "frobenius_trace": "-2039396660562211322150674408465746672142144600",
+    "embedding_degree": "1018517988167243043134222844204689080525734197342817290458622896758534223469429834039334402",
+    "embedding_degree_relation": "q - 1",
+    "standard_pollard_rho_log2_operations": "149.8257480647361593990216396475540036675092384637426125032367707205795618015971047244469344733186597",
+    "negation_optimized_pollard_rho_log2_operations": "149.3257480647361593990216396475540036675092384637426125032367707205795618015971047244469344733186597"
+  },
+  "twist": {
+    "non_square_z": "2",
+    "weierstrass_equation": "Y^2 = X^3 + (2*A*B)*X^2 + (4*B^2)*X over F_p",
+    "weierstrass_coefficients": [
+      "0",
+      "2233619512869490907631861401184448678229596874716216742957009632374356945814110577661827333",
+      "0",
+      "3775868568901820659765009875903393853235450873136189485348265599950038130552590587178562472",
+      "0"
+    ],
+    "order_decimal": "4074071952668972172536891376818756322102936785292475840710068942732788076946225991873048412",
+    "order_hex": "1fffffffffffffffffffffffffffffffffffffa48cdfddb5fd8ee012d73b67f47178bd05af5c",
+    "factorization": "4 * q_twist",
+    "cofactor": 4,
+    "q_twist_decimal": "1018517988167243043134222844204689080525734196323118960177517235683197019236556497968262103",
+    "q_twist_hex": "7ffffffffffffffffffffffffffffffffffffe92337f76d7f63b804b5ced9fd1c5e2f416bd7",
+    "q_twist_bit_length": 299,
+    "q_twist_log2": "298.9999999999999999999999999999999999999999999992778165229332466254333153230641412353572580433386901",
+    "q_twist_formally_prime": true,
+    "abstract_group_cyclic": true,
+    "frobenius_trace": "2039396660562211322150674408465746672142144600",
+    "embedding_degree": "1018517988167243043134222844204689080525734196323118960177517235683197019236556497968262102",
+    "embedding_degree_relation": "q_twist - 1",
+    "standard_pollard_rho_log2_operations": "149.8257480647361593990216396475540036675092384630204290261700175704607091433243413371587614180742721",
+    "negation_optimized_pollard_rho_log2_operations": "149.3257480647361593990216396475540036675092384630204290261700175704607091433243413371587614180742721"
+  },
+  "montgomery": {
+    "equation": "B*v^2 = u^3 + A*u^2 + u over F_p",
+    "A_decimal": "1337125101468798294423667083008487580371440947467333579746761624815927501631542793281919359",
+    "A_hex": "a80a4d8ae8c4deeae7d73707f20e97aa05c8b48895457b5c73233513cbc27d21510191ad97f",
+    "B_decimal": "2102386304867639485174889802292078795702081870378430469358638547115457185184343208357597462",
+    "B_hex": "108367753cf71c534a92b3d6b306e9cfedd2616b675dd5c437ed96b56d10c8d99334c8cd1116",
+    "A24_convention": "minus",
+    "A24_minus_decimal": "1352799263534442616740139614956810975618594433699801520254760472424847496760878864324278092",
+    "A24_minus_hex": "aa029362ba3137bab9f5cdc1fc83a5ea81722d2225515ed71ca8cd44f2f09f485440646b74c",
+    "A24_plus_decimal": "1352799263534442616740139614956810975618594433699801520254760472424847496760878864324278093",
+    "A24_plus_hex": "aa029362ba3137bab9f5cdc1fc83a5ea81722d2225515ed71ca8cd44f2f09f485440646b74d",
+    "ladder_doubling_formula": "z_2 = E * (AA + A24_minus * E)"
+  },
+  "weierstrass": {
+    "equation": "Y^2 = X^3 + (A*B)*X^2 + B^2*X over F_p",
+    "coefficients": [
+      "0",
+      "3153845732769231540084376389001602500166266831024044622114644948628909715613041620838510172",
+      "0",
+      "943967142225455164941252468975848463308862718284047371337066399987509532638147646794640618",
+      "0"
+    ],
+    "j_invariant": "3318721210061579742884597494500760000843802228441518889012274657523963748189585376924976265",
+    "supersingular": false,
+    "anomalous": false,
+    "frobenius_discriminant": "-12137149071563589304614945125775576912493244030482643957703903238011574008842143168751612044",
+    "fundamental_cm_discriminant": "-3034287267890897326153736281443894228123311007620660989425975809502893502210535792187903011",
+    "frobenius_conductor": "2",
+    "endomorphism_ring_conductor_status": "inferred as 2 from the rational 2-isogeny volcano; conservative security analysis also covers conductor 1"
+  },
+  "basepoint": {
+    "derivation_dst_ascii": "ED301-BASEPOINT-DERIVATION-v1",
+    "counter_encoding": "uint32 big endian",
+    "first_counter": 0,
+    "xof": "SHAKE256",
+    "xof_output_bytes": 38,
+    "xof_output_hex": "72396c2c44bea17a02bb6fee38ac72c27fc530402744a02118c7ede8fac7263a7b32de628d1a",
+    "candidate_rule": "clear bits 301..303, interpret little endian as y, reject y >= p or non-point, choose x with LSB 0, then G = [4]P and reject identity",
+    "G_edwards_x_decimal": "114483960210649758260691970228447544333115946824833551736797985468026643833345600929055",
+    "G_edwards_y_decimal": "3123599847077067352547410063473606051762622289826321814465731066121453938271612909425522539",
+    "G_compressed_edwards_hex": "6bf73f755a0c80653ce83fcf6d6ff7d7f347b1929224ac67552273419e6cf2c8a88a02d38898",
+    "G_montgomery_u_decimal": "1067917942141295978366266158278333061632895636270240461974100298644709548352069314007836251",
+    "G_montgomery_v_decimal": "440719678915870457116701635146449947572460444481575851594677144469352806862244984556749020",
+    "G_montgomery_u_little_endian_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+    "G_montgomery_v_little_endian_hex": "dc00b693eb63270bfe7c60832b34cc2334f414e477483ced7ccc9ebd595d7f8f5828fe2e7603",
+    "exact_order": "q"
+  },
+  "encoding": {
+    "field_bytes": 38,
+    "field_byte_order": "little",
+    "field_reserved_bits": [301, 302, 303],
+    "point_bytes": 38,
+    "point_y_bits": "0..300",
+    "point_reserved_bits": [301, 302],
+    "point_x_sign_bit": 303,
+    "point_sign_definition": "least significant bit of the canonical x representative",
+    "scalar_bytes": 38,
+    "scalar_byte_order": "little",
+    "signature_scalar_range": "0 <= S < q"
+  }
+}
