@@ -1,8 +1,12 @@
 /target/
+/provider/target/
+/provider-tests/vectors.h
 /integration/downstream-workspace/target/
 /secret-taint/target/
 /secret-taint/valgrind-client/target/
 *.log
 *.profraw
 *.profdata
+*.pyc
+__pycache__/
 .DS_Store

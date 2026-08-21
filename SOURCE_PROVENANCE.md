@@ -46,10 +46,34 @@ constant-schedule Montgomery exponentiation supplied by the same pinned
 `crypto-bigint 0.7.5` dependency; the project-specific 76-byte scalar reducer
 remains explicit.
 
-The TempGPT bundle includes the commit-exact origin snapshot so these claims
-can be checked without access to this host repository.
+The Git blob identifiers and SHA-256 values above preserve the exact origin
+mapping without making the historical repository part of this source tree.
 
 ## Freeze boundary
 
-This directory is an uncommitted, manifest-bound source freeze. It does not
-claim a new Git commit identity. Bundle manifests bind files, modes and paths.
+Published checkpoints are identified by their Git commit and by
+`SOURCE_MANIFEST.sha256`.  Review results apply only to the exact source
+identity recorded with those results.
+
+## Experimental provider donor
+
+The provider experiment was reconstructed from the source-only portion of
+`ED301_EDDSA_DRAFT00_PROVIDER_FABLE_PRE100_RESULT_20260818.zip`, SHA-256
+`3547ee9f5e59dbe223e3c621132069afce61ee34c92895f164af8a5df1e9a5d2`.
+Its internal content manifest was verified before any file was consulted.
+
+Imported relationships:
+
+| repository path | donor relationship |
+|---|---|
+| `provider/crates/ed301-eddsa-provider/` | adapted provider Rust/C source |
+| `provider-tests/` | adapted C harnesses and vector generator |
+| `scripts/provider-profile-guard.sh` | adapted profile-observation helper |
+| `scripts/build-openssl-provider-lane.sh` | adapted public-release builder |
+
+Old compiled modules, harness binaries, result logs and PASS receipts were not
+imported.  The repository version binds the provider directly to the current
+local `ed301-eddsa` crate, uses the repository's vendored dependencies,
+generates fixtures from `inputs/round4/`, replaces the donor orchestrator,
+and records fresh local evidence.  The donor is design and source provenance,
+not an independent security review.

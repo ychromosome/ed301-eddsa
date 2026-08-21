@@ -2,6 +2,7 @@
 members = ["crates/ed301-eddsa"]
 exclude = [
     "integration/downstream-workspace",
+    "provider",
     "secret-taint",
     "secret-taint/valgrind-client",
 ]

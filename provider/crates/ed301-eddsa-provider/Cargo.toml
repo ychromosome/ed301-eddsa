@@ -1,0 +1,33 @@
+[package]
+name = "ed301-eddsa-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Experimental signature-only OpenSSL provider for Ed301-EdDSA-draft-00 (test-only, nonregistrable identifiers)"
+
+[lib]
+name = "ed301_eddsa_draft00"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+# The ordinary module is built with the default (empty) feature set and
+# contains neither the panic-failpoint hook nor its environment-variable
+# string.  `test-failpoint` is a compile-time, test-only diagnostic used
+# exclusively for the separately named failpoint artifact of the hardening
+# gate.  `secret-taint-instrumentation` builds the separately named
+# taint-evidence artifact for the CT addendum lanes.
+[features]
+default = []
+test-failpoint = []
+secret-taint-instrumentation = ["ed301-eddsa/secret-taint-instrumentation"]
+
+[dependencies]
+crypto-bigint = { version = "=0.7.5", default-features = false }
+ed301-eddsa = { path = "../../../crates/ed301-eddsa" }
+getrandom = { version = "=0.4.3", default-features = false }
+zeroize = { version = "=1.9.0", default-features = false }
+
+[build-dependencies]
+cc = { version = "=1.2.66", default-features = false }

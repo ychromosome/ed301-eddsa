@@ -16,6 +16,19 @@ sh scripts/check.sh
 sh scripts/check-secret-taint.sh
 ```
 
+## Experimental OpenSSL provider
+
+The `provider-experiment` branch contains a signature-only provider with
+test-only identifiers.  Given an unmodified OpenSSL 3.5.7 or 4.0.1 prefix:
+
+```sh
+scripts/test-provider.sh /path/to/openssl-prefix 3.5.7
+scripts/test-provider.sh /path/to/openssl-prefix 4.0.1
+```
+
+The provider is an integration candidate, not a release.  See
+`PROVIDER_STATUS.md`.
+
 ## Status
 
 Round-2 pre-deep-scan candidate. Not production-ready.
