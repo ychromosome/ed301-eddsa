@@ -1,4 +1,4 @@
-/* Focused C-side contract tests for the Rust ABI table and encoder policy. */
+/* Focused C-side contract tests for ABI, version and encoder policy. */
 
 #include "harness_common.h"
 #include "../provider/crates/ed301-eddsa-provider/c/provider_shim.c"
@@ -10,7 +10,7 @@ static void unit_dummy(void)
 static void unit_fill_api(ED301D00_SIGNATURE_RUST_API *api)
 {
     memset(api, 0, sizeof(*api));
-    api->abi_version = 1;
+    api->abi_version = 2;
     api->struct_size = sizeof(*api);
     api->seed_bytes = ED301D00_SEED_BYTES;
     api->public_key_bytes = ED301D00_PUBLIC_KEY_BYTES;
@@ -21,7 +21,7 @@ static void unit_fill_api(ED301D00_SIGNATURE_RUST_API *api)
     ASSIGN_CALLBACK(key_free);
     ASSIGN_CALLBACK(key_import);
     ASSIGN_CALLBACK(key_set_encoded_public);
-    ASSIGN_CALLBACK(key_generate);
+    ASSIGN_CALLBACK(key_from_seed);
     ASSIGN_CALLBACK(key_duplicate);
     ASSIGN_CALLBACK(key_has);
     ASSIGN_CALLBACK(key_validate);
@@ -63,7 +63,7 @@ int main(void)
     EXPECT_MISSING_CALLBACK(&api, key_free);
     EXPECT_MISSING_CALLBACK(&api, key_import);
     EXPECT_MISSING_CALLBACK(&api, key_set_encoded_public);
-    EXPECT_MISSING_CALLBACK(&api, key_generate);
+    EXPECT_MISSING_CALLBACK(&api, key_from_seed);
     EXPECT_MISSING_CALLBACK(&api, key_duplicate);
     EXPECT_MISSING_CALLBACK(&api, key_has);
     EXPECT_MISSING_CALLBACK(&api, key_validate);
@@ -79,6 +79,32 @@ int main(void)
     EXPECT_MISSING_CALLBACK(&api, signature_sign);
     EXPECT_MISSING_CALLBACK(&api, signature_verify);
     EXPECT_MISSING_CALLBACK(&api, cleanse);
+
+#if OPENSSL_VERSION_MAJOR == 3
+    D00_CHECK(ed301d00_core_version_text_is_supported("3.5.0"),
+        "OpenSSL 3.5 baseline accepted");
+    D00_CHECK(ed301d00_core_version_text_is_supported("3.5.999"),
+        "OpenSSL 3.5 patch update accepted");
+    D00_CHECK(ed301d00_core_version_text_is_supported("3.99.1"),
+        "later OpenSSL 3 minor accepted");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("3.4.99"),
+        "OpenSSL 3 before baseline rejected");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("4.0.0"),
+        "different OpenSSL major rejected");
+#else
+    D00_CHECK(ed301d00_core_version_text_is_supported("4.0.0"),
+        "OpenSSL 4 baseline accepted");
+    D00_CHECK(ed301d00_core_version_text_is_supported("4.0.999"),
+        "OpenSSL 4 patch update accepted");
+    D00_CHECK(ed301d00_core_version_text_is_supported("4.99.1"),
+        "later OpenSSL 4 minor accepted");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("3.99.99"),
+        "different OpenSSL major rejected");
+#endif
+    D00_CHECK(!ed301d00_core_version_text_is_supported("invalid"),
+        "malformed core version rejected");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("3.5"),
+        "incomplete core version rejected");
 
     settable = ed301d00_private_codec_settable_ctx_params(NULL);
     D00_CHECK(settable != NULL && settable[0].key == NULL,

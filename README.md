@@ -26,6 +26,10 @@ scripts/test-provider.sh /path/to/openssl-prefix 3.5.7
 scripts/test-provider.sh /path/to/openssl-prefix 4.0.1
 ```
 
+The ordinary module exposes no TLS capability.  The runner builds the
+private-use TLS proof and its full-provider collision fixture as separately
+named, disabled-by-default test artifacts.
+
 The provider is an integration candidate, not a release.  See
 `PROVIDER_STATUS.md`.
 

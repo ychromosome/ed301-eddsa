@@ -1,9 +1,9 @@
 /*
- * Acceptance section 4 (collision handling): the provider must fail closed
- * when the process-global object registry already binds its ephemeral test
- * OID, its algorithm name or its signature-id mapping to something else,
- * and must accept an exactly matching pre-registration.  Each mode runs in
- * a fresh process (the object database is process-global).
+ * Acceptance section 4 (collision handling): a host-side integration
+ * preflight checks the registry belonging to the loading libcrypto before
+ * loading the provider.  The provider itself uses only core_obj_* upcalls
+ * and never inspects a potentially different directly linked registry.
+ * Each mode runs in a fresh process (the object database is process-global).
  *
  * Modes:
  *   occupied-oid    OID bound to a foreign name           -> load fails
@@ -13,34 +13,13 @@
  *                   as its digest_nid (VAL-02 fixture)    -> load fails
  *   public-slot     foreign sigid uses target as key NID  -> load fails
  *   free            no pre-registration                    -> load succeeds
- *   object-only     exact object without sigid             -> load succeeds
+ *   object-only     exact object without sigid             -> preflight fails
  *   exact           exact object and sigid pre-registered -> load succeeds
  */
 
 #include <openssl/objects.h>
 
 #include "harness_common.h"
-
-static int registry_is_exact(void)
-{
-    int nid = OBJ_txt2nid(D00_OID_TEXT);
-    int digest_nid = NID_undef;
-    int public_key_nid = NID_undef;
-    int signature_nid = NID_undef;
-    const char *short_name = nid == NID_undef ? NULL : OBJ_nid2sn(nid);
-    const char *long_name = nid == NID_undef ? NULL : OBJ_nid2ln(nid);
-
-    return nid != NID_undef
-        && short_name != NULL && long_name != NULL
-        && strcmp(short_name, D00_ALG) == 0
-        && strcmp(long_name, D00_ALG) == 0
-        && OBJ_find_sigid_algs(nid, &digest_nid, &public_key_nid) == 1
-        && digest_nid == NID_undef
-        && public_key_nid == nid
-        && OBJ_find_sigid_by_algs(
-            &signature_nid, NID_undef, nid) == 1
-        && signature_nid == nid;
-}
 
 int main(int argc, char **argv)
 {
@@ -96,7 +75,6 @@ int main(int argc, char **argv)
     } else if (strcmp(mode, "object-only") == 0) {
         prepared = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG)
             != NID_undef;
-        expect_load_success = 1;
     } else if (strcmp(mode, "exact") == 0) {
         int nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
 
@@ -118,12 +96,14 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    D00_CHECK(d00_registry_preflight_ok() == expect_load_success,
+        "%s: host preflight classifies the registry", mode);
     d00_seed_error_sentinel();
-    draft = OSSL_PROVIDER_load(NULL, D00_PROVIDER);
+    draft = d00_load_named(NULL, NULL, D00_PROVIDER);
+    queue_ok = d00_queue_is_sentinel_only();
     if (expect_load_success) {
-        queue_ok = d00_queue_is_sentinel_only();
         D00_CHECK(draft != NULL,
-            "%s: provider load succeeds on an exact pre-registration",
+            "%s: provider load succeeds after a clean host preflight",
             mode);
         if (draft != NULL) {
             EVP_SIGNATURE *alg =
@@ -132,7 +112,7 @@ int main(int argc, char **argv)
             D00_CHECK(alg != NULL, "%s: algorithm fetch", mode);
             D00_CHECK(queue_ok,
                 "%s: caller queue preserved on successful load", mode);
-            D00_CHECK(registry_is_exact(),
+            D00_CHECK(d00_registry_is_exact(),
                 "%s: object and forward/reverse sigid are exact", mode);
             D00_CHECK(d00_provider_has_reason_dispatch(draft),
                 "%s: provider exports reason-string dispatch", mode);
@@ -140,12 +120,11 @@ int main(int argc, char **argv)
             OSSL_PROVIDER_unload(draft);
         }
     } else {
-        queue_ok = d00_queue_has_sentinel_and_registration_error();
         D00_CHECK(draft == NULL,
-            "%s: provider load fails closed on a registry conflict",
+            "%s: host preflight blocks an unsafe provider load",
             mode);
         D00_CHECK(queue_ok,
-            "%s: caller sentinels and reason 5 survive conflict", mode);
+            "%s: host preflight preserves the caller error queue", mode);
         if (draft != NULL)
             OSSL_PROVIDER_unload(draft);
     }

@@ -35,7 +35,9 @@ typedef struct ed301d00_signature_rust_api_st {
         void *key,
         const unsigned char *public_key,
         size_t public_length);
-    void *(*key_generate)(void);
+    void *(*key_from_seed)(
+        const unsigned char *seed,
+        size_t seed_length);
     void *(*key_duplicate)(
         const void *source,
         int include_private,
@@ -84,6 +86,7 @@ typedef struct ed301d00_signature_rust_api_st {
 
 typedef struct ed301d00_provider_context_st {
     const OSSL_CORE_HANDLE *handle;
+    OSSL_LIB_CTX *libctx;
     OSSL_FUNC_CRYPTO_zalloc_fn *zalloc;
     OSSL_FUNC_CRYPTO_clear_free_fn *clear_free;
     OSSL_FUNC_core_new_error_fn *new_error;

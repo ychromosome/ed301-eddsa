@@ -1,7 +1,8 @@
 /*
  * Acceptance section 4 (serialization): PKCS#8 and SPKI round trips in DER
- * and PEM through public OpenSSL encoder/decoder interfaces, text output,
- * and rejection of the historical OID, ASN.1 NULL parameters, wrong OIDs
+ * and PEM through public OpenSSL encoder/decoder interfaces, deliberate
+ * absence of private text output, and rejection of the historical OID,
+ * ASN.1 NULL parameters, wrong OIDs
  * and sizes, truncation, trailing data and malformed public keys.
  * Encrypted PKCS#8 (and its wrong-password rejection) is exercised through
  * the openssl CLI in run_matrix.sh, mirroring the historical route.
@@ -292,7 +293,7 @@ int main(void)
         OPENSSL_free(pem);
     }
 
-    /* Text encoder. */
+    /* No bespoke text/hex encoder is exposed (F5). */
     {
         size_t text_len = 0;
         unsigned char *text = encode(pkey,
@@ -300,11 +301,9 @@ int main(void)
                 | OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
             "TEXT", NULL, &text_len);
 
-        D00_CHECK(text != NULL
-                && memmem(text, text_len, "Ed301-EdDSA-draft-00", 20)
-                    != NULL
-                && memmem(text, text_len, "test-only", 9) != NULL,
-            "text encoding names the draft and its test-only status");
+        D00_CHECK(text == NULL && text_len == 0,
+            "provider deliberately exposes no private text/hex encoder");
+        ERR_clear_error();
         OPENSSL_free(text);
     }
 

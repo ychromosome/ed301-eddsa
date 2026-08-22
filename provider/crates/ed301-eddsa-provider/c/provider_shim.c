@@ -2,56 +2,51 @@
  * Experimental signature-only OpenSSL provider for Ed301-EdDSA-draft-00.
  *
  * Adapted from the historical ed301-openssl-provider shim (dispatch shapes,
- * selection logic, buffer contracts, serialization structure, collision
- * handling) and from the post-commit hardening patch (process-global object
- * registry transaction).  See the result provenance map.  The historical
+ * selection logic, buffer contracts and serialization structure).  See the
+ * result provenance map.  The historical
  * Ed301-Sig-v1 identity, context support, transcript, OID 1.3.6.1.4.1.66282.*
  * and TLS codepoint 0xFE2D are intentionally not reused.
  *
  * Identifier boundary: every identifier below marked TEST-ONLY is an
- * explicitly ephemeral, collision-checked, NONREGISTRABLE working identifier
- * for this isolated experiment.  Nothing here is a permanent OID or IANA
+ * explicitly ephemeral, host-audited, NONREGISTRABLE working identifier for
+ * this isolated experiment.  Nothing here is a permanent OID or IANA
  * assignment, a production claim, a constant-time claim or a release claim.
  */
 
-#define _POSIX_C_SOURCE 200809L
-
 #include <stdarg.h>
-#include <stdatomic.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <sched.h>
-#include <time.h>
-#include <unistd.h>
 
 #include <openssl/bio.h>
 #include <openssl/core.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/core_object.h>
-#include <openssl/err.h>
-#include <openssl/objects.h>
+#include <openssl/crypto.h>
 #include <openssl/opensslv.h>
 #include <openssl/params.h>
+#include <openssl/pem.h>
+#include <openssl/rand.h>
 
 #include "param_helpers.h"
 #include "provider_internal.h"
 
 /*
- * One artifact per ABI lane (FBL-01): the module binds at compile time to
- * the major.minor of the OpenSSL headers it was built against and refuses
- * at runtime to initialise against a core of any other major.minor.  A
- * deliberately crossed header/library combination therefore fails before
- * any algorithm is offered.  Each supported lane is built, tested and
- * shipped separately; one DSO never covers incompatible ABIs.
+ * One artifact per ABI major: OpenSSL guarantees API/ABI compatibility
+ * within a major release.  Major 3 requires the provider-facing API present
+ * since 3.5; major 4 starts at 4.0.  Exact build/runtime versions are logged
+ * by the harness, but patch and later-minor updates are not rejected.
  */
-#if OPENSSL_VERSION_MAJOR == 3 && OPENSSL_VERSION_MINOR == 5
-# define ED301D00_SUPPORTED_CORE_VERSION_PREFIX "3.5."
-#elif OPENSSL_VERSION_MAJOR == 4 && OPENSSL_VERSION_MINOR == 0
-# define ED301D00_SUPPORTED_CORE_VERSION_PREFIX "4.0."
+#if OPENSSL_VERSION_MAJOR == 3 && OPENSSL_VERSION_MINOR >= 5
+# define ED301D00_SUPPORTED_CORE_MAJOR 3U
+# define ED301D00_SUPPORTED_CORE_MIN_MINOR 5U
+#elif OPENSSL_VERSION_MAJOR == 4
+# define ED301D00_SUPPORTED_CORE_MAJOR 4U
+# define ED301D00_SUPPORTED_CORE_MIN_MINOR 0U
 #else
-# error "This Ed301-EdDSA-draft-00 experiment supports only OpenSSL 3.5.x or 4.0.x headers"
+# error "This experiment requires OpenSSL 3.5+ headers or OpenSSL 4.x headers"
 #endif
 
 #define ED301D00_SEED_BYTES ((size_t)38)
@@ -64,23 +59,34 @@
 /*
  * TEST-ONLY, NONREGISTRABLE ephemeral identifier profile for this isolated
  * experiment.  The OID is UUID-derived under the 2.25 arc and was collision
- * checked at generation and is collision checked again fail-closed at every
- * provider load.  The TLS SignatureScheme codepoint is from the private-use
- * range and deliberately differs from the historical 0xFE2D.
+ * checked at generation.  Exact collision checks run in the host integration
+ * harness, against the loading libcrypto registry.  The TLS SignatureScheme
+ * codepoint is from the private-use range and deliberately differs from the
+ * historical 0xFE2D; it exists only in separately named TLS test artifacts.
  */
 #define ED301D00_OID_TEXT \
     "2.25.195456677253783758411179833219689607856"
 #define ED301D00_TLS_SIGALG_CODE_POINT ((unsigned int)0xfe84)
 
 /*
- * The separately named, test-only failpoint artifact renames both the
- * module and its "provider=" property so it can never be mistaken for or
- * fetched as the ordinary module (FBL-02).
+ * Each diagnostic/private-use surface has a separate module name and
+ * "provider=" property.  The ordinary module exposes no TLS capability.
  */
 #ifdef ED301D00_TEST_FAILPOINT_ARTIFACT
 # define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_failpoint"
+#elif defined(ED301D00_TLS_EXPERIMENT_ARTIFACT)
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_tls_test"
+#elif defined(ED301D00_TLS_COLLIDER_ARTIFACT)
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_tls_collider"
 #else
 # define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00"
+#endif
+
+#if defined(ED301D00_TLS_EXPERIMENT_ARTIFACT) \
+    || defined(ED301D00_TLS_COLLIDER_ARTIFACT)
+# define ED301D00_HAS_TEST_TLS_CAPABILITY 1
+#else
+# define ED301D00_HAS_TEST_TLS_CAPABILITY 0
 #endif
 
 static const char ED301D00_PROVIDER_NAME[] =
@@ -95,7 +101,7 @@ static const char ED301D00_ALGORITHM_NAMES[] =
     "Ed301-EdDSA-draft-00:" ED301D00_OID_TEXT;
 static const char ED301D00_PROPERTY[] =
     "provider=" ED301D00_PROVIDER_BASENAME;
-#ifndef ED301D00_TEST_FAILPOINT_ARTIFACT
+#if ED301D00_HAS_TEST_TLS_CAPABILITY
 static const char ED301D00_TLS_SIGALG_CAPABILITY[] = "TLS-SIGALG";
 static const char ED301D00_TLS_SIGALG_IANA_NAME[] =
     "ed301_eddsa_draft00_test";
@@ -154,14 +160,12 @@ typedef struct ed301d00_signature_context_st {
 
 typedef enum ed301d00_codec_structure_st {
     ED301D00_CODEC_PRIVATE_KEY_INFO = 1,
-    ED301D00_CODEC_SUBJECT_PUBLIC_KEY_INFO = 2,
-    ED301D00_CODEC_TEXT_KEY = 3
+    ED301D00_CODEC_SUBJECT_PUBLIC_KEY_INFO = 2
 } ED301D00_CODEC_STRUCTURE;
 
 typedef enum ed301d00_codec_format_st {
     ED301D00_CODEC_FORMAT_DER = 1,
-    ED301D00_CODEC_FORMAT_PEM = 2,
-    ED301D00_CODEC_FORMAT_TEXT = 3
+    ED301D00_CODEC_FORMAT_PEM = 2
 } ED301D00_CODEC_FORMAT;
 
 typedef struct ed301d00_codec_context_st {
@@ -769,21 +773,44 @@ static void *ed301d00_key_gen(
     void *callback_argument)
 {
     ED301D00_GEN_CONTEXT *generation = generation_context;
-    void *inner;
+    ED301D00_PROVIDER_CONTEXT *provider;
+    const ED301D00_SIGNATURE_RUST_API *rust;
+    unsigned char seed[ED301D00_SEED_BYTES] = { 0 };
+    void *inner = NULL;
+    ED301D00_KEY *key = NULL;
 
     (void)progress_callback;
     (void)callback_argument;
-    if (generation == NULL || generation->provider == NULL
-            || generation->provider->rust == NULL)
+    if (generation == NULL)
         return NULL;
+    provider = generation->provider;
+    if (provider == NULL || provider->rust == NULL || provider->libctx == NULL)
+        return NULL;
+    rust = provider->rust;
 
-    inner = generation->provider->rust->key_generate();
-    if (inner == NULL) {
-        ed301d00_raise(generation->provider, ED301D00_R_INVALID_KEY,
-            "draft-00 key generation failed");
-        return NULL;
+    if (RAND_priv_bytes_ex(
+            provider->libctx,
+            seed,
+            sizeof(seed),
+            0) != 1) {
+        ed301d00_raise(provider, ED301D00_R_INVALID_KEY,
+            "OpenSSL private RAND failed during draft-00 key generation");
+        goto cleanup;
     }
-    return ed301d00_wrap_key(generation->provider, inner);
+    inner = rust->key_from_seed(seed, sizeof(seed));
+    if (inner == NULL) {
+        ed301d00_raise(provider, ED301D00_R_INVALID_KEY,
+            "draft-00 key derivation failed");
+        goto cleanup;
+    }
+    key = ed301d00_wrap_key(provider, inner);
+    inner = NULL;
+
+cleanup:
+    rust->cleanse(seed, sizeof(seed));
+    if (inner != NULL)
+        rust->key_free(inner);
+    return key;
 }
 
 static void ed301d00_key_gen_cleanup(void *generation_context)
@@ -1233,14 +1260,6 @@ static void *ed301d00_spki_pem_codec_new_context(void *provider_context)
         ED301D00_CODEC_FORMAT_PEM);
 }
 
-static void *ed301d00_text_codec_new_context(void *provider_context)
-{
-    return ed301d00_codec_new_context(
-        provider_context,
-        ED301D00_CODEC_TEXT_KEY,
-        ED301D00_CODEC_FORMAT_TEXT);
-}
-
 static void ed301d00_codec_free_context(void *codec_context)
 {
     ED301D00_CODEC_CONTEXT *codec = codec_context;
@@ -1261,8 +1280,6 @@ static int ed301d00_codec_required_selection(
         return OSSL_KEYMGMT_SELECT_PRIVATE_KEY;
     if (codec->structure == ED301D00_CODEC_SUBJECT_PUBLIC_KEY_INFO)
         return OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
-    if (codec->structure == ED301D00_CODEC_TEXT_KEY)
-        return OSSL_KEYMGMT_SELECT_KEYPAIR;
     return 0;
 }
 
@@ -1279,9 +1296,6 @@ static int ed301d00_codec_does_selection(void *codec_context, int selection)
         return selection == 0
             || ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0
                 && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0);
-    if (codec->structure == ED301D00_CODEC_TEXT_KEY)
-        return selection == 0
-            || (selection & OSSL_KEYMGMT_SELECT_KEYPAIR) != 0;
     return 0;
 }
 
@@ -1302,15 +1316,6 @@ static int ed301d00_public_codec_does_selection(
     return selection == 0
         || ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0
             && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0);
-}
-
-static int ed301d00_text_codec_does_selection(
-    void *provider_context,
-    int selection)
-{
-    (void)provider_context;
-    return selection == 0
-        || (selection & OSSL_KEYMGMT_SELECT_KEYPAIR) != 0;
 }
 
 static const OSSL_PARAM *ed301d00_private_codec_settable_ctx_params(
@@ -1463,143 +1468,31 @@ static int ed301d00_codec_has_target_oid(
             ED301D00_OID_TLV_BYTES) == 0;
 }
 
-/*
- * The inputs to these helpers are bounded to six and four bits respectively.
- * Derive the ASCII code arithmetically so private serialization never uses a
- * secret nibble or sextet as a table address.
- */
-static uint32_t ed301d00_small_ge(uint32_t value, uint32_t threshold)
-{
-    return 1U ^ ((value - threshold) >> 31);
-}
-
-static unsigned char ed301d00_base64_character(uint32_t index)
-{
-    uint32_t character = index + (uint32_t)'A';
-
-    character += 6U * ed301d00_small_ge(index, 26U);
-    character -= 75U * ed301d00_small_ge(index, 52U);
-    character -= 15U * ed301d00_small_ge(index, 62U);
-    character += 3U * ed301d00_small_ge(index, 63U);
-    return (unsigned char)character;
-}
-
-static unsigned char ed301d00_hex_character(uint32_t nibble)
-{
-    return (unsigned char)(
-        nibble + (uint32_t)'0' + 39U * ed301d00_small_ge(nibble, 10U));
-}
-
-static size_t ed301d00_base64_encode(
-    const unsigned char *input,
-    size_t input_length,
-    unsigned char *output,
-    size_t output_capacity)
-{
-    const size_t required = 4 * ((input_length + 2) / 3);
-    size_t input_offset = 0;
-    size_t output_offset = 0;
-
-    if (input == NULL || output == NULL || output_capacity < required)
-        return 0;
-    while (input_offset + 3 <= input_length) {
-        const uint32_t value = ((uint32_t)input[input_offset] << 16)
-            | ((uint32_t)input[input_offset + 1] << 8)
-            | (uint32_t)input[input_offset + 2];
-
-        output[output_offset++] =
-            ed301d00_base64_character((value >> 18) & 0x3f);
-        output[output_offset++] =
-            ed301d00_base64_character((value >> 12) & 0x3f);
-        output[output_offset++] =
-            ed301d00_base64_character((value >> 6) & 0x3f);
-        output[output_offset++] = ed301d00_base64_character(value & 0x3f);
-        input_offset += 3;
-    }
-    if (input_offset < input_length) {
-        uint32_t value = (uint32_t)input[input_offset] << 16;
-
-        output[output_offset++] =
-            ed301d00_base64_character((value >> 18) & 0x3f);
-        if (input_offset + 1 < input_length) {
-            value |= (uint32_t)input[input_offset + 1] << 8;
-            output[output_offset++] =
-                ed301d00_base64_character((value >> 12) & 0x3f);
-            output[output_offset++] =
-                ed301d00_base64_character((value >> 6) & 0x3f);
-            output[output_offset++] = '=';
-        } else {
-            output[output_offset++] =
-                ed301d00_base64_character((value >> 12) & 0x3f);
-            output[output_offset++] = '=';
-            output[output_offset++] = '=';
-        }
-    }
-    return output_offset == required ? output_offset : 0;
-}
-
 static int ed301d00_codec_write_pem(
     const ED301D00_CODEC_CONTEXT *codec,
     OSSL_CORE_BIO *output,
     const unsigned char *der,
     size_t der_length)
 {
-    static const unsigned char private_begin[] =
-        "-----BEGIN PRIVATE KEY-----\n";
-    static const unsigned char private_end[] =
-        "-----END PRIVATE KEY-----\n";
-    static const unsigned char public_begin[] =
-        "-----BEGIN PUBLIC KEY-----\n";
-    static const unsigned char public_end[] =
-        "-----END PUBLIC KEY-----\n";
-    static const unsigned char newline[] = "\n";
-    const unsigned char *begin;
-    const unsigned char *end;
-    size_t begin_length;
-    size_t end_length;
-    unsigned char base64[128] = { 0 };
-    size_t base64_length;
-    size_t offset = 0;
+    BIO *bio = NULL;
+    const char *name;
     int result = 0;
 
-    if (codec == NULL || output == NULL || der == NULL)
-        goto cleanup;
-    if (codec->structure == ED301D00_CODEC_PRIVATE_KEY_INFO) {
-        begin = private_begin;
-        begin_length = sizeof(private_begin) - 1;
-        end = private_end;
-        end_length = sizeof(private_end) - 1;
-    } else if (codec->structure == ED301D00_CODEC_SUBJECT_PUBLIC_KEY_INFO) {
-        begin = public_begin;
-        begin_length = sizeof(public_begin) - 1;
-        end = public_end;
-        end_length = sizeof(public_end) - 1;
-    } else {
-        goto cleanup;
-    }
+    if (codec == NULL || codec->provider == NULL
+            || codec->provider->libctx == NULL || output == NULL || der == NULL
+            || der_length > LONG_MAX)
+        return 0;
+    if (codec->structure == ED301D00_CODEC_PRIVATE_KEY_INFO)
+        name = PEM_STRING_PKCS8INF;
+    else if (codec->structure == ED301D00_CODEC_SUBJECT_PUBLIC_KEY_INFO)
+        name = PEM_STRING_PUBLIC;
+    else
+        return 0;
 
-    base64_length = ed301d00_base64_encode(
-        der, der_length, base64, sizeof(base64));
-    if (base64_length == 0
-            || !ed301d00_codec_write_all(
-                codec, output, begin, begin_length))
-        goto cleanup;
-    while (offset < base64_length) {
-        size_t line_length = base64_length - offset;
-
-        if (line_length > 64)
-            line_length = 64;
-        if (!ed301d00_codec_write_all(
-                codec, output, base64 + offset, line_length)
-                || !ed301d00_codec_write_all(
-                    codec, output, newline, sizeof(newline) - 1))
-            goto cleanup;
-        offset += line_length;
-    }
-    result = ed301d00_codec_write_all(codec, output, end, end_length);
-
-cleanup:
-    ed301d00_codec_cleanse(codec, base64, sizeof(base64));
+    bio = BIO_new_from_core_bio(codec->provider->libctx, output);
+    if (bio != NULL)
+        result = PEM_write_bio(bio, name, "", der, (long)der_length);
+    BIO_free(bio);
     return result;
 }
 
@@ -1679,113 +1572,6 @@ static void *ed301d00_codec_import_object(
 static void ed301d00_codec_free_object(void *key_data)
 {
     ed301d00_key_free(key_data);
-}
-
-static int ed301d00_codec_write_hex_key(
-    const ED301D00_CODEC_CONTEXT *codec,
-    OSSL_CORE_BIO *output,
-    const unsigned char key_bytes[ED301D00_SEED_BYTES])
-{
-    unsigned char line[4 + (ED301D00_SEED_BYTES * 3)] = { 0 };
-    size_t offset = 0;
-    size_t index;
-    int result;
-
-    if (codec == NULL || output == NULL || key_bytes == NULL)
-        return 0;
-    memcpy(line, "    ", 4);
-    offset = 4;
-    for (index = 0; index < ED301D00_SEED_BYTES; index++) {
-        line[offset++] = ed301d00_hex_character(key_bytes[index] >> 4);
-        line[offset++] = ed301d00_hex_character(key_bytes[index] & 0x0f);
-        line[offset++] = index + 1 == ED301D00_SEED_BYTES ? '\n' : ':';
-    }
-    result = ed301d00_codec_write_all(codec, output, line, offset);
-    ed301d00_codec_cleanse(codec, line, sizeof(line));
-    return result;
-}
-
-static int ed301d00_codec_encode_text(
-    void *codec_context,
-    OSSL_CORE_BIO *output,
-    const void *key_data,
-    const OSSL_PARAM key_parameters[],
-    int selection,
-    OSSL_PASSPHRASE_CALLBACK *passphrase_callback,
-    void *passphrase_argument)
-{
-    static const unsigned char private_header[] =
-        " Private-Key: (301 bit, test-only draft-00 experiment)\n";
-    static const unsigned char public_header[] =
-        " Public-Key: (301 bit, test-only draft-00 experiment)\n";
-    static const unsigned char private_label[] = "priv:\n";
-    static const unsigned char public_label[] = "pub:\n";
-    ED301D00_CODEC_CONTEXT *codec = codec_context;
-    unsigned char private_key[ED301D00_SEED_BYTES] = { 0 };
-    unsigned char public_key[ED301D00_PUBLIC_KEY_BYTES] = { 0 };
-    const int wants_private =
-        (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0;
-    const int wants_public = selection == 0 || wants_private
-        || (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0;
-    int result = 0;
-
-    (void)passphrase_callback;
-    (void)passphrase_argument;
-    if (codec == NULL || codec->format != ED301D00_CODEC_FORMAT_TEXT
-            || output == NULL || key_data == NULL || key_parameters != NULL
-            || !ed301d00_codec_does_selection(codec, selection))
-        goto cleanup;
-
-    if (!ed301d00_codec_write_all(
-            codec,
-            output,
-            (const unsigned char *)ED301D00_ALGORITHM_NAME,
-            sizeof(ED301D00_ALGORITHM_NAME) - 1)
-            || !ed301d00_codec_write_all(
-                codec,
-                output,
-                wants_private ? private_header : public_header,
-                wants_private ? sizeof(private_header) - 1
-                    : sizeof(public_header) - 1))
-        goto cleanup;
-    if (wants_private) {
-        if (!ed301d00_codec_get_key_bytes(
-                codec,
-                key_data,
-                ED301D00_CODEC_PRIVATE_KEY_INFO,
-                private_key)
-                || !ed301d00_codec_write_all(
-                    codec,
-                    output,
-                    private_label,
-                    sizeof(private_label) - 1)
-                || !ed301d00_codec_write_hex_key(
-                    codec, output, private_key))
-            goto cleanup;
-    }
-    if (wants_public) {
-        if (!ed301d00_codec_get_key_bytes(
-                codec,
-                key_data,
-                ED301D00_CODEC_SUBJECT_PUBLIC_KEY_INFO,
-                public_key)
-                || !ed301d00_codec_write_all(
-                    codec,
-                    output,
-                    public_label,
-                    sizeof(public_label) - 1)
-                || !ed301d00_codec_write_hex_key(codec, output, public_key))
-            goto cleanup;
-    }
-    result = 1;
-
-cleanup:
-    ed301d00_codec_cleanse(codec, private_key, sizeof(private_key));
-    ed301d00_codec_cleanse(codec, public_key, sizeof(public_key));
-    if (result != 1 && codec != NULL)
-        ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
-            "draft-00 key text encoding failed");
-    return result;
 }
 
 static int ed301d00_codec_encode(
@@ -2030,22 +1816,6 @@ ED301D00_DEFINE_ENCODER_DISPATCH(
     ed301d00_spki_pem_codec_new_context,
     ed301d00_public_codec_does_selection);
 
-static const OSSL_DISPATCH ED301D00_TEXT_ENCODER_DISPATCH[] = {
-    { OSSL_FUNC_ENCODER_NEWCTX,
-        (void (*)(void))ed301d00_text_codec_new_context },
-    { OSSL_FUNC_ENCODER_FREECTX,
-        (void (*)(void))ed301d00_codec_free_context },
-    { OSSL_FUNC_ENCODER_DOES_SELECTION,
-        (void (*)(void))ed301d00_text_codec_does_selection },
-    { OSSL_FUNC_ENCODER_ENCODE,
-        (void (*)(void))ed301d00_codec_encode_text },
-    { OSSL_FUNC_ENCODER_IMPORT_OBJECT,
-        (void (*)(void))ed301d00_codec_import_object },
-    { OSSL_FUNC_ENCODER_FREE_OBJECT,
-        (void (*)(void))ed301d00_codec_free_object },
-    { 0, NULL }
-};
-
 ED301D00_DEFINE_DECODER_DISPATCH(
     ED301D00_PKCS8_DER_DECODER_DISPATCH,
     ed301d00_pkcs8_der_codec_new_context,
@@ -2181,12 +1951,6 @@ static const OSSL_ALGORITHM ED301D00_SIGNATURE_ALGORITHMS[] = {
 static const OSSL_ALGORITHM ED301D00_ENCODER_ALGORITHMS[] = {
     {
         ED301D00_ALGORITHM_NAMES,
-        "provider=" ED301D00_PROVIDER_BASENAME ",output=text",
-        ED301D00_TEXT_ENCODER_DISPATCH,
-        "draft-00 human-readable key encoder (test-only)"
-    },
-    {
-        ED301D00_ALGORITHM_NAMES,
         "provider=" ED301D00_PROVIDER_BASENAME ",output=der,structure=PrivateKeyInfo",
         ED301D00_PKCS8_DER_ENCODER_DISPATCH,
         "draft-00 PKCS#8 DER encoder (test-only)"
@@ -2232,20 +1996,13 @@ static const OSSL_ALGORITHM ED301D00_DECODER_ALGORITHMS[] = {
 /* Capabilities                                                       */
 /* ------------------------------------------------------------------ */
 
+#if ED301D00_HAS_TEST_TLS_CAPABILITY
 static int ed301d00_provider_get_capabilities(
     void *provider_context,
     const char *capability,
     OSSL_CALLBACK *callback,
     void *callback_argument)
 {
-#ifdef ED301D00_TEST_FAILPOINT_ARTIFACT
-    /* The allocation-failpoint DSO is never a TLS capability provider. */
-    (void)provider_context;
-    (void)capability;
-    (void)callback;
-    (void)callback_argument;
-    return 1;
-#else
     unsigned int code_point = ED301D00_TLS_SIGALG_CODE_POINT;
     unsigned int security_bits = ED301D00_SECURITY_BITS;
     int minimum_tls = ED301D00_TLS_VERSION_1_3;
@@ -2295,8 +2052,8 @@ static int ed301d00_provider_get_capabilities(
      * return from the capability query as a hard error).
      */
     return 1;
-#endif
 }
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Provider plumbing                                                  */
@@ -2306,12 +2063,17 @@ static void ed301d00_provider_teardown(void *provider_context)
 {
     ED301D00_PROVIDER_CONTEXT *provider = provider_context;
 
-    if (provider != NULL && provider->clear_free != NULL)
+    if (provider != NULL) {
+        OSSL_LIB_CTX_free(provider->libctx);
+        provider->libctx = NULL;
+    }
+    if (provider != NULL && provider->clear_free != NULL) {
         provider->clear_free(
             provider,
             sizeof(*provider),
             __FILE__,
             __LINE__);
+    }
 }
 
 static const OSSL_ITEM *ed301d00_provider_get_reason_strings(
@@ -2395,21 +2157,65 @@ static const OSSL_DISPATCH ED301D00_PROVIDER_DISPATCH[] = {
         OSSL_FUNC_PROVIDER_QUERY_OPERATION,
         (void (*)(void))ed301d00_provider_query_operation
     },
+#if ED301D00_HAS_TEST_TLS_CAPABILITY
     {
         OSSL_FUNC_PROVIDER_GET_CAPABILITIES,
         (void (*)(void))ed301d00_provider_get_capabilities
     },
+#endif
     { 0, NULL }
 };
+
+static int ed301d00_parse_version_component(
+    const char **cursor,
+    unsigned int *value)
+{
+    const char *position;
+    unsigned int parsed = 0;
+
+    if (cursor == NULL || *cursor == NULL || value == NULL)
+        return 0;
+    position = *cursor;
+    if (*position < '0' || *position > '9')
+        return 0;
+    do {
+        unsigned int digit = (unsigned int)(*position - '0');
+
+        if (parsed > (UINT_MAX - digit) / 10U)
+            return 0;
+        parsed = parsed * 10U + digit;
+        position++;
+    } while (*position >= '0' && *position <= '9');
+    *cursor = position;
+    *value = parsed;
+    return 1;
+}
+
+static int ed301d00_core_version_text_is_supported(const char *core_version)
+{
+    const char *cursor = core_version;
+    unsigned int major = 0;
+    unsigned int minor = 0;
+    unsigned int patch = 0;
+
+    return ed301d00_parse_version_component(&cursor, &major)
+        && *cursor++ == '.'
+        && ed301d00_parse_version_component(&cursor, &minor)
+        && *cursor++ == '.'
+        && ed301d00_parse_version_component(&cursor, &patch)
+        && *cursor == '\0'
+        && major == ED301D00_SUPPORTED_CORE_MAJOR
+#if ED301D00_SUPPORTED_CORE_MIN_MINOR > 0
+        && minor >= ED301D00_SUPPORTED_CORE_MIN_MINOR
+#endif
+        ;
+}
 
 static int ed301d00_core_version_is_supported(
     const OSSL_CORE_HANDLE *handle,
     OSSL_FUNC_core_get_params_fn *get_params)
 {
     char *core_version = NULL;
-    const char *patch;
-    const size_t prefix_length =
-        sizeof(ED301D00_SUPPORTED_CORE_VERSION_PREFIX) - 1;
     OSSL_PARAM parameters[] = {
         OSSL_PARAM_utf8_ptr(
             OSSL_PROV_PARAM_CORE_VERSION,
@@ -2418,323 +2224,51 @@ static int ed301d00_core_version_is_supported(
         OSSL_PARAM_END
     };
 
-    if (handle == NULL || get_params == NULL
-            || get_params(handle, parameters) != 1
-            || core_version == NULL
-            || strncmp(
-                core_version,
-                ED301D00_SUPPORTED_CORE_VERSION_PREFIX,
-                prefix_length) != 0)
-        return 0;
-
-    patch = core_version + prefix_length;
-    if (*patch < '0' || *patch > '9')
-        return 0;
-    do {
-        patch++;
-    } while (*patch >= '0' && *patch <= '9');
-    return *patch == '\0';
-}
-
-/* ------------------------------------------------------------------ */
-/* Concurrency-safe ephemeral object registration                     */
-/*                                                                    */
-/* The object registry is process-global while provider               */
-/* initialisation can run concurrently in independent library         */
-/* contexts.  The entire preflight/mutation/postflight transaction is */
-/* kept serial within this module; the owner slot stores the PID so a */
-/* child forked while the parent owns the lock can replace the        */
-/* inherited, unreachable owner.  Adapted from the disclosed          */
-/* post-commit hardening reference.                                   */
-/* ------------------------------------------------------------------ */
-
-enum ed301d00_object_state {
-    ED301D00_OBJECT_CONFLICT = -1,
-    ED301D00_OBJECT_FREE = 0,
-    ED301D00_OBJECT_EXACT = 1
-};
-
-static _Atomic unsigned long ed301d00_object_registry_lock_owner;
-
-_Static_assert(
-    ATOMIC_LONG_LOCK_FREE == 2,
-    "a lock-free atomic PID owner is required for fork recovery");
-
-static void ed301d00_object_registry_lock_acquire(void)
-{
-    const unsigned long process_id = (unsigned long)getpid();
-
-    for (;;) {
-        unsigned long expected = 0;
-
-        if (atomic_compare_exchange_weak_explicit(
-                &ed301d00_object_registry_lock_owner,
-                &expected,
-                process_id,
-                memory_order_acquire,
-                memory_order_relaxed))
-            return;
-        if (expected != process_id
-                && atomic_compare_exchange_weak_explicit(
-                    &ed301d00_object_registry_lock_owner,
-                    &expected,
-                    process_id,
-                    memory_order_acquire,
-                    memory_order_relaxed))
-            return;
-    }
-}
-
-static void ed301d00_object_registry_lock_release(void)
-{
-    atomic_store_explicit(
-        &ed301d00_object_registry_lock_owner,
-        0,
-        memory_order_release);
-}
-
-#ifndef ED301D00_OBJECT_REGISTRY_RETRY_LIMIT
-# define ED301D00_OBJECT_REGISTRY_RETRY_LIMIT 1024U
-#endif
-
-typedef struct ed301d00_error_mark_st {
-    int had_errors;
-    int marked;
-} ED301D00_ERROR_MARK;
-
-static int ed301d00_error_mark_begin(ED301D00_ERROR_MARK *error_mark)
-{
-    if (error_mark == NULL)
-        return 0;
-    error_mark->had_errors = ERR_peek_error() != 0;
-    error_mark->marked = error_mark->had_errors && ERR_set_mark() == 1;
-    return !error_mark->had_errors || error_mark->marked;
-}
-
-static int ed301d00_error_mark_success(ED301D00_ERROR_MARK *error_mark)
-{
-    if (error_mark == NULL)
-        return 0;
-    if (!error_mark->had_errors) {
-        ERR_clear_error();
-        return 1;
-    }
-    if (!error_mark->marked || ERR_pop_to_mark() != 1)
-        return 0;
-    error_mark->marked = 0;
-    return 1;
-}
-
-static void ed301d00_error_mark_failure(ED301D00_ERROR_MARK *error_mark)
-{
-    if (error_mark != NULL && error_mark->marked) {
-        (void)ERR_clear_last_mark();
-        error_mark->marked = 0;
-    }
-}
-
-static enum ed301d00_object_state ed301d00_object_identity_state(
-    const char *oid,
-    const char *name,
-    int *nid_out)
-{
-    char numeric_oid[96];
-    ASN1_OBJECT *object;
-    const char *short_name;
-    const char *long_name;
-    int oid_nid;
-    int short_name_nid;
-    int long_name_nid;
-    int text_length;
-
-    if (oid == NULL || name == NULL || nid_out == NULL)
-        return ED301D00_OBJECT_CONFLICT;
-
-    *nid_out = NID_undef;
-    oid_nid = OBJ_txt2nid(oid);
-    short_name_nid = OBJ_sn2nid(name);
-    long_name_nid = OBJ_ln2nid(name);
-    if (oid_nid == NID_undef && short_name_nid == NID_undef
-            && long_name_nid == NID_undef)
-        return ED301D00_OBJECT_FREE;
-    if (oid_nid == NID_undef || short_name_nid != oid_nid
-            || long_name_nid != oid_nid)
-        return ED301D00_OBJECT_CONFLICT;
-
-    short_name = OBJ_nid2sn(oid_nid);
-    long_name = OBJ_nid2ln(oid_nid);
-    object = OBJ_nid2obj(oid_nid);
-    if (short_name == NULL || long_name == NULL || object == NULL
-            || strcmp(short_name, name) != 0 || strcmp(long_name, name) != 0)
-        return ED301D00_OBJECT_CONFLICT;
-    text_length = OBJ_obj2txt(
-        numeric_oid,
-        (int)sizeof(numeric_oid),
-        object,
-        1);
-    if (text_length != (int)strlen(oid) || strcmp(numeric_oid, oid) != 0)
-        return ED301D00_OBJECT_CONFLICT;
-
-    *nid_out = oid_nid;
-    return ED301D00_OBJECT_EXACT;
-}
-
-static enum ed301d00_object_state ed301d00_signature_identifier_state(
-    int algorithm_nid)
-{
-    int digest_nid = -1;
-    int public_key_nid = -1;
-    int reverse_signature_nid = NID_undef;
-    int next_nid;
-    int signature_nid;
-    int found = 0;
-
-    /*
-     * The scan must consider every slot of each signature-id triple,
-     * including the digest slot (VAL-02 repair): a foreign mapping that
-     * uses the target NID only as its digest is a foreign use of the
-     * identifier and must fail closed like any other conflict.  With
-     * algorithm_nid == NID_undef the digest/public-key comparisons below
-     * would alias the many legitimate digestless mappings, so an
-     * unregistered identity is reported as FREE before scanning.
-     */
-    if (algorithm_nid == NID_undef)
-        return ED301D00_OBJECT_FREE;
-
-    next_nid = OBJ_new_nid(0);
-    if (next_nid == NID_undef)
-        return ED301D00_OBJECT_CONFLICT;
-
-    for (signature_nid = 1; signature_nid < next_nid; signature_nid++) {
-        if (OBJ_find_sigid_algs(
-                signature_nid,
-                &digest_nid,
-                &public_key_nid) != 1)
-            continue;
-        if (signature_nid != algorithm_nid
-                && public_key_nid != algorithm_nid
-                && digest_nid != algorithm_nid)
-            continue;
-        if (signature_nid != algorithm_nid || digest_nid != NID_undef
-                || public_key_nid != algorithm_nid || found)
-            return ED301D00_OBJECT_CONFLICT;
-        found = 1;
-    }
-
-    if (!found)
-        return ED301D00_OBJECT_FREE;
-    if (OBJ_find_sigid_by_algs(
-            &reverse_signature_nid,
-            NID_undef,
-            algorithm_nid) != 1
-            || reverse_signature_nid != algorithm_nid)
-        return ED301D00_OBJECT_CONFLICT;
-    return ED301D00_OBJECT_EXACT;
-}
-
-static int ed301d00_object_registry_preflight(void)
-{
-    int algorithm_nid = NID_undef;
-    enum ed301d00_object_state identity_state =
-        ed301d00_object_identity_state(
-            ED301D00_OID,
-            ED301D00_ALGORITHM_NAME,
-            &algorithm_nid);
-    enum ed301d00_object_state signature_state;
-
-    if (identity_state == ED301D00_OBJECT_CONFLICT)
-        return 0;
-    signature_state = ed301d00_signature_identifier_state(algorithm_nid);
-    if (signature_state == ED301D00_OBJECT_CONFLICT)
-        return 0;
-    if (identity_state == ED301D00_OBJECT_FREE
-            && signature_state != ED301D00_OBJECT_FREE)
-        return 0;
-    return 1;
-}
-
-static int ed301d00_object_registry_postflight(void)
-{
-    int algorithm_nid = NID_undef;
-
-    return ed301d00_object_identity_state(
-               ED301D00_OID,
-               ED301D00_ALGORITHM_NAME,
-               &algorithm_nid) == ED301D00_OBJECT_EXACT
-        && ed301d00_signature_identifier_state(algorithm_nid)
-               == ED301D00_OBJECT_EXACT;
-}
-
-/*
- * Bounded wait for a competing registration to reach the exact expected
- * state (VAL-03 repair): the earlier loop performed only 1024 bare
- * sched_yield() calls (well under a millisecond), so a competing
- * registrant that was merely descheduled between its OBJ_create and
- * OBJ_add_sigid could exhaust the ceiling and fail a load that would have
- * succeeded.  The wait now backs off to short sleeps after an initial
- * yield burst, giving a total bound of roughly half a second.  Exhaustion
- * remains fail-closed by design: an incomplete foreign registration that
- * persists beyond the bound is indistinguishable from a conflict.
- */
-static int ed301d00_object_registry_wait_for_exact(void)
-{
-    unsigned int attempt;
-
-    for (attempt = 0; attempt < ED301D00_OBJECT_REGISTRY_RETRY_LIMIT;
-            attempt++) {
-        if (ed301d00_object_registry_postflight())
-            return 1;
-        if (attempt < 64U) {
-            (void)sched_yield();
-        } else {
-            struct timespec delay = { 0, 500000L }; /* 0.5 ms */
-
-            (void)nanosleep(&delay, NULL);
-        }
-    }
-    return ed301d00_object_registry_postflight();
+    return handle != NULL && get_params != NULL
+        && get_params(handle, parameters) == 1
+        && ed301d00_core_version_text_is_supported(core_version);
 }
 
 static int ed301d00_object_registry_register(
     const OSSL_CORE_HANDLE *handle,
     OSSL_FUNC_core_obj_create_fn *obj_create,
-    OSSL_FUNC_core_obj_add_sigid_fn *obj_add_sigid)
+    OSSL_FUNC_core_obj_add_sigid_fn *obj_add_sigid,
+    OSSL_FUNC_core_set_error_mark_fn *set_error_mark,
+    OSSL_FUNC_core_clear_last_error_mark_fn *clear_last_error_mark,
+    OSSL_FUNC_core_pop_error_to_mark_fn *pop_error_to_mark)
 {
-    ED301D00_ERROR_MARK error_mark = { 0 };
-    int callbacks_ok = 0;
-    int ok = 0;
+    int marked;
+    int ok;
 
-    ed301d00_object_registry_lock_acquire();
-    if (!ed301d00_error_mark_begin(&error_mark))
-        goto done;
+    if (handle == NULL || obj_create == NULL || obj_add_sigid == NULL
+            || set_error_mark == NULL || clear_last_error_mark == NULL
+            || pop_error_to_mark == NULL)
+        return 0;
 
-    if (!ed301d00_object_registry_preflight()) {
-        ok = ed301d00_object_registry_wait_for_exact();
-        goto done;
-    }
-
-    callbacks_ok = obj_create(
-                       handle,
-                       ED301D00_OID,
-                       ED301D00_ALGORITHM_NAME,
-                       ED301D00_ALGORITHM_NAME) == 1
+    /*
+     * Registration belongs to the loading core.  No direct OBJ_* or ERR_*
+     * call is made from the provider, because a separately linked libcrypto
+     * may have a different process-global registry and error queue.  Exact
+     * identity/collision checks are consequently a host-side integration
+     * preflight and postflight responsibility.
+     */
+    marked = set_error_mark(handle) == 1;
+    ok = obj_create(
+             handle,
+             ED301D00_OID,
+             ED301D00_ALGORITHM_NAME,
+             ED301D00_ALGORITHM_NAME) == 1
         && obj_add_sigid(
                handle,
                ED301D00_OID,
                "",
                ED301D00_OID) == 1;
-    ok = callbacks_ok && ed301d00_object_registry_postflight();
-    if (!ok)
-        ok = ed301d00_object_registry_wait_for_exact();
-
-done:
-    if (ok) {
-        if (!ed301d00_error_mark_success(&error_mark))
-            ok = 0;
-    } else {
-        ed301d00_error_mark_failure(&error_mark);
+    if (marked) {
+        if (ok)
+            ok = pop_error_to_mark(handle) == 1;
+        else
+            (void)clear_last_error_mark(handle);
     }
-    ed301d00_object_registry_lock_release();
     return ok;
 }
 
@@ -2747,7 +2281,7 @@ static int ed301d00_rust_api_valid(
     const ED301D00_SIGNATURE_RUST_API *rust_api)
 {
     return rust_api != NULL
-        && rust_api->abi_version == 1
+        && rust_api->abi_version == 2
         && rust_api->struct_size == sizeof(*rust_api)
         && rust_api->seed_bytes == ED301D00_SEED_BYTES
         && rust_api->public_key_bytes == ED301D00_PUBLIC_KEY_BYTES
@@ -2756,7 +2290,7 @@ static int ed301d00_rust_api_valid(
         && rust_api->key_free != NULL
         && rust_api->key_import != NULL
         && rust_api->key_set_encoded_public != NULL
-        && rust_api->key_generate != NULL
+        && rust_api->key_from_seed != NULL
         && rust_api->key_duplicate != NULL
         && rust_api->key_has != NULL
         && rust_api->key_validate != NULL
@@ -2799,6 +2333,9 @@ int ed301_eddsa_draft00_shim_init(
     OSSL_FUNC_BIO_ctrl_fn *bio_ctrl = NULL;
     OSSL_FUNC_core_obj_create_fn *obj_create = NULL;
     OSSL_FUNC_core_obj_add_sigid_fn *obj_add_sigid = NULL;
+    OSSL_FUNC_core_set_error_mark_fn *set_error_mark = NULL;
+    OSSL_FUNC_core_clear_last_error_mark_fn *clear_last_error_mark = NULL;
+    OSSL_FUNC_core_pop_error_to_mark_fn *pop_error_to_mark = NULL;
     OSSL_FUNC_core_get_params_fn *core_get_params = NULL;
     ED301D00_PROVIDER_CONTEXT *provider;
 
@@ -2847,6 +2384,16 @@ int ed301_eddsa_draft00_shim_init(
         case OSSL_FUNC_CORE_OBJ_ADD_SIGID:
             obj_add_sigid = OSSL_FUNC_core_obj_add_sigid(dispatch);
             break;
+        case OSSL_FUNC_CORE_SET_ERROR_MARK:
+            set_error_mark = OSSL_FUNC_core_set_error_mark(dispatch);
+            break;
+        case OSSL_FUNC_CORE_CLEAR_LAST_ERROR_MARK:
+            clear_last_error_mark =
+                OSSL_FUNC_core_clear_last_error_mark(dispatch);
+            break;
+        case OSSL_FUNC_CORE_POP_ERROR_TO_MARK:
+            pop_error_to_mark = OSSL_FUNC_core_pop_error_to_mark(dispatch);
+            break;
         default:
             break;
         }
@@ -2854,7 +2401,9 @@ int ed301_eddsa_draft00_shim_init(
 
     if (zalloc == NULL || clear_free == NULL || bio_read_ex == NULL
             || bio_write_ex == NULL || bio_ctrl == NULL || obj_create == NULL
-            || obj_add_sigid == NULL || core_get_params == NULL)
+            || obj_add_sigid == NULL || set_error_mark == NULL
+            || clear_last_error_mark == NULL || pop_error_to_mark == NULL
+            || core_get_params == NULL)
         return 0;
     if (!ed301d00_core_version_is_supported(handle, core_get_params))
         return 0;
@@ -2872,14 +2421,23 @@ int ed301_eddsa_draft00_shim_init(
     provider->bio_write_ex = bio_write_ex;
     provider->bio_ctrl = bio_ctrl;
     provider->rust = rust_api;
+    provider->libctx = OSSL_LIB_CTX_new_child(handle, input_dispatch);
+    if (provider->libctx == NULL) {
+        clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
+        return 0;
+    }
 
     if (!ed301d00_object_registry_register(
             handle,
             obj_create,
-            obj_add_sigid)) {
+            obj_add_sigid,
+            set_error_mark,
+            clear_last_error_mark,
+            pop_error_to_mark)) {
         ed301d00_raise(provider, ED301D00_R_OBJECT_REGISTRATION_FAILURE,
-            "ephemeral draft-00 test OID registration failed "
-            "(collision or registry conflict)");
+            "core rejected ephemeral draft-00 test OID registration");
+        OSSL_LIB_CTX_free(provider->libctx);
+        provider->libctx = NULL;
         clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
         return 0;
     }

@@ -877,8 +877,10 @@ int main(void)
 {
     D00_REQUIRE_RUNTIME_BINDING();
     D00_REQUIRE_TLS_RUNTIME_BINDING();
+    d00_property = D00_TLS_PROP;
     OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(NULL, "default");
-    OSSL_PROVIDER *draft = OSSL_PROVIDER_load(NULL, D00_PROVIDER);
+    OSSL_PROVIDER *draft =
+        d00_load_named(NULL, NULL, D00_TLS_PROVIDER);
     EVP_PKEY *ca_key = d00_keygen(NULL);
     EVP_PKEY *ca2_key = d00_keygen(NULL);
     EVP_PKEY *server_key = d00_keygen(NULL);

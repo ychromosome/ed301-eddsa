@@ -1,5 +1,5 @@
 /*
- * FBL-10: fresh-process parallel FIRST-load races.
+ * Fresh-process parallel FIRST-load races after F2/F4.
  *
  * The earlier parallel-load harness had already registered the ephemeral
  * OID serially before its threads started, so the initial
@@ -12,13 +12,11 @@
  * Child modes:
  *   same-dso       all threads load the same module file
  *   separate-copy  threads alternate between the module and a physically
- *                  separate byte-identical copy (independent DSO instance,
- *                  hence independent DSO-local lock state) in per-thread
- *                  lib contexts; the OpenSSL object registry remains shared
- *                  process-global state
+ *                  separate byte-identical copy in per-thread lib contexts;
+ *                  there is deliberately no provider-local registry lock
  *   conflict       the child pre-registers a conflicting binding for the
  *                  ephemeral OID, then races first loads: every load must
- *                  fail closed
+ *                  be blocked by the host preflight
  *
  * The child prints the exact registry state (NID and sigid mapping) before
  * and after the race so the preserved logs document the registry
@@ -102,7 +100,7 @@ static void *fresh_worker_main(void *argument)
 
     deflt = OSSL_PROVIDER_load(libctx, "default");
     d00_seed_error_sentinel();
-    draft = OSSL_PROVIDER_load(libctx, D00_PROVIDER);
+    draft = d00_load_named(libctx, NULL, D00_PROVIDER);
     if (worker->expect_success) {
         if (deflt == NULL || draft == NULL
                 || !d00_queue_is_sentinel_only()) {
@@ -113,8 +111,7 @@ static void *fresh_worker_main(void *argument)
         if (fetched == NULL)
             worker->failed = 1;
     } else {
-        if (draft != NULL
-                || !d00_queue_has_sentinel_and_registration_error())
+        if (draft != NULL || !d00_queue_is_sentinel_only())
             worker->failed = 1;
     }
 
@@ -290,7 +287,7 @@ int main(int argc, char **argv)
             repeat);
     }
     D00_CHECK(spawn_child(self, "conflict", modules, dir_b) == 0,
-        "conflicting registry control fails closed in a fresh process");
+        "host preflight blocks a conflicting fresh-process registry");
 
     return d00_summary("provider_load_fresh");
 }

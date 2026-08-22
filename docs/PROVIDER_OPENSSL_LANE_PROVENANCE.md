@@ -87,17 +87,19 @@ not falsely call the entire post-build directory pristine.
 
 The OpenSSL lane helper does not build the Ed301 provider module and does not
 claim to sanitize OpenSSL or the provider. The acceptance runner records
-ordinary, failpoint, and collider provider-module hashes after the harness
-build and again after the targeted execution gates, and compares them
-byte-for-byte. Those hashes are separate from `openssl_modules_post.sha256`,
-which covers only OpenSSL's installed module directory.
+ordinary, failpoint, private-use TLS and full TLS-collider provider-module
+hashes after the harness build and again after the targeted execution gates,
+and compares them byte-for-byte. Those hashes are separate from
+`openssl_modules_post.sha256`, which covers only OpenSSL's installed module
+directory.
 
 The runner's ASan/UBSan gate is targeted to
 `provider_signature`, `provider_keymgmt`, `provider_serialization`,
-`val01_decoder_bio`, `provider_load`, and `provider_tls`, with a separate
+`val01_decoder_bio`, `provider_load`, `provider_rand`, and `provider_tls`, with a separate
 `provider_hardening` Rust-allocation-only run. Valgrind is targeted to
 `provider_signature`, `provider_serialization`, `val01_decoder_bio`,
-`provider_load`, and the same `provider_hardening` Rust-allocation-only run;
+`provider_load`, `provider_rand`, and the same `provider_hardening`
+Rust-allocation-only run;
 the GCC analyzer is targeted to `c/provider_shim.c`. These scopes are written
 as evidence and reported as targeted checks. They do not instrument the
 OpenSSL shared libraries, every harness, every provider entry path, or the

@@ -6,10 +6,21 @@ fn main() {
     println!("cargo:rerun-if-env-changed=OPENSSL_LIB_DIR");
 
     let mut build = cc::Build::new();
-    // The test-only failpoint artifact renames the module and its
-    // "provider=" property inside the C shim (FBL-02).
-    if std::env::var_os("CARGO_FEATURE_TEST_FAILPOINT").is_some() {
+    let failpoint = std::env::var_os("CARGO_FEATURE_TEST_FAILPOINT").is_some();
+    let tls_experiment = std::env::var_os("CARGO_FEATURE_TLS_EXPERIMENT").is_some();
+    let tls_collider = std::env::var_os("CARGO_FEATURE_TLS_COLLIDER").is_some();
+    assert!(
+        usize::from(failpoint) + usize::from(tls_experiment) + usize::from(tls_collider) <= 1,
+        "provider artifact features are mutually exclusive"
+    );
+    if failpoint {
         build.define("ED301D00_TEST_FAILPOINT_ARTIFACT", "1");
+    }
+    if tls_experiment {
+        build.define("ED301D00_TLS_EXPERIMENT_ARTIFACT", "1");
+    }
+    if tls_collider {
+        build.define("ED301D00_TLS_COLLIDER_ARTIFACT", "1");
     }
     build
         .file("c/provider_shim.c")

@@ -21,10 +21,9 @@
  * The public OpenSSL 3.5.7 and 4.0.1 sources do not specify a duplicate
  * provider TLS-SIGALG policy.  The test therefore accepts only the two
  * observable, safe outcomes above and compares the complete result line from
- * both fresh-process orders.  The fixture's collider currently advertises
- * ED25519 without owning an ED25519 keymgmt; OpenSSL may consequently filter
- * that declaration before it enters libssl's usable list.  That limitation is
- * reported explicitly in the child record instead of being hidden.
+ * both fresh-process orders.  Both fixtures are full, separately named
+ * Ed301 providers that own KEYMGMT and SIGNATURE; neither borrows a foreign
+ * ED25519 implementation.
  */
 
 #include <errno.h>
@@ -462,7 +461,8 @@ static int outcome_is_accepted(const TLS_OUTCOME *outcome)
         && outcome->error_text[0] == '\0';
 
     if (outcome == NULL || !outcome->provider_load_ok
-            || !outcome->capability_ok || !outcome->setup_ok)
+            || !outcome->capability_ok || !outcome->setup_ok
+            || !outcome->collider_keymgmt_owned)
         return 0;
     if (completed)
         return completed_ok;
@@ -521,7 +521,7 @@ static void print_outcome(const char *order, const TLS_OUTCOME *outcome)
         capability_matches(&outcome->draft_capability,
             D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG),
         capability_matches(&outcome->collider_capability,
-            "collider_fe84", "ED25519", "ED25519"),
+            D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG),
         outcome->draft_capability.iana_name,
         outcome->draft_capability.sigalg_name,
         outcome->draft_capability.keytype,
@@ -552,8 +552,7 @@ static void print_outcome(const char *order, const TLS_OUTCOME *outcome)
         outcome->trace.alert_count, fatal_collision_alert(&outcome->trace),
         outcome->collider_keymgmt_owned, alert_fingerprint, errors);
     if (!outcome->collider_keymgmt_owned)
-        printf("VAL05_LIMITATION collider_fe84 declares ED25519 but does "
-            "not own an ED25519 keymgmt; libssl may filter that capability\n");
+        printf("VAL05_FAILURE collider does not own its Ed301 KEYMGMT\n");
 }
 
 static int child_main(const char *order)
@@ -581,6 +580,7 @@ static int child_main(const char *order)
 
     memset(&outcome, 0, sizeof(outcome));
     outcome.verify_result = -1;
+    d00_property = D00_TLS_PROP;
     if (!draft_first && strcmp(order, "collider-then-draft") != 0) {
         snprintf(outcome.setup_stage, sizeof(outcome.setup_stage),
             "bad-order");
@@ -592,11 +592,13 @@ static int child_main(const char *order)
     ERR_clear_error();
     default_provider = OSSL_PROVIDER_load(NULL, "default");
     if (draft_first) {
-        draft_provider = OSSL_PROVIDER_load(NULL, D00_PROVIDER);
-        collider_provider = OSSL_PROVIDER_load(NULL, "collider_fe84");
+        draft_provider = d00_load_named(NULL, NULL, D00_TLS_PROVIDER);
+        collider_provider =
+            d00_load_named(NULL, NULL, D00_TLS_COLLIDER_PROVIDER);
     } else {
-        collider_provider = OSSL_PROVIDER_load(NULL, "collider_fe84");
-        draft_provider = OSSL_PROVIDER_load(NULL, D00_PROVIDER);
+        collider_provider =
+            d00_load_named(NULL, NULL, D00_TLS_COLLIDER_PROVIDER);
+        draft_provider = d00_load_named(NULL, NULL, D00_TLS_PROVIDER);
     }
     outcome.provider_load_ok = default_provider != NULL
         && draft_provider != NULL && collider_provider != NULL;
@@ -613,7 +615,7 @@ static int child_main(const char *order)
         && capability_matches(&outcome.draft_capability,
             D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG)
         && capability_matches(&outcome.collider_capability,
-            "collider_fe84", "ED25519", "ED25519");
+            D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG);
     if (!outcome.capability_ok) {
         snprintf(outcome.setup_stage, sizeof(outcome.setup_stage),
             "capability-inspection");
@@ -621,14 +623,15 @@ static int child_main(const char *order)
         goto done;
     }
 
-    collider_keymgmt = EVP_KEYMGMT_fetch(NULL, "ED25519", NULL);
+    collider_keymgmt = EVP_KEYMGMT_fetch(
+        NULL, D00_ALG, D00_TLS_COLLIDER_PROP);
     keymgmt_owner = collider_keymgmt == NULL
         ? NULL : EVP_KEYMGMT_get0_provider(collider_keymgmt);
     if (keymgmt_owner != NULL) {
         const char *owner_name = OSSL_PROVIDER_get0_name(keymgmt_owner);
 
         outcome.collider_keymgmt_owned = owner_name != NULL
-            && strcmp(owner_name, "collider_fe84") == 0;
+            && strcmp(owner_name, D00_TLS_COLLIDER_PROVIDER) == 0;
     }
     EVP_KEYMGMT_free(collider_keymgmt);
     collider_keymgmt = NULL;

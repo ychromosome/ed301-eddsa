@@ -119,6 +119,16 @@ cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
 cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
     "$BUILD/modules/ed301_eddsa_draft00_failpoint.so"
 
+cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
+    --release --locked --offline --features tls-experiment
+cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
+    "$BUILD/modules/ed301_eddsa_draft00_tls_test.so"
+
+cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
+    --release --locked --offline --features tls-collider
+cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
+    "$BUILD/modules/ed301_eddsa_draft00_tls_collider.so"
+
 if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
         | grep -E 'ED301_EDDSA_DRAFT00_(PANIC|ALLOC)_FAILPOINT'; then
     echo "ordinary module contains a test failpoint" >&2
@@ -126,20 +136,24 @@ if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
 fi
 strings "$BUILD/modules/ed301_eddsa_draft00_failpoint.so" \
     | grep -F ED301_EDDSA_DRAFT00_PANIC_FAILPOINT >/dev/null
+if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
+        | grep -E 'TLS-SIGALG|ed301_eddsa_draft00_test'; then
+    echo "ordinary module contains the private-use TLS capability" >&2
+    exit 1
+fi
+strings "$BUILD/modules/ed301_eddsa_draft00_tls_test.so" \
+    | grep -F TLS-SIGALG >/dev/null
+strings "$BUILD/modules/ed301_eddsa_draft00_tls_collider.so" \
+    | grep -F TLS-SIGALG >/dev/null
 
 test "$(nm -D --defined-only "$BUILD/modules/ed301_eddsa_draft00.so" \
     | awk '$2 == "T" { count++ } END { print count + 0 }')" -eq 1
 nm -D --defined-only "$BUILD/modules/ed301_eddsa_draft00.so" \
     | grep -E ' T OSSL_provider_init$' >/dev/null
 
-gcc -std=c11 -Wall -Wextra -Werror -shared -fPIC \
-    -I"$OPENSSL_PREFIX/include" \
-    -o "$BUILD/modules/collider_fe84.so" \
-    "$ROOT/provider-tests/collider_provider.c"
-
 HARNESSES=(
     provider_load provider_keymgmt provider_signature
-    provider_serialization provider_pki provider_oid_collision
+    provider_serialization provider_pki provider_oid_collision provider_rand
     provider_tls provider_hardening provider_load_fresh
     provider_shim_unit val01_decoder_bio val03_retry val05_codepoint
 )
@@ -156,7 +170,8 @@ for harness in "${HARNESSES[@]}"; do
 done
 
 for harness in provider_load provider_keymgmt provider_signature \
-        provider_serialization provider_pki provider_tls provider_hardening \
+        provider_serialization provider_pki provider_rand provider_tls \
+        provider_hardening \
         provider_load_fresh provider_shim_unit val01_decoder_bio \
         val05_codepoint; do
     timeout 240 "$BUILD/bin/$harness"
@@ -233,7 +248,7 @@ fi
 cmp "$CLI/key.pem" "$CLI/decrypted.pem"
 
 for harness in provider_signature provider_keymgmt provider_serialization \
-        val01_decoder_bio provider_load provider_tls; do
+        val01_decoder_bio provider_load provider_rand provider_tls; do
     clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g \
         -fsanitize=address,undefined -fno-sanitize-recover=all \
         -I"$OPENSSL_PREFIX/include" \
@@ -249,7 +264,7 @@ for harness in provider_signature provider_keymgmt provider_serialization \
 done
 
 for harness in provider_signature provider_serialization val01_decoder_bio \
-        provider_load; do
+        provider_load provider_rand; do
     valgrind --error-exitcode=99 --errors-for-leak-kinds=definite \
         --leak-check=full --quiet "$BUILD/bin/$harness"
 done
@@ -272,7 +287,8 @@ scan-build --status-bugs --use-cc=clang -o "$BUILD/scan-build" \
 for artifact in "$OPENSSL_BIN" \
         "$BUILD/modules/ed301_eddsa_draft00.so" \
         "$BUILD/modules/ed301_eddsa_draft00_failpoint.so" \
-        "$BUILD/modules/collider_fe84.so" \
+        "$BUILD/modules/ed301_eddsa_draft00_tls_test.so" \
+        "$BUILD/modules/ed301_eddsa_draft00_tls_collider.so" \
         "$BUILD/bin/"*; do
     sha256sum "$artifact"
 done > "$BUILD/evidence/artifacts.sha256"

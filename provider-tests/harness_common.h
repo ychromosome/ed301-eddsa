@@ -33,13 +33,16 @@
 #define D00_PROP "provider=ed301_eddsa_draft00"
 #define D00_FAILPOINT_PROVIDER "ed301_eddsa_draft00_failpoint"
 #define D00_FAILPOINT_PROP "provider=ed301_eddsa_draft00_failpoint"
+#define D00_TLS_PROVIDER "ed301_eddsa_draft00_tls_test"
+#define D00_TLS_PROP "provider=ed301_eddsa_draft00_tls_test"
+#define D00_TLS_COLLIDER_PROVIDER "ed301_eddsa_draft00_tls_collider"
+#define D00_TLS_COLLIDER_PROP "provider=ed301_eddsa_draft00_tls_collider"
 #define D00_SEED_BYTES ((size_t)38)
 #define D00_PUB_BYTES ((size_t)38)
 #define D00_SIG_BYTES ((size_t)76)
 
 #define D00_CALLER_SENTINEL_A ((unsigned int)0x2d01)
 #define D00_CALLER_SENTINEL_B ((unsigned int)0x2d02)
-#define D00_PROVIDER_REGISTRATION_REASON ((unsigned int)5)
 #define D00_ERROR_QUEUE_CAPACITY ((size_t)64)
 
 static inline void d00_seed_error_sentinel(void)
@@ -77,24 +80,17 @@ static inline int d00_queue_is_sentinel_only(void)
         && ERR_GET_REASON(errors[1]) == D00_CALLER_SENTINEL_B;
 }
 
-static inline int d00_queue_has_sentinel_and_registration_error(void)
+static inline int d00_provider_has_dispatch(
+    const OSSL_PROVIDER *provider,
+    int function_id)
 {
-    unsigned long errors[D00_ERROR_QUEUE_CAPACITY];
-    const size_t count = d00_drain_error_queue(
-        errors, D00_ERROR_QUEUE_CAPACITY);
-    const size_t inspect_count = count < D00_ERROR_QUEUE_CAPACITY
-        ? count : D00_ERROR_QUEUE_CAPACITY;
-    size_t index;
+    const OSSL_DISPATCH *dispatch;
 
-    if (count < 3
-            || ERR_GET_LIB(errors[0]) != ERR_LIB_USER
-            || ERR_GET_REASON(errors[0]) != D00_CALLER_SENTINEL_A
-            || ERR_GET_LIB(errors[1]) != ERR_LIB_USER
-            || ERR_GET_REASON(errors[1]) != D00_CALLER_SENTINEL_B)
+    if (provider == NULL
+            || (dispatch = OSSL_PROVIDER_get0_dispatch(provider)) == NULL)
         return 0;
-    for (index = 2; index < inspect_count; index++) {
-        if (ERR_GET_REASON(errors[index])
-                == D00_PROVIDER_REGISTRATION_REASON)
+    for (; dispatch->function_id != 0; dispatch++) {
+        if (dispatch->function_id == function_id)
             return 1;
     }
     return 0;
@@ -103,37 +99,104 @@ static inline int d00_queue_has_sentinel_and_registration_error(void)
 static inline int d00_provider_has_reason_dispatch(
     const OSSL_PROVIDER *provider)
 {
-    const OSSL_DISPATCH *dispatch;
+    return d00_provider_has_dispatch(
+        provider, OSSL_FUNC_PROVIDER_GET_REASON_STRINGS);
+}
 
-    if (provider == NULL
-            || (dispatch = OSSL_PROVIDER_get0_dispatch(provider)) == NULL)
-        return 0;
-    for (; dispatch->function_id != 0; dispatch++) {
-        if (dispatch->function_id == OSSL_FUNC_PROVIDER_GET_REASON_STRINGS)
-            return 1;
+enum d00_registry_state {
+    D00_REGISTRY_CONFLICT = -1,
+    D00_REGISTRY_FREE = 0,
+    D00_REGISTRY_EXACT = 1
+};
+
+static inline enum d00_registry_state d00_registry_identity_state(
+    int *nid_out)
+{
+    char numeric_oid[96];
+    int nid = OBJ_txt2nid(D00_OID_TEXT);
+    int short_nid = OBJ_sn2nid(D00_ALG);
+    int long_nid = OBJ_ln2nid(D00_ALG);
+    ASN1_OBJECT *object;
+    const char *short_name;
+    const char *long_name;
+
+    if (nid_out == NULL)
+        return D00_REGISTRY_CONFLICT;
+    *nid_out = NID_undef;
+    if (nid == NID_undef && short_nid == NID_undef
+            && long_nid == NID_undef)
+        return D00_REGISTRY_FREE;
+    if (nid == NID_undef || short_nid != nid || long_nid != nid)
+        return D00_REGISTRY_CONFLICT;
+    object = OBJ_nid2obj(nid);
+    short_name = OBJ_nid2sn(nid);
+    long_name = OBJ_nid2ln(nid);
+    if (object == NULL || short_name == NULL || long_name == NULL
+            || strcmp(short_name, D00_ALG) != 0
+            || strcmp(long_name, D00_ALG) != 0
+            || OBJ_obj2txt(numeric_oid, sizeof(numeric_oid), object, 1)
+                != (int)strlen(D00_OID_TEXT)
+            || strcmp(numeric_oid, D00_OID_TEXT) != 0)
+        return D00_REGISTRY_CONFLICT;
+    *nid_out = nid;
+    return D00_REGISTRY_EXACT;
+}
+
+static inline enum d00_registry_state d00_registry_sigid_state(int nid)
+{
+    int digest_nid = NID_undef;
+    int public_key_nid = NID_undef;
+    int reverse_nid = NID_undef;
+    int next_nid;
+    int signature_nid;
+    int found = 0;
+
+    if (nid == NID_undef)
+        return D00_REGISTRY_FREE;
+    next_nid = OBJ_new_nid(0);
+    if (next_nid == NID_undef)
+        return D00_REGISTRY_CONFLICT;
+    for (signature_nid = 1; signature_nid < next_nid; signature_nid++) {
+        if (OBJ_find_sigid_algs(
+                signature_nid, &digest_nid, &public_key_nid) != 1)
+            continue;
+        if (signature_nid != nid && digest_nid != nid
+                && public_key_nid != nid)
+            continue;
+        if (signature_nid != nid || digest_nid != NID_undef
+                || public_key_nid != nid || found)
+            return D00_REGISTRY_CONFLICT;
+        found = 1;
     }
-    return 0;
+    if (!found)
+        return D00_REGISTRY_FREE;
+    if (OBJ_find_sigid_by_algs(&reverse_nid, NID_undef, nid) != 1
+            || reverse_nid != nid)
+        return D00_REGISTRY_CONFLICT;
+    return D00_REGISTRY_EXACT;
+}
+
+static inline int d00_registry_preflight_ok(void)
+{
+    int nid = NID_undef;
+    enum d00_registry_state identity = d00_registry_identity_state(&nid);
+    enum d00_registry_state sigid;
+
+    if (identity == D00_REGISTRY_CONFLICT)
+        return 0;
+    sigid = d00_registry_sigid_state(nid);
+    return sigid != D00_REGISTRY_CONFLICT
+        && ((identity == D00_REGISTRY_FREE && sigid == D00_REGISTRY_FREE)
+            || (identity == D00_REGISTRY_EXACT
+                && sigid == D00_REGISTRY_EXACT));
 }
 
 static inline int d00_registry_is_exact(void)
 {
-    int nid = OBJ_txt2nid(D00_OID_TEXT);
-    int digest_nid = NID_undef;
-    int public_key_nid = NID_undef;
-    int signature_nid = NID_undef;
-    const char *short_name = nid == NID_undef ? NULL : OBJ_nid2sn(nid);
-    const char *long_name = nid == NID_undef ? NULL : OBJ_nid2ln(nid);
+    int nid = NID_undef;
 
-    return nid != NID_undef
-        && short_name != NULL && long_name != NULL
-        && strcmp(short_name, D00_ALG) == 0
-        && strcmp(long_name, D00_ALG) == 0
-        && OBJ_find_sigid_algs(nid, &digest_nid, &public_key_nid) == 1
-        && digest_nid == NID_undef
-        && public_key_nid == nid
-        && OBJ_find_sigid_by_algs(
-            &signature_nid, NID_undef, nid) == 1
-        && signature_nid == nid;
+    return d00_registry_identity_state(&nid) == D00_REGISTRY_EXACT
+        && d00_registry_sigid_state(nid) == D00_REGISTRY_EXACT;
 }
 
 /*
@@ -145,18 +208,33 @@ static const char *d00_property = D00_PROP;
 
 static int d00_pass_count;
 static int d00_fail_count;
+static CRYPTO_ONCE d00_registry_once = CRYPTO_ONCE_STATIC_INIT;
+static CRYPTO_RWLOCK *d00_registry_lock;
+
+static void d00_registry_lock_init(void)
+{
+    d00_registry_lock = CRYPTO_THREAD_lock_new();
+}
 
 /*
- * FBL-15: every harness binds its compile-time OpenSSL headers to the
- * runtime library before doing anything else.  A crossed header/library
- * combination (for example a harness built against one lane but resolving
- * a same-soname system library at run time) fails closed here.
+ * Every harness requires the supported ABI major and minimum API baseline.
+ * Patch and later-minor updates inside that major are compatible; the DSO
+ * provenance check below still requires the configured lane directory.
  */
-static inline int d00_runtime_matches_headers(void)
+static inline int d00_runtime_is_compatible(void)
 {
-    const char *runtime = OpenSSL_version(OPENSSL_VERSION);
+    const unsigned long runtime = OpenSSL_version_num();
+    const unsigned int major = (unsigned int)((runtime >> 28) & 0xfUL);
+    const unsigned int minor = (unsigned int)((runtime >> 20) & 0xffUL);
 
-    return runtime != NULL && strcmp(runtime, OPENSSL_VERSION_TEXT) == 0;
+    if (major != OPENSSL_VERSION_MAJOR)
+        return 0;
+#if OPENSSL_VERSION_MAJOR == 3
+    return minor >= 5U;
+#else
+    (void)minor;
+    return 1;
+#endif
 }
 
 static inline const char *d00_dso_basename(const char *path)
@@ -274,10 +352,10 @@ static inline int d00_runtime_tls_library_bound(void)
 
 #define D00_REQUIRE_RUNTIME_BINDING()                                    \
     do {                                                                 \
-        if (!d00_runtime_matches_headers()) {                            \
+        if (!d00_runtime_is_compatible()) {                              \
             fprintf(stderr,                                              \
-                "FATAL: runtime OpenSSL '%s' does not match the "        \
-                "compile-time headers '%s'\n",                           \
+                "FATAL: runtime OpenSSL '%s' is not compatible with "    \
+                "the compile-time headers '%s'\n",                       \
                 OpenSSL_version(OPENSSL_VERSION), OPENSSL_VERSION_TEXT); \
             return 3;                                                    \
         }                                                                \
@@ -318,20 +396,41 @@ static inline OSSL_PROVIDER *d00_load_named(
     OSSL_PROVIDER **defp,
     const char *provider_name)
 {
-    OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(libctx, "default");
-    OSSL_PROVIDER *draft;
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *draft = NULL;
 
+    if (defp != NULL)
+        *defp = NULL;
+    /*
+     * This lock belongs to the host test integration helper, not to the
+     * provider DSO.  It serializes this executable's preflight/load/
+     * postflight sequence using OpenSSL's portable thread primitive.  It is
+     * not claimed to coordinate unrelated providers or processes.
+     */
+    if (CRYPTO_THREAD_run_once(&d00_registry_once,
+            d00_registry_lock_init) != 1
+            || d00_registry_lock == NULL
+            || CRYPTO_THREAD_write_lock(d00_registry_lock) != 1)
+        return NULL;
+    if (!d00_registry_preflight_ok())
+        goto done;
+    deflt = OSSL_PROVIDER_load(libctx, "default");
     if (deflt == NULL)
-        return NULL;
+        goto done;
     draft = OSSL_PROVIDER_load(libctx, provider_name);
-    if (draft == NULL) {
+    if (draft == NULL || !d00_registry_is_exact()) {
+        OSSL_PROVIDER_unload(draft);
+        draft = NULL;
         OSSL_PROVIDER_unload(deflt);
-        return NULL;
+        deflt = NULL;
+        goto done;
     }
     if (defp != NULL)
         *defp = deflt;
     else
         OSSL_PROVIDER_unload(deflt);
+done:
+    CRYPTO_THREAD_unlock(d00_registry_lock);
     return draft;
 }
 

@@ -1,27 +1,16 @@
 /*
- * VAL-03: the fixed registration-retry ceiling under delayed competing
+ * F4 regression: no provider-local spin/wait under delayed competing
  * registration.
  *
- * Validation finding (established with these reproducers on both the
- * sealed Experiment-2 module and the repaired module): OpenSSL's
- * core_obj_create is duplicate-tolerant and OBJ_add_sigid accepts an
- * exact re-registration, so a provider load that observes a
- * half-finished EXACT competing registration simply completes the
- * registration itself.  The wait-for-exact retry ceiling is therefore
- * never load-bearing for a delayed-but-successful competitor; it only
- * bounds how long a load facing a PERSISTENT foreign conflict spins
- * before failing closed, which is intentional.  The repair replaces the
- * scheduler-dependent bound (1024 bare sched_yield calls) with a
- * wall-clock bound (~0.5 s) so the fail-closed timing is deterministic.
+ * The host integration helper treats an incomplete or foreign registry as
+ * unsafe and returns immediately.  Once an exact competing registration is
+ * complete, an explicit caller retry succeeds.  A foreign conflict remains
+ * blocked.  The provider contains no PID lock, scheduler loop or timeout.
  *
  * Lanes (each in its own process; the registry is process-global):
- *   exact-fast     competitor completes after 50 ms -> load succeeds
- *   exact-stalled  competitor stalls 3 s before its sigid step -> load
- *                  still succeeds (self-completion, ceiling not
- *                  load-bearing)
- *   conflict       competitor holds a foreign binding -> load fails
- *                  closed; the elapsed wall time is recorded to document
- *                  the bounded wait
+ *   exact-fast     first preflight fails immediately; retry after 50 ms works
+ *   exact-stalled  first preflight fails immediately; retry after 3 s works
+ *   conflict       initial and repeated preflights remain blocked
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -93,7 +82,7 @@ static void *competitor_main(void *argument)
 }
 
 static int run_lane(const char *label, const char *module_dir,
-    long delay_milliseconds, int conflicting, int expect_success)
+    long delay_milliseconds, int conflicting)
 {
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
@@ -105,7 +94,8 @@ static int run_lane(const char *label, const char *module_dir,
     pthread_t thread;
     double started;
     double elapsed;
-    int load_ok;
+    OSSL_PROVIDER *retry = NULL;
+    int first_queue_ok;
     int lane_ok = 0;
 
     if (libctx == NULL)
@@ -136,9 +126,9 @@ static int run_lane(const char *label, const char *module_dir,
 
     started = now_seconds();
     d00_seed_error_sentinel();
-    draft = OSSL_PROVIDER_load(libctx, D00_PROVIDER);
+    draft = d00_load_named(libctx, NULL, D00_PROVIDER);
     elapsed = now_seconds() - started;
-    load_ok = draft != NULL;
+    first_queue_ok = d00_queue_is_sentinel_only();
     pthread_join(thread, NULL);
 
     if (!atomic_load_explicit(
@@ -146,18 +136,22 @@ static int run_lane(const char *label, const char *module_dir,
         fprintf(stderr, "%s: competitor failed to finish\n", label);
         goto done;
     }
-    printf("%s: load %s in %.3f s\n", label,
-        load_ok ? "succeeded" : "failed closed", elapsed);
-    lane_ok = load_ok == expect_success
-        && (expect_success
-            ? d00_queue_is_sentinel_only() && d00_registry_is_exact()
-            : d00_queue_has_sentinel_and_registration_error())
-        && (expect_success || elapsed <= 1.5);
+    d00_seed_error_sentinel();
+    retry = d00_load_named(libctx, NULL, D00_PROVIDER);
+    printf("%s: unsafe first load %s in %.3f s; explicit retry %s\n",
+        label, draft == NULL ? "blocked" : "unexpectedly succeeded",
+        elapsed, retry != NULL ? "succeeded" : "blocked");
+    lane_ok = draft == NULL && first_queue_ok && elapsed <= 1.0
+        && d00_queue_is_sentinel_only()
+        && (conflicting
+            ? retry == NULL
+            : retry != NULL && d00_registry_is_exact());
     if (!lane_ok)
-        fprintf(stderr, "%s: expected %s\n", label,
-            expect_success ? "success" : "fail-closed");
+        fprintf(stderr, "%s: host preflight/retry policy mismatch\n", label);
 
 done:
+    if (retry != NULL)
+        OSSL_PROVIDER_unload(retry);
     if (draft != NULL)
         OSSL_PROVIDER_unload(draft);
     if (deflt != NULL)
@@ -173,16 +167,14 @@ int main(int argc, char **argv)
 
     D00_REQUIRE_RUNTIME_BINDING();
     if (strcmp(mode, "exact-fast") == 0) {
-        D00_CHECK(run_lane("exact-fast (50 ms)", module_dir, 50, 0, 1),
-            "load succeeds beside a competitor that completes quickly");
+        D00_CHECK(run_lane("exact-fast (50 ms)", module_dir, 50, 0),
+            "explicit retry succeeds after a fast exact competitor");
     } else if (strcmp(mode, "exact-stalled") == 0) {
-        D00_CHECK(run_lane("exact-stalled (3 s)", module_dir, 3000, 0, 1),
-            "load self-completes beside a stalled exact competitor "
-            "(retry ceiling not load-bearing)");
+        D00_CHECK(run_lane("exact-stalled (3 s)", module_dir, 3000, 0),
+            "first load does not spin; explicit retry succeeds later");
     } else if (strcmp(mode, "conflict") == 0) {
-        D00_CHECK(run_lane("conflict", module_dir, 0, 1, 0),
-            "persistent foreign conflict fails closed within the "
-            "bounded wait");
+        D00_CHECK(run_lane("conflict", module_dir, 0, 1),
+            "persistent foreign conflict remains blocked without waiting");
     } else {
         fprintf(stderr, "usage: val03_retry "
             "exact-fast|exact-stalled|conflict [module-dir]\n");

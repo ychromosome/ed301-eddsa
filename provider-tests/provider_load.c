@@ -178,6 +178,9 @@ int main(void)
         D00_CHECK(libctx != NULL, "library context");
         draft = d00_load(libctx, &deflt);
         D00_CHECK(draft != NULL, "provider load in isolated context");
+        D00_CHECK(!d00_provider_has_dispatch(
+                draft, OSSL_FUNC_PROVIDER_GET_CAPABILITIES),
+            "ordinary provider has no TLS capability dispatch");
         D00_CHECK(OSSL_PROVIDER_available(libctx, D00_PROVIDER) == 1,
             "provider availability");
 

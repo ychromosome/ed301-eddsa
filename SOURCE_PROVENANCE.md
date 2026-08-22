@@ -77,3 +77,17 @@ local `ed301-eddsa` crate, uses the repository's vendored dependencies,
 generates fixtures from `inputs/round4/`, replaces the donor orchestrator,
 and records fresh local evidence.  The donor is design and source provenance,
 not an independent security review.
+
+## Provider repair references
+
+The 2026-08-22 integration repair consulted the public OpenSSL 3.5.7 release
+source for provider-facing interface patterns:
+
+| OpenSSL path | relationship | source SHA-256 |
+|---|---|---|
+| `providers/legacyprov.c` | child `OSSL_LIB_CTX` and Core error-mark dispatch pattern | `59ba86bced50be12994c366e1d9805011da60ba0601ed320d3dee600f7aa9add` |
+| `test/testutil/fake_random.c` | minimal test-only RAND dispatch shape | `33298fb660c10c89d486d2ffd5845512b845bd64914e3b0644061fd15a14e0fc` |
+
+The implementation is not a copy of either provider. It narrows those public
+Apache-2.0 interface patterns to the Ed301 child-context and deterministic
+RAND regression tests.
