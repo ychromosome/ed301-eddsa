@@ -1,154 +1,229 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 
-if [ "$#" -ne 2 ]; then
-    echo "usage: $0 <openssl-prefix> <3.5.7|4.0.1>" >&2
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+umask 077
+
+if (( $# != 3 )); then
+    printf 'usage: %s <sealed-lane-root> <3.5.7|4.0.1> <lane-evidence-sha256>\n' \
+        "$0" >&2
     exit 2
 fi
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-OPENSSL_PREFIX=$(readlink -f -- "$1")
+LANE_ROOT_ARG=$1
 LANE=$2
+LANE_EVIDENCE=$3
 
-case "$LANE" in
-    3.5.7|4.0.1) ;;
-    *) echo "unsupported OpenSSL lane: $LANE" >&2; exit 2 ;;
+sh "$ROOT/scripts/require-verified-snapshot.sh"
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+case "$ROOT" in
+    *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
 esac
+verify_lane() {
+    sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
+        "$LANE_ROOT_ARG" "$LANE" "$LANE_EVIDENCE"
+}
+verify_lane
 
-OPENSSL_LIB="$OPENSSL_PREFIX/lib"
-OPENSSL_BIN="$OPENSSL_PREFIX/bin/openssl"
-BUILD="$ROOT/target/provider-$LANE"
-EXPECTED_BUILD="$ROOT/target/provider-$LANE"
-
-test "$BUILD" = "$EXPECTED_BUILD"
-test -x "$OPENSSL_BIN"
-test -d "$OPENSSL_PREFIX/include/openssl"
-test -d "$OPENSSL_LIB"
-
-rm -rf -- "$BUILD"
-mkdir -p "$BUILD/bin" "$BUILD/modules" "$BUILD/evidence"
-
-LOG="$BUILD/evidence/run.log"
-STATUS="$BUILD/evidence/status.txt"
-TEMP_CARGO_HOME=$(mktemp -d "$BUILD/cargo-home.XXXXXX")
-
-finish()
+LANE_ROOT=$(readlink -f -- "$LANE_ROOT_ARG")
+OPENSSL_PREFIX=$LANE_ROOT/inst/$LANE
+OPENSSL_LIB=$OPENSSL_PREFIX/lib
+OPENSSL_BIN=$OPENSSL_PREFIX/bin/openssl
+BUILD=$(mktemp -d "/tmp/ed301-provider-${LANE}.XXXXXX")
+HOME_DIR=$BUILD/home
+CARGO_HOME_DIR=$BUILD/cargo-home
+mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$BUILD/bin" \
+    "$BUILD/modules" "$BUILD/fresh-modules" "$BUILD/evidence" \
+    "$BUILD/generated" "$BUILD/targets" "$BUILD/profile-markers"
 {
+    printf '%s\n' '[build]' 'rustflags = ["-Cpanic=unwind"]' '' \
+        '[source.crates-io]' 'replace-with = "vendored-sources"' '' \
+        '[source.vendored-sources]'
+    printf "directory = '%s'\n" "$ROOT/vendor"
+    printf '%s\n' '' '[net]' 'offline = true'
+} >"$CARGO_HOME_DIR/config.toml"
+chmod 600 "$CARGO_HOME_DIR/config.toml"
+
+LOG=$BUILD/evidence/run.log
+STATUS=$BUILD/evidence/status.txt
+finish() {
     rc=$?
-    rm -rf -- "$TEMP_CARGO_HOME"
-    if [ "$rc" -eq 0 ]; then
-        echo "PASS provider lane $LANE" | tee "$STATUS"
+    if (( rc == 0 )); then
+        printf 'PASS provider lane %s result=%s\n' "$LANE" "$BUILD" \
+            | tee "$STATUS"
     else
-        echo "FAIL provider lane $LANE exit=$rc" | tee "$STATUS"
+        printf 'FAIL provider lane %s exit=%s result=%s\n' \
+            "$LANE" "$rc" "$BUILD" | tee "$STATUS"
     fi
     exit "$rc"
 }
 trap finish EXIT
 exec > >(tee "$LOG") 2>&1
 
-for tool in cargo rustc rustfmt cargo-clippy python3 gcc clang nm strings \
-        readelf ldd sha256sum timeout valgrind scan-build; do
-    command -v "$tool" >/dev/null
+for tool in /usr/bin/cargo /usr/bin/rustc /usr/bin/rustfmt \
+        /usr/bin/cargo-clippy /usr/bin/rustdoc /usr/bin/python3 \
+        /usr/bin/gcc /usr/bin/clang /usr/bin/nm /usr/bin/strings \
+        /usr/bin/readelf /usr/bin/ldd /usr/bin/sha256sum \
+        /usr/bin/timeout /usr/bin/valgrind /usr/bin/scan-build \
+        /usr/bin/jq; do
+    test -x "$tool"
 done
 
-sh "$ROOT/scripts/verify-source-tree.sh"
-sh "$ROOT/scripts/check-rust-build-environment.sh"
+printf 'repository_snapshot=%s\nlane=%s\nlane_root=%s\nopenssl_prefix=%s\nresult=%s\n' \
+    "$ROOT" "$LANE" "$LANE_ROOT" "$OPENSSL_PREFIX" "$BUILD"
 
-export CARGO_HOME="$TEMP_CARGO_HOME"
-export CARGO_TARGET_DIR="$BUILD/cargo-target"
-export CARGO_NET_OFFLINE=true
-export CARGO_INCREMENTAL=0
-export CCACHE_DISABLE=1
-export CC=/usr/bin/gcc
-export RUSTFLAGS="-Cpanic=unwind"
-export OPENSSL_INCLUDE_DIR="$OPENSSL_PREFIX/include"
-export OPENSSL_LIB_DIR="$OPENSSL_LIB"
-export OPENSSL_MODULES="$BUILD/modules"
-export OPENSSL_CONF=/dev/null
-export LD_LIBRARY_PATH="$OPENSSL_LIB"
-export D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX"
+provider_env() {
+    local target=$1
+    shift
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$target" \
+        CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+        CC=/usr/bin/gcc AR=/usr/bin/ar \
+        ED301_HERMETIC_PROVIDER_BUILD=1 \
+        OPENSSL_INCLUDE_DIR="$OPENSSL_PREFIX/include" \
+        OPENSSL_LIB_DIR="$OPENSSL_LIB" LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        "$@"
+}
+cargo_provider() {
+    local target=$1
+    shift
+    (cd / && provider_env "$target" /usr/bin/cargo "$@")
+}
 
-echo "repository=$ROOT"
-echo "lane=$LANE"
-echo "openssl_prefix=$OPENSSL_PREFIX"
-rustc -Vv
-cargo -V
-rustfmt -V
-cargo clippy -V
+provider_env "$BUILD/targets/identity" /usr/bin/rustc --version --verbose
+provider_env "$BUILD/targets/identity" /usr/bin/cargo --version --verbose
+provider_env "$BUILD/targets/identity" /usr/bin/rustfmt --version
+provider_env "$BUILD/targets/identity" /usr/bin/cargo-clippy --version
 "$OPENSSL_BIN" version -a
+(cd "$ROOT/inputs/round4" && sha256sum --strict --quiet -c SHA256SUMS)
 
+# Isolated Python cannot import user startup state.  It writes only to the
+# private result tree.  The generated Rust module is formatted by the pinned
+# tool and must equal the committed, manifest-bound module byte for byte.
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -I -B \
+    "$ROOT/provider-tests/gen_vectors.py" "$ROOT" \
+    "$BUILD/generated/vectors.h" "$BUILD/generated/policy_vectors_data.rs"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    /usr/bin/rustfmt --edition 2024 \
+    "$BUILD/generated/policy_vectors_data.rs"
+cmp "$BUILD/generated/policy_vectors_data.rs" \
+    "$ROOT/provider/crates/ed301-eddsa-provider/src/policy_vectors_data.rs"
 (
-    cd "$ROOT/inputs/round4"
-    sha256sum --strict --quiet -c SHA256SUMS
-)
+    cd "$BUILD"
+    find generated -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$BUILD/evidence/generated-inputs.sha256"
+sha256sum "$BUILD/evidence/generated-inputs.sha256" \
+    >"$BUILD/evidence/generated-inputs.seal"
+sha256sum --strict --quiet -c "$BUILD/evidence/generated-inputs.seal"
+(cd "$BUILD" && sha256sum --strict --quiet -c \
+    evidence/generated-inputs.sha256)
 
-mkdir -p "$BUILD/generated"
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/provider-tests/gen_vectors.py" \
-    "$ROOT" "$BUILD/generated/vectors.h"
-
-cargo fmt --manifest-path "$ROOT/provider/Cargo.toml" --all -- --check
-cargo metadata --manifest-path "$ROOT/provider/Cargo.toml" \
-    --locked --offline --format-version=1 >/dev/null
-cargo clippy --manifest-path "$ROOT/provider/Cargo.toml" \
-    --locked --offline --workspace --all-targets -- -D warnings
-cargo clippy --manifest-path "$ROOT/provider/Cargo.toml" \
-    --release --locked --offline --workspace --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc \
+QA_ANALYSIS_TARGET=$BUILD/targets/qa-analysis
+QA_TARGET=$BUILD/targets/qa-release-test
+QA_MARKERS=$BUILD/profile-markers/qa
+mkdir -m 700 "$QA_ANALYSIS_TARGET" "$QA_TARGET" "$QA_MARKERS"
+cargo_provider "$QA_ANALYSIS_TARGET" fmt \
+    --manifest-path "$ROOT/provider/Cargo.toml" --all -- --check
+cargo_provider "$QA_ANALYSIS_TARGET" metadata \
     --manifest-path "$ROOT/provider/Cargo.toml" \
-    --locked --offline --workspace --no-deps
-cargo test --manifest-path "$ROOT/provider/Cargo.toml" \
-    --release --locked --offline
+    --locked --offline --format-version=1 >/dev/null
+cargo_provider "$QA_ANALYSIS_TARGET" clippy \
+    --manifest-path "$ROOT/provider/Cargo.toml" \
+    --locked --offline --workspace --all-targets -- -D warnings
+cargo_provider "$QA_ANALYSIS_TARGET" clippy \
+    --manifest-path "$ROOT/provider/Cargo.toml" --release \
+    --locked --offline --workspace --all-targets -- -D warnings
+(cd / && provider_env "$QA_ANALYSIS_TARGET" env \
+    RUSTDOCFLAGS='-D warnings' /usr/bin/cargo \
+    doc \
+    --manifest-path "$ROOT/provider/Cargo.toml" \
+    --locked --offline --workspace --no-deps)
 
-MARKERS="$BUILD/profile-markers"
-mkdir -p "$MARKERS"
-{
-    command -v rustc
-    rustc --version --verbose
-} >"$MARKERS/toolchain.txt"
-cargo clean --manifest-path "$ROOT/provider/Cargo.toml"
-ED301_PROFILE_MARKER_DIR="$MARKERS" \
-ED301_PROFILE_EXPECTATIONS='crypto_bigint=off ed301_eddsa=on ed301_eddsa_draft00=on' \
-RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
-    cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
-        --release --locked --offline
-
-sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
+provider_env "$QA_TARGET" /usr/bin/rustc --version --verbose \
+    >"$QA_MARKERS/toolchain.txt"
+(cd / && provider_env "$QA_TARGET" env \
+    ED301_PROFILE_MARKER_DIR="$QA_MARKERS" \
+    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+    RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+    /usr/bin/cargo test \
+    --manifest-path "$ROOT/provider/Cargo.toml" --release \
+    --locked --offline --no-run --message-format=json \
+    >"$BUILD/evidence/provider-unit-artifacts.jsonl")
+sh "$ROOT/scripts/check-profile-markers.sh" "$QA_MARKERS" \
     crypto_bigint=off ed301_eddsa=on ed301_eddsa_draft00=on
+/usr/bin/jq -r \
+    'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | .executable' \
+    "$BUILD/evidence/provider-unit-artifacts.jsonl" \
+    | sort -u >"$BUILD/evidence/provider-unit-executables.lst"
+test -s "$BUILD/evidence/provider-unit-executables.lst"
+while IFS= read -r executable; do
+    test -x "$executable"
+    sha256sum "$executable"
+done <"$BUILD/evidence/provider-unit-executables.lst" \
+    >"$BUILD/evidence/provider-unit-executables.sha256"
+sha256sum "$BUILD/evidence/provider-unit-executables.lst" \
+    "$BUILD/evidence/provider-unit-executables.sha256" \
+    >"$BUILD/evidence/provider-unit-executables.seal"
+sha256sum --strict --quiet -c \
+    "$BUILD/evidence/provider-unit-executables.seal"
+sh "$ROOT/scripts/require-verified-snapshot.sh"
+while IFS= read -r executable; do
+    provider_env "$QA_TARGET" "$executable"
+done <"$BUILD/evidence/provider-unit-executables.lst"
+sha256sum --strict --quiet -c \
+    "$BUILD/evidence/provider-unit-executables.sha256"
+sha256sum --strict --quiet -c \
+    "$BUILD/evidence/provider-unit-executables.seal"
 
-cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
-    "$BUILD/modules/ed301_eddsa_draft00.so"
+build_variant() {
+    local variant=$1 feature=$2 module=$3
+    local target=$BUILD/targets/$variant
+    local markers=$BUILD/profile-markers/$variant
+    local command=(/usr/bin/cargo build \
+        --manifest-path "$ROOT/provider/Cargo.toml" \
+        --release --locked --offline)
+    mkdir -m 700 "$target" "$markers"
+    provider_env "$target" /usr/bin/rustc --version --verbose \
+        >"$markers/toolchain.txt"
+    if [[ -n "$feature" ]]; then
+        command+=(--features "$feature")
+    fi
+    (cd / && provider_env "$target" env \
+        ED301_PROFILE_MARKER_DIR="$markers" \
+        ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+        RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+        "${command[@]}")
+    sh "$ROOT/scripts/check-profile-markers.sh" "$markers" \
+        crypto_bigint=off ed301_eddsa=on ed301_eddsa_draft00=on
+    cp "$target/release/libed301_eddsa_draft00.so" \
+        "$BUILD/modules/$module"
+    rm -rf -- "$target"
+}
 
-cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
-    --release --locked --offline --features test-failpoint
-cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
-    "$BUILD/modules/ed301_eddsa_draft00_failpoint.so"
-
-cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
-    --release --locked --offline --features tls-experiment
-cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
-    "$BUILD/modules/ed301_eddsa_draft00_tls_test.so"
-
-cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
-    --release --locked --offline --features tls-collider
-cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
-    "$BUILD/modules/ed301_eddsa_draft00_tls_collider.so"
+build_variant normal '' ed301_eddsa_draft00.so
+build_variant failpoint test-failpoint ed301_eddsa_draft00_failpoint.so
+build_variant pki pki-experiment ed301_eddsa_draft00_pki_test.so
+build_variant tls tls-experiment ed301_eddsa_draft00_tls_test.so
+build_variant collider tls-collider ed301_eddsa_draft00_tls_collider.so
+cp "$BUILD/modules/ed301_eddsa_draft00_pki_test.so" \
+    "$BUILD/fresh-modules/ed301_eddsa_draft00_pki_test.so"
 
 if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
-        | grep -E 'ED301_EDDSA_DRAFT00_(PANIC|ALLOC)_FAILPOINT'; then
-    echo "ordinary module contains a test failpoint" >&2
+        | grep -E 'ED301_EDDSA_DRAFT00_(PANIC|ALLOC)_FAILPOINT|TLS-SIGALG|BEGIN PRIVATE KEY|2\.25\.195456677253783758411179833219689607856'; then
+    echo "ordinary module contains a diagnostic, TLS or PKI-only surface" >&2
     exit 1
 fi
 strings "$BUILD/modules/ed301_eddsa_draft00_failpoint.so" \
     | grep -F ED301_EDDSA_DRAFT00_PANIC_FAILPOINT >/dev/null
-if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
-        | grep -E 'TLS-SIGALG|ed301_eddsa_draft00_test'; then
-    echo "ordinary module contains the private-use TLS capability" >&2
-    exit 1
-fi
 strings "$BUILD/modules/ed301_eddsa_draft00_tls_test.so" \
     | grep -F TLS-SIGALG >/dev/null
 strings "$BUILD/modules/ed301_eddsa_draft00_tls_collider.so" \
     | grep -F TLS-SIGALG >/dev/null
+strings "$BUILD/modules/ed301_eddsa_draft00_pki_test.so" \
+    | grep -F 'structure=PrivateKeyInfo' >/dev/null
 
 test "$(nm -D --defined-only "$BUILD/modules/ed301_eddsa_draft00.so" \
     | awk '$2 == "T" { count++ } END { print count + 0 }')" -eq 1
@@ -161,142 +236,171 @@ HARNESSES=(
     provider_tls provider_hardening provider_load_fresh
     provider_shim_unit val01_decoder_bio val03_retry val05_codepoint
 )
-
+(cd "$BUILD" && sha256sum --strict --quiet -c \
+    evidence/generated-inputs.sha256)
 for harness in "${HARNESSES[@]}"; do
-    gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
+    /usr/bin/gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
         -I"$OPENSSL_PREFIX/include" \
         -I"$ROOT/provider/crates/ed301-eddsa-provider/c" \
-        -I"$BUILD/generated" \
-        -I"$ROOT/provider-tests" \
-        -o "$BUILD/bin/$harness" \
+        -I"$BUILD/generated" -I"$ROOT/provider-tests" \
+        -o "$BUILD/bin/$harness" "$ROOT/provider-tests/$harness.c" \
+        -L"$OPENSSL_LIB" -Wl,-rpath,"$OPENSSL_LIB" \
+        -lcrypto -lssl -lpthread -ldl
+done
+/usr/bin/gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
+    -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
+    -I"$ROOT/provider-tests" -o "$BUILD/bin/provider_load_no_rpath" \
+    "$ROOT/provider-tests/provider_load.c" \
+    -L"$OPENSSL_LIB" -lcrypto -lssl -lpthread -ldl
+
+for harness in provider_signature provider_keymgmt provider_serialization \
+        val01_decoder_bio provider_load provider_rand provider_tls; do
+    /usr/bin/clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g \
+        -fsanitize=address,undefined -fno-sanitize-recover=all \
+        -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
+        -I"$ROOT/provider/crates/ed301-eddsa-provider/c" \
+        -I"$ROOT/provider-tests" -o "$BUILD/bin/${harness}_asan" \
         "$ROOT/provider-tests/$harness.c" \
         -L"$OPENSSL_LIB" -Wl,-rpath,"$OPENSSL_LIB" \
         -lcrypto -lssl -lpthread -ldl
 done
 
+/usr/bin/gcc -std=c11 -Wall -Wextra -Werror -fanalyzer -c \
+    -I"$OPENSSL_PREFIX/include" -o "$BUILD/provider_shim.analyzer.o" \
+    "$ROOT/provider/crates/ed301-eddsa-provider/c/provider_shim.c"
+/usr/bin/scan-build --status-bugs --use-cc=/usr/bin/clang \
+    -o "$BUILD/scan-build" /usr/bin/clang -std=c11 -D_GNU_SOURCE \
+    -Wall -Wextra -Werror -I"$OPENSSL_PREFIX/include" \
+    -I"$BUILD/generated" -c \
+    "$ROOT/provider/crates/ed301-eddsa-provider/c/provider_shim.c" \
+    -o "$BUILD/provider_shim.scan-build.o"
+(cd "$BUILD" && sha256sum --strict --quiet -c \
+    evidence/generated-inputs.sha256)
+
+# Seal every generated executable or module before the first execution.
+(
+    cd "$BUILD"
+    sha256sum cargo-home/config.toml
+    find modules fresh-modules bin generated -type f -print0 \
+        | sort -z | xargs -0 sha256sum
+) >"$BUILD/evidence/pre-execution-artifacts.sha256"
+sha256sum "$BUILD/evidence/pre-execution-artifacts.sha256" \
+    >"$BUILD/evidence/pre-execution-artifacts.seal"
+sha256sum --strict --quiet -c \
+    "$BUILD/evidence/pre-execution-artifacts.seal"
+(cd "$BUILD" && sha256sum --strict --quiet -c \
+    evidence/pre-execution-artifacts.sha256)
+verify_lane
+
+run_harness() {
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+        LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        D00_FRESH_COPY_DIR="$BUILD/fresh-modules" \
+        /usr/bin/timeout 240 "$BUILD/bin/$1"
+}
 for harness in provider_load provider_keymgmt provider_signature \
         provider_serialization provider_pki provider_rand provider_tls \
-        provider_hardening \
-        provider_load_fresh provider_shim_unit val01_decoder_bio \
-        val05_codepoint; do
-    timeout 240 "$BUILD/bin/$harness"
+        provider_hardening provider_load_fresh provider_shim_unit \
+        val01_decoder_bio val05_codepoint; do
+    run_harness "$harness"
 done
 
 for mode in free object-only exact occupied-oid occupied-name sigid-conflict \
         digest-slot public-slot; do
-    timeout 60 "$BUILD/bin/provider_oid_collision" "$mode"
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+        LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        /usr/bin/timeout 60 "$BUILD/bin/provider_oid_collision" "$mode"
 done
-
 for mode in exact-fast exact-stalled conflict; do
-    timeout 60 "$BUILD/bin/val03_retry" "$mode" "$BUILD/modules"
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+        LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        /usr/bin/timeout 60 "$BUILD/bin/val03_retry" \
+        "$mode" "$BUILD/modules"
 done
 
-POLICY_LOG="$BUILD/evidence/policy-mutation.log"
+POLICY_LOG=$BUILD/evidence/policy-mutation.log
 set +e
-ED301D00_POLICY_MUTATE=1 \
-    "$BUILD/bin/provider_signature" >"$POLICY_LOG" 2>&1
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    ED301D00_POLICY_MUTATE=1 "$BUILD/bin/provider_signature" \
+    >"$POLICY_LOG" 2>&1
 POLICY_RC=$?
 set -e
 test "$POLICY_RC" -ne 0
 grep -E 'failed|FAIL provider_signature' "$POLICY_LOG" >/dev/null
 
-gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
-    -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
-    -I"$ROOT/provider-tests" \
-    -o "$BUILD/bin/provider_load_no_rpath" \
-    "$ROOT/provider-tests/provider_load.c" \
-    -L"$OPENSSL_LIB" -lcrypto -lssl -lpthread -ldl
-
-WRONG_RUNTIME_LOG="$BUILD/evidence/wrong-runtime.log"
+WRONG_RUNTIME_LOG=$BUILD/evidence/wrong-runtime.log
 set +e
-env -u LD_LIBRARY_PATH "$BUILD/bin/provider_load_no_rpath" \
-    >"$WRONG_RUNTIME_LOG" 2>&1
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    "$BUILD/bin/provider_load_no_rpath" >"$WRONG_RUNTIME_LOG" 2>&1
 WRONG_RUNTIME_RC=$?
 set -e
 test "$WRONG_RUNTIME_RC" -ne 0
 grep -E 'FATAL: libcrypto resolved|error while loading shared libraries' \
     "$WRONG_RUNTIME_LOG" >/dev/null
 
-CLI="$BUILD/cli"
-mkdir -p "$CLI"
-PROVIDER_ARGUMENTS=(
-    -provider-path "$BUILD/modules"
-    -provider default
-    -provider ed301_eddsa_draft00
-)
-"$OPENSSL_BIN" list "${PROVIDER_ARGUMENTS[@]}" -signature-algorithms \
-    | grep -F Ed301-EdDSA-draft-00 >/dev/null
-"$OPENSSL_BIN" genpkey "${PROVIDER_ARGUMENTS[@]}" \
-    -algorithm Ed301-EdDSA-draft-00 -out "$CLI/key.pem"
-"$OPENSSL_BIN" pkey "${PROVIDER_ARGUMENTS[@]}" \
-    -in "$CLI/key.pem" -pubout -out "$CLI/public.pem"
-printf 'provider CLI acceptance message' >"$CLI/message.bin"
-printf 'provider CLI wrong message' >"$CLI/wrong-message.bin"
-"$OPENSSL_BIN" pkeyutl "${PROVIDER_ARGUMENTS[@]}" \
-    -sign -rawin -inkey "$CLI/key.pem" -in "$CLI/message.bin" \
-    -out "$CLI/message.sig"
-test "$(stat -c%s "$CLI/message.sig")" -eq 76
-"$OPENSSL_BIN" pkeyutl "${PROVIDER_ARGUMENTS[@]}" \
-    -verify -rawin -pubin -inkey "$CLI/public.pem" \
-    -in "$CLI/message.bin" -sigfile "$CLI/message.sig"
-if "$OPENSSL_BIN" pkeyutl "${PROVIDER_ARGUMENTS[@]}" \
-        -verify -rawin -pubin -inkey "$CLI/public.pem" \
-        -in "$CLI/wrong-message.bin" -sigfile "$CLI/message.sig"; then
-    echo "CLI accepted a signature for the wrong message" >&2
-    exit 1
-fi
-"$OPENSSL_BIN" pkcs8 "${PROVIDER_ARGUMENTS[@]}" \
-    -topk8 -in "$CLI/key.pem" -passout pass:ed301-test \
-    -out "$CLI/encrypted.pem"
-"$OPENSSL_BIN" pkey "${PROVIDER_ARGUMENTS[@]}" \
-    -in "$CLI/encrypted.pem" -passin pass:ed301-test \
-    -out "$CLI/decrypted.pem"
-cmp "$CLI/key.pem" "$CLI/decrypted.pem"
+# CLI coverage is intentionally limited to discovery and key encoding.  The
+# ordinary and PKI artifacts expose no decoder; private-key imports use the
+# strict complete-buffer C boundary.  The TLS-only SPKI decoder is exercised
+# by the transactional decoder and wire-certificate harnesses above.
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" list -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_draft00 \
+        -signature-algorithms | grep -F Ed301-EdDSA-draft-00 >/dev/null
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" genpkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_draft00_pki_test \
+        -algorithm Ed301-EdDSA-draft-00 \
+        -out "$BUILD/evidence/cli-generated-key.pem"
+grep -F 'BEGIN PRIVATE KEY' "$BUILD/evidence/cli-generated-key.pem" \
+    >/dev/null
 
 for harness in provider_signature provider_keymgmt provider_serialization \
         val01_decoder_bio provider_load provider_rand provider_tls; do
-    clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g \
-        -fsanitize=address,undefined -fno-sanitize-recover=all \
-        -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
-        -I"$ROOT/provider/crates/ed301-eddsa-provider/c" \
-        -I"$ROOT/provider-tests" \
-        -o "$BUILD/bin/${harness}_asan" \
-        "$ROOT/provider-tests/$harness.c" \
-        -L"$OPENSSL_LIB" -Wl,-rpath,"$OPENSSL_LIB" \
-        -lcrypto -lssl -lpthread -ldl
-    ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
-    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-        timeout 240 "$BUILD/bin/${harness}_asan"
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+        LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        D00_FRESH_COPY_DIR="$BUILD/fresh-modules" \
+        ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+        UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+        /usr/bin/timeout 240 "$BUILD/bin/${harness}_asan"
 done
-
 for harness in provider_signature provider_serialization val01_decoder_bio \
         provider_load provider_rand; do
-    valgrind --error-exitcode=99 --errors-for-leak-kinds=definite \
-        --leak-check=full --quiet "$BUILD/bin/$harness"
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+        LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        D00_FRESH_COPY_DIR="$BUILD/fresh-modules" \
+        /usr/bin/valgrind --error-exitcode=99 \
+        --errors-for-leak-kinds=definite --leak-check=full --quiet \
+        "$BUILD/bin/$harness"
 done
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    ED301D00_RUST_ALLOC_ONLY=1 /usr/bin/valgrind --error-exitcode=99 \
+    --errors-for-leak-kinds=definite --leak-check=full --quiet \
+    "$BUILD/bin/provider_hardening"
 
-ED301D00_RUST_ALLOC_ONLY=1 \
-    valgrind --error-exitcode=99 --errors-for-leak-kinds=definite \
-    --leak-check=full --quiet "$BUILD/bin/provider_hardening"
-
-gcc -std=c11 -Wall -Wextra -Werror -fanalyzer -c \
-    -I"$OPENSSL_PREFIX/include" \
-    -o "$BUILD/provider_shim.analyzer.o" \
-    "$ROOT/provider/crates/ed301-eddsa-provider/c/provider_shim.c"
-
-scan-build --status-bugs --use-cc=clang -o "$BUILD/scan-build" \
-    clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
-    -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" -c \
-    "$ROOT/provider/crates/ed301-eddsa-provider/c/provider_shim.c" \
-    -o "$BUILD/provider_shim.scan-build.o"
-
-for artifact in "$OPENSSL_BIN" \
-        "$BUILD/modules/ed301_eddsa_draft00.so" \
-        "$BUILD/modules/ed301_eddsa_draft00_failpoint.so" \
-        "$BUILD/modules/ed301_eddsa_draft00_tls_test.so" \
-        "$BUILD/modules/ed301_eddsa_draft00_tls_collider.so" \
-        "$BUILD/bin/"*; do
-    sha256sum "$artifact"
-done > "$BUILD/evidence/artifacts.sha256"
-
-sh "$ROOT/scripts/verify-source-tree.sh"
+(cd "$BUILD" && sha256sum --strict --quiet -c \
+    evidence/pre-execution-artifacts.sha256)
+verify_lane
+sh "$ROOT/scripts/require-verified-snapshot.sh"
+printf 'provider_acceptance=PASS lane=%s result=%s\n' "$LANE" "$BUILD"

@@ -1,8 +1,10 @@
 /*
  * Acceptance section 4 (collision handling): a host-side integration
- * preflight checks the registry belonging to the loading libcrypto before
- * loading the provider.  The provider itself uses only core_obj_* upcalls
- * and never inspects a potentially different directly linked registry.
+ * preflight owns the registry transition in the loading libcrypto before
+ * loading the separate PKI test artifact.  The ordinary signature provider
+ * has no OID alias, encoder/decoder or registry side effect and remains
+ * usable through its explicit EVP name even when the global registry is
+ * conflicting.
  * Each mode runs in a fresh process (the object database is process-global).
  *
  * Modes:
@@ -25,6 +27,7 @@ int main(int argc, char **argv)
 {
     D00_REQUIRE_RUNTIME_BINDING();
     OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(NULL, "default");
+    OSSL_PROVIDER *ordinary;
     OSSL_PROVIDER *draft;
     const char *mode = argc > 1 ? argv[1] : "";
     int expect_load_success = 0;
@@ -98,8 +101,27 @@ int main(int argc, char **argv)
 
     D00_CHECK(d00_registry_preflight_ok() == expect_load_success,
         "%s: host preflight classifies the registry", mode);
+
     d00_seed_error_sentinel();
-    draft = d00_load_named(NULL, NULL, D00_PROVIDER);
+    ordinary = d00_load_named(NULL, NULL, D00_PROVIDER);
+    queue_ok = d00_queue_is_sentinel_only();
+    D00_CHECK(ordinary != NULL,
+        "%s: ordinary signature-only provider ignores global OID state",
+        mode);
+    if (ordinary != NULL) {
+        EVP_SIGNATURE *algorithm =
+            EVP_SIGNATURE_fetch(NULL, D00_ALG, D00_PROP);
+
+        D00_CHECK(algorithm != NULL,
+            "%s: explicit-name signature fetch remains usable", mode);
+        D00_CHECK(queue_ok,
+            "%s: ordinary load preserves the caller error queue", mode);
+        EVP_SIGNATURE_free(algorithm);
+        OSSL_PROVIDER_unload(ordinary);
+    }
+
+    d00_seed_error_sentinel();
+    draft = d00_load_named(NULL, NULL, D00_PKI_PROVIDER);
     queue_ok = d00_queue_is_sentinel_only();
     if (expect_load_success) {
         D00_CHECK(draft != NULL,
@@ -107,7 +129,7 @@ int main(int argc, char **argv)
             mode);
         if (draft != NULL) {
             EVP_SIGNATURE *alg =
-                EVP_SIGNATURE_fetch(NULL, D00_ALG, D00_PROP);
+                EVP_SIGNATURE_fetch(NULL, D00_ALG, D00_PKI_PROP);
 
             D00_CHECK(alg != NULL, "%s: algorithm fetch", mode);
             D00_CHECK(queue_ok,
@@ -121,7 +143,7 @@ int main(int argc, char **argv)
         }
     } else {
         D00_CHECK(draft == NULL,
-            "%s: host preflight blocks an unsafe provider load",
+            "%s: host preflight blocks the optional PKI test artifact",
             mode);
         D00_CHECK(queue_ok,
             "%s: host preflight preserves the caller error queue", mode);

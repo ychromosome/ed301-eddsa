@@ -2,14 +2,20 @@
 # Build one public OpenSSL release lane from a caller-staged tarball.
 # No clone, download, private fork, package, or release operation occurs here.
 set -Eeuo pipefail
+PATH=/usr/bin:/bin
+export PATH
 export LC_ALL=C
-umask 022
+umask 077
 
-VER="${1:?usage: build_lane.sh <version> [<upstream-dir> [<lane-root>]]}"
-if (( $# > 3 )); then
-  printf 'usage: build_lane.sh <version> [<upstream-dir> [<lane-root>]]\n' >&2
+SCRIPT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+sh "$SCRIPT_ROOT/scripts/require-verified-snapshot.sh"
+sh "$SCRIPT_ROOT/scripts/check-rust-build-environment.sh"
+
+if (( $# != 3 )); then
+  printf 'usage: build-openssl-provider-lane.sh <version> <upstream-dir> <lane-root>\n' >&2
   exit 2
 fi
+VER=$1
 case "$VER" in
   3.5.7)
     SHLIB_MAJOR=3
@@ -25,27 +31,18 @@ case "$VER" in
     ;;
   *) printf 'unsupported public OpenSSL lane: %s\n' "$VER" >&2; exit 2 ;;
 esac
-if (( $# >= 2 )); then
-  UPSTREAM_ARG=$2
-else
-  : "${OPENSSL_UPSTREAM_DIR:?set OPENSSL_UPSTREAM_DIR or pass <upstream-dir>}"
-  UPSTREAM_ARG=$OPENSSL_UPSTREAM_DIR
-fi
-if (( $# >= 3 )); then
-  ROOT_ARG=$3
-else
-  : "${OPENSSL_LANE_ROOT:?set OPENSSL_LANE_ROOT or pass <lane-root>}"
-  ROOT_ARG=$OPENSSL_LANE_ROOT
-fi
-if [[ -L "$ROOT_ARG" ]]; then
-  printf 'lane root may not be a symlink: %s\n' "$ROOT_ARG" >&2
+UPSTREAM_ARG=$2
+ROOT_ARG=$3
+if printf '%s\n' "$UPSTREAM_ARG" "$ROOT_ARG" | grep -q '[[:cntrl:]]'; then
+  printf 'upstream or lane-root path contains a control character\n' >&2
   exit 2
 fi
-if [[ -e "$ROOT_ARG" && ! -d "$ROOT_ARG" ]]; then
-  printf 'lane root is not a directory: %s\n' "$ROOT_ARG" >&2
+if [[ -e "$ROOT_ARG" || -L "$ROOT_ARG" ]]; then
+  printf 'lane root must be a fresh, nonexistent private path: %s\n' \
+    "$ROOT_ARG" >&2
   exit 2
 fi
-mkdir -p -- "$ROOT_ARG"
+mkdir -m 700 -- "$ROOT_ARG"
 UPSTREAM=$(readlink -f -- "$UPSTREAM_ARG")
 ROOT=$(readlink -f -- "$ROOT_ARG")
 [[ -d "$UPSTREAM" ]] || {
@@ -94,16 +91,20 @@ done
 [[ -f "$CHECKSUM" ]] || {
   printf 'missing tarball checksum sidecar: %s\n' "$CHECKSUM" >&2; exit 2;
 }
-rm -rf -- "$LOGD"
 mkdir -p -- "$LOGD"
 [[ ! -L "$LOGD" && "$(readlink -f -- "$LOGD")" == "$LOGD" ]] || {
   printf 'log directory resolves unexpectedly: %s\n' "$LOGD" >&2
   exit 2
 }
 export CCACHE_DISABLE=1
+export CC=/usr/bin/gcc
+export AR=/usr/bin/ar
+export RANLIB=/usr/bin/ranlib
+export LD=/usr/bin/ld
 
 BUILDER=$(readlink -f -- "$0")
-PROVENANCE=$(readlink -f -- +  "$(dirname -- "$0")/../docs/PROVIDER_OPENSSL_LANE_PROVENANCE.md")
+PROVENANCE=$(readlink -f -- \
+  "$(dirname -- "$0")/../docs/PROVIDER_OPENSSL_LANE_PROVENANCE.md")
 [[ -f "$BUILDER" && -f "$PROVENANCE" ]] || {
   printf 'builder or provenance document is missing\n' >&2
   exit 2
@@ -199,7 +200,7 @@ record_toolchain_identity() {
   } | tee "$LOGD/toolchain_identity.tsv" || return 1
   {
     printf 'PATH=%s\n' "$PATH"
-    printf 'OPENSSL_BUILD_JOBS=%s\n' "${OPENSSL_BUILD_JOBS:-UNSET}"
+    printf 'OPENSSL_BUILD_JOBS=not-supported; canonical nproc used\n'
     printf 'CC=%s\n' "${CC:-UNSET}"
     printf 'CFLAGS=%s\n' "${CFLAGS:-UNSET}"
     printf 'CPPFLAGS=%s\n' "${CPPFLAGS:-UNSET}"
@@ -247,7 +248,7 @@ verify_tarball_layout() {
   local members=$LOGD/tarball.members
 
   tar --list --gzip --file "$TAR" > "$members" || return 1
-  python3 - "$TAR" "$TOP" <<'PY'
+  /usr/bin/python3 -I -B - "$TAR" "$TOP" <<'PY'
 import pathlib
 import sys
 import tarfile
@@ -289,7 +290,8 @@ PY
 }
 
 extract_source() {
-  rm -rf -- "$SRC" "$INST" || return 1
+  [[ ! -e "$SRC" && ! -L "$SRC" && ! -e "$INST" && ! -L "$INST" ]] \
+    || return 1
   mkdir -p -- "$ROOT/src" "$INST" || return 1
   printf 'prefix_pre_state=empty\n' > "$LOGD/openssl_modules_pre.tsv"
   tar --extract --gzip --file "$TAR" --directory "$ROOT/src" \
@@ -386,6 +388,69 @@ hash_installed_artifacts() {
   sha256sum -- "$LOGD/artifact_hashes.sha256" > "$LOGD/artifact_hashes.seal"
 }
 
+write_installed_prefix_manifest() {
+  local hash_tmp=$LOGD/installed_prefix.sha256.tmp
+  local files_tmp=$LOGD/installed_prefix_files.lst.tmp
+  local dirs_tmp=$LOGD/installed_prefix_directories.lst.tmp
+  local links_tmp=$LOGD/installed_prefix_symlinks.tsv.tmp
+  local special=$LOGD/installed_prefix_special.lst
+
+  ( cd "$INST" &&
+    find . -mindepth 1 ! -type d ! -type f ! -type l -print \
+      > "$special" ) || return 1
+  [[ ! -s "$special" ]] || {
+    printf 'installed prefix contains special filesystem objects\n' >&2
+    return 1
+  }
+  ( cd "$INST" &&
+    find . -type f -print0 | sort -z | xargs -0 -r sha256sum \
+      > "$hash_tmp" &&
+    find . -type f -printf '%P\n' | sort > "$files_tmp" &&
+    find . -mindepth 1 -type d -printf '%P\n' | sort > "$dirs_tmp" &&
+    find . -type l -printf '%P\t%l\n' | sort > "$links_tmp" \
+  ) || return 1
+
+  while IFS=$'\t' read -r link target; do
+    [[ -n "$link" && -n "$target" && "$target" != /* ]] || return 1
+    canonical=$(readlink -f -- "$INST/$link") || return 1
+    case "$canonical" in
+      "$INST"/*) ;;
+      *) printf 'installed symlink escapes prefix: %s -> %s\n' \
+           "$link" "$target" >&2; return 1 ;;
+    esac
+  done < "$links_tmp"
+
+  mv -f -- "$hash_tmp" "$LOGD/installed_prefix.sha256"
+  mv -f -- "$files_tmp" "$LOGD/installed_prefix_files.lst"
+  mv -f -- "$dirs_tmp" "$LOGD/installed_prefix_directories.lst"
+  mv -f -- "$links_tmp" "$LOGD/installed_prefix_symlinks.tsv"
+  sha256sum -- "$LOGD/installed_prefix.sha256" \
+    "$LOGD/installed_prefix_files.lst" \
+    "$LOGD/installed_prefix_directories.lst" \
+    "$LOGD/installed_prefix_symlinks.tsv" \
+    > "$LOGD/installed_prefix_manifest.seal"
+}
+
+verify_installed_prefix_manifest() {
+  local tmp=$LOGD/prefix-verify.tmp
+
+  sha256sum --strict --quiet -c \
+    "$LOGD/installed_prefix_manifest.seal" || return 1
+  ( cd "$INST" &&
+    sha256sum --strict --quiet -c "$LOGD/installed_prefix.sha256" &&
+    find . -type f -printf '%P\n' | sort > "$tmp.files" &&
+    find . -mindepth 1 -type d -printf '%P\n' | sort > "$tmp.dirs" &&
+    find . -type l -printf '%P\t%l\n' | sort > "$tmp.links" &&
+    find . -mindepth 1 ! -type d ! -type f ! -type l -print \
+      > "$tmp.special" \
+  ) || return 1
+  cmp -s "$LOGD/installed_prefix_files.lst" "$tmp.files" || return 1
+  cmp -s "$LOGD/installed_prefix_directories.lst" "$tmp.dirs" || return 1
+  cmp -s "$LOGD/installed_prefix_symlinks.tsv" "$tmp.links" || return 1
+  [[ ! -s "$tmp.special" ]] || return 1
+  rm -f -- "$tmp.files" "$tmp.dirs" "$tmp.links" "$tmp.special"
+}
+
 verify_installed_artifacts() {
   local name link canonical expected
 
@@ -471,8 +536,8 @@ write_lane_identity() {
     printf 'authenticated_git_tag=NOT_VERIFIED_FROM_RELEASE_TARBALL\n'
     printf 'source_commit=NOT_AVAILABLE_FROM_RELEASE_TARBALL\nsource_tree=NOT_AVAILABLE_FROM_RELEASE_TARBALL\nsource_manifest_rel=logs/%s/source_manifest_pristine.sha256\nsource_change_rel=logs/%s/source_change.tsv\n' \
       "$VER" "$VER"
-    printf 'prefix_rel=inst/%s\nheaders_rel=inst/%s/include\nlibraries_rel=inst/%s/lib\ncli_rel=inst/%s/bin/openssl\nlinker_selection_rel=logs/%s/linker_selection.tsv\nartifact_hashes_rel=logs/%s/artifact_hashes.sha256\nopenssl_module_hashes_rel=logs/%s/openssl_modules_post.sha256\nruntime_binding_ldd_rel=logs/%s/runtime_binding.ldd\nruntime_binding_readelf_rel=logs/%s/runtime_binding.readelf\n' \
-      "$VER" "$VER" "$VER" "$VER" "$VER" "$VER" "$VER" "$VER" "$VER"
+    printf 'prefix_rel=inst/%s\nheaders_rel=inst/%s/include\nlibraries_rel=inst/%s/lib\ncli_rel=inst/%s/bin/openssl\nlinker_selection_rel=logs/%s/linker_selection.tsv\ninstalled_prefix_manifest_rel=logs/%s/installed_prefix.sha256\nartifact_hashes_rel=logs/%s/artifact_hashes.sha256\nopenssl_module_hashes_rel=logs/%s/openssl_modules_post.sha256\nruntime_binding_ldd_rel=logs/%s/runtime_binding.ldd\nruntime_binding_readelf_rel=logs/%s/runtime_binding.readelf\n' \
+      "$VER" "$VER" "$VER" "$VER" "$VER" "$VER" "$VER" "$VER" "$VER" "$VER"
   } > "$LOGD/lane_identity.seal.tmp" || return 1
   mv -f -- "$LOGD/lane_identity.seal.tmp" "$LOGD/lane_identity.seal"
 }
@@ -520,6 +585,16 @@ write_evidence_manifest() {
     "logs/$VER/make.exit"
     "logs/$VER/install.log"
     "logs/$VER/install.exit"
+    "logs/$VER/installed_prefix_manifest.log"
+    "logs/$VER/installed_prefix_manifest.exit"
+    "logs/$VER/installed_prefix.sha256"
+    "logs/$VER/installed_prefix_files.lst"
+    "logs/$VER/installed_prefix_directories.lst"
+    "logs/$VER/installed_prefix_symlinks.tsv"
+    "logs/$VER/installed_prefix_special.lst"
+    "logs/$VER/installed_prefix_manifest.seal"
+    "logs/$VER/installed_prefix_verify_pre.log"
+    "logs/$VER/installed_prefix_verify_pre.exit"
     "logs/$VER/source_manifest_post.log"
     "logs/$VER/source_manifest_post.exit"
     "logs/$VER/source_manifest_post.sha256"
@@ -536,6 +611,8 @@ write_evidence_manifest() {
     "logs/$VER/artifact_hashes.seal"
     "logs/$VER/artifact_verify.log"
     "logs/$VER/artifact_verify.exit"
+    "logs/$VER/installed_prefix_verify_post.log"
+    "logs/$VER/installed_prefix_verify_post.exit"
     "logs/$VER/library_symlinks.tsv"
     "logs/$VER/openssl_module_hashes.log"
     "logs/$VER/openssl_module_hashes.exit"
@@ -583,22 +660,26 @@ run_step source_manifest_pristine write_source_manifest_pre
 run_step source_identity write_source_identity
 run_step linker_selection write_linker_selection
 cd "$SRC"
-JOBS=${OPENSSL_BUILD_JOBS:-$(nproc)}
+JOBS=$(/usr/bin/nproc)
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]
 run_step configure ./Configure linux-x86_64 shared --prefix="$INST" --libdir=lib \
   --openssldir="$INST/ssl" -DPURIFY "-L$INST/lib" "-Wl,-rpath,$INST/lib"
 run_step make make -j"$JOBS"
 run_step install make install_sw install_ssldirs
+run_step installed_prefix_manifest write_installed_prefix_manifest
+run_step installed_prefix_verify_pre verify_installed_prefix_manifest
 run_step source_manifest_post write_source_manifest_post
 run_step source_pristine_check check_source_pristine
 run_step artifact_hashes hash_installed_artifacts
 run_step openssl_module_hashes hash_installed_modules
 run_step lane_identity check_runtime_identity
 run_step artifact_verify verify_installed_artifacts
+run_step installed_prefix_verify_post verify_installed_prefix_manifest
 run_step lane_identity_seal write_lane_identity
 run_step builder_inputs_post verify_builder_inputs
 run_step evidence_manifest write_evidence_manifest
 run_step evidence_manifest_verify verify_evidence_manifest
+sh "$SCRIPT_ROOT/scripts/require-verified-snapshot.sh"
 
 # The only success transition is last.  All earlier failures exit through
 # fail_lane/on_err, so a failed check cannot be followed by LANE OK.
@@ -607,3 +688,5 @@ printf 'LANE %s OK\n' "$VER" > "$STATUS.tmp"
 mv -f -- "$LOGD/lane_status.exit.tmp" "$LOGD/lane_status.exit"
 mv -f -- "$STATUS.tmp" "$STATUS"
 STATUS_WRITTEN=1
+printf 'lane_evidence_manifest_sha256=%s\n' \
+  "$(sha256sum "$LOGD/evidence_manifest.sha256" | awk '{print $1}')"

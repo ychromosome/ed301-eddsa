@@ -1,6 +1,7 @@
 /*
  * Acceptance section 4 (serialization): PKCS#8 and SPKI round trips in DER
- * and PEM through public OpenSSL encoder/decoder interfaces, deliberate
+ * and PEM through provider encoders plus the mandatory project-owned,
+ * complete-buffer import boundary, deliberate
  * absence of private text output, and rejection of the historical OID,
  * ASN.1 NULL parameters, wrong OIDs
  * and sizes, truncation, trailing data and malformed public keys.
@@ -12,27 +13,11 @@
 #define _GNU_SOURCE /* memmem */
 #endif
 
-#include <openssl/decoder.h>
 #include <openssl/encoder.h>
 
 #include "harness_common.h"
+#include "strict_serialization.h"
 #include "vectors.h"
-
-/* Exact expected encodings for the 'empty' vector key. */
-static const unsigned char PKCS8_PREFIX[33] = {
-    0x30, 0x45, 0x02, 0x01, 0x00, 0x30, 0x16, 0x06,
-    0x14, 0x69, 0x82, 0xa6, 0x8b, 0xcb, 0x8d, 0xb3,
-    0x93, 0xe2, 0x9f, 0x8b, 0x8a, 0x9e, 0xf1, 0xc4,
-    0xf2, 0xe5, 0xd7, 0xe5, 0x30, 0x04, 0x28, 0x04,
-    0x26
-};
-
-static const unsigned char SPKI_PREFIX[29] = {
-    0x30, 0x41, 0x30, 0x16, 0x06, 0x14, 0x69, 0x82,
-    0xa6, 0x8b, 0xcb, 0x8d, 0xb3, 0x93, 0xe2, 0x9f,
-    0x8b, 0x8a, 0x9e, 0xf1, 0xc4, 0xf2, 0xe5, 0xd7,
-    0xe5, 0x30, 0x03, 0x27, 0x00
-};
 
 /* Historical Ed301-Sig-v1 PKCS#8/SPKI prefixes (forbidden identity). */
 static const unsigned char HISTORICAL_PKCS8_PREFIX[24] = {
@@ -55,7 +40,7 @@ static unsigned char *encode(
     size_t *out_len)
 {
     OSSL_ENCODER_CTX *ctx = OSSL_ENCODER_CTX_new_for_pkey(
-        pkey, selection, format, structure, D00_PROP);
+        pkey, selection, format, structure, D00_PKI_PROP);
     unsigned char *data = NULL;
 
     *out_len = 0;
@@ -75,26 +60,19 @@ static EVP_PKEY *decode(
     const char *structure,
     int selection)
 {
-    EVP_PKEY *pkey = NULL;
-    OSSL_DECODER_CTX *ctx = OSSL_DECODER_CTX_new_for_pkey(
-        &pkey, format, structure, D00_ALG, selection, libctx, NULL);
-    const unsigned char *cursor = data;
-    size_t remaining = data_len;
+    const int is_public = strcmp(structure, "SubjectPublicKeyInfo") == 0;
 
-    if (ctx == NULL)
+    if ((is_public && selection != OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+            || (!is_public
+                && strcmp(structure, "PrivateKeyInfo") != 0)
+            || (!is_public
+                && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0))
         return NULL;
-    /*
-     * Caller-side whole-buffer policy (B1-DER): the provider decoder
-     * stops after one DER object and leaves trailing bytes unread, so
-     * buffer completeness is enforced here, outside that decoder.
-     */
-    if (OSSL_DECODER_from_data(ctx, &cursor, &remaining) != 1
-            || remaining != 0) {
-        EVP_PKEY_free(pkey);
-        pkey = NULL;
-    }
-    OSSL_DECODER_CTX_free(ctx);
-    return pkey;
+    if (strcmp(format, "DER") == 0)
+        return d00_strict_der_import(libctx, data, data_len, is_public);
+    if (strcmp(format, "PEM") == 0)
+        return d00_strict_pem_import(libctx, data, data_len, is_public);
+    return NULL;
 }
 
 int main(void)
@@ -102,10 +80,13 @@ int main(void)
     D00_REQUIRE_RUNTIME_BINDING();
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = d00_load(libctx, &deflt);
+    OSSL_PROVIDER *draft;
     const POSITIVE_CASE *base = &POSITIVE_CASES[0];
-    EVP_PKEY *pkey = d00_key_from_seed(libctx, base->seed);
+    EVP_PKEY *pkey;
 
+    d00_property = D00_PKI_PROP;
+    draft = d00_load_named(libctx, &deflt, D00_PKI_PROVIDER);
+    pkey = d00_key_from_seed(libctx, base->seed);
     D00_CHECK(draft != NULL && pkey != NULL, "provider and key");
 
     /* PKCS#8 DER is byte-exact and round-trips. */
@@ -118,8 +99,9 @@ int main(void)
         EVP_PKEY *decoded;
 
         D00_CHECK(der != NULL && der_len == 71
-                && memcmp(der, PKCS8_PREFIX, sizeof(PKCS8_PREFIX)) == 0
-                && memcmp(der + sizeof(PKCS8_PREFIX), base->seed,
+                && memcmp(der, D00_PKCS8_PREFIX,
+                    sizeof(D00_PKCS8_PREFIX)) == 0
+                && memcmp(der + sizeof(D00_PKCS8_PREFIX), base->seed,
                     38) == 0,
             "PKCS#8 DER is the exact 71-byte profile encoding");
 
@@ -177,7 +159,7 @@ int main(void)
         with_null[index++] = 0x00;
         with_null[index++] = 0x30;
         with_null[index++] = 0x18;
-        memcpy(with_null + index, PKCS8_PREFIX + 7, 22); /* OID TLV */
+        memcpy(with_null + index, D00_PKCS8_PREFIX + 7, 22); /* OID TLV */
         index += 22;
         with_null[index++] = 0x05; /* NULL */
         with_null[index++] = 0x00;
@@ -230,8 +212,9 @@ int main(void)
         EVP_PKEY *decoded;
 
         D00_CHECK(der != NULL && der_len == 67
-                && memcmp(der, SPKI_PREFIX, sizeof(SPKI_PREFIX)) == 0
-                && memcmp(der + sizeof(SPKI_PREFIX), base->public_key,
+                && memcmp(der, D00_SPKI_PREFIX,
+                    sizeof(D00_SPKI_PREFIX)) == 0
+                && memcmp(der + sizeof(D00_SPKI_PREFIX), base->public_key,
                     38) == 0,
             "SPKI DER is the exact 67-byte profile encoding");
 
@@ -247,7 +230,7 @@ int main(void)
             unsigned char malformed[67];
 
             memcpy(malformed, der, der_len);
-            memcpy(malformed + sizeof(SPKI_PREFIX),
+            memcpy(malformed + sizeof(D00_SPKI_PREFIX),
                 POINT_CASES[2].encoding, 38); /* identity */
             D00_CHECK(decode(libctx, malformed, sizeof(malformed), "DER",
                     "SubjectPublicKeyInfo",
@@ -313,7 +296,7 @@ int main(void)
             pkey,
             OSSL_KEYMGMT_SELECT_PRIVATE_KEY
                 | OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
-            "DER", "PrivateKeyInfo", D00_PROP);
+            "DER", "PrivateKeyInfo", D00_PKI_PROP);
         unsigned char *data = NULL;
         size_t data_len = 0;
         int set_ok = 0;

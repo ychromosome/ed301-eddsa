@@ -11,6 +11,7 @@
 #include <openssl/x509v3.h>
 
 #include "harness_common.h"
+#include "strict_pki.h"
 #include "vectors.h"
 
 static X509_NAME *make_name(const char *common_name)
@@ -96,69 +97,6 @@ done:
     return cert;
 }
 
-static int algorithm_is_exact(const X509_ALGOR *algorithm)
-{
-    const ASN1_OBJECT *object = NULL;
-    const void *parameter = NULL;
-    int parameter_type = V_ASN1_UNDEF;
-    char text[96] = { 0 };
-
-    if (algorithm == NULL)
-        return 0;
-    X509_ALGOR_get0(&object, &parameter_type, &parameter, algorithm);
-    return object != NULL
-        && OBJ_obj2txt(text, sizeof(text), object, 1) > 0
-        && strcmp(text, D00_OID_TEXT) == 0
-        && parameter_type == V_ASN1_UNDEF
-        && parameter == NULL;
-}
-
-static int public_key_algorithm_is_exact(const X509_PUBKEY *public_key)
-{
-    ASN1_OBJECT *object = NULL;
-    const unsigned char *key_bytes = NULL;
-    int key_length = 0;
-    X509_ALGOR *algorithm = NULL;
-
-    return public_key != NULL
-        && X509_PUBKEY_get0_param(&object, &key_bytes, &key_length,
-            &algorithm, public_key) == 1
-        && object != NULL && key_bytes != NULL && key_length == 38
-        && algorithm_is_exact(algorithm);
-}
-
-static int request_algorithms_are_exact(const X509_REQ *request)
-{
-    const ASN1_BIT_STRING *signature = NULL;
-    const X509_ALGOR *outer = NULL;
-
-    if (request == NULL)
-        return 0;
-    X509_REQ_get0_signature(request, &signature, &outer);
-    return signature != NULL && ASN1_STRING_length(signature) == 76
-        && algorithm_is_exact(outer)
-        && public_key_algorithm_is_exact(
-            X509_REQ_get_X509_PUBKEY((X509_REQ *)request));
-}
-
-static int certificate_algorithms_are_exact(const X509 *certificate)
-{
-    const ASN1_BIT_STRING *signature = NULL;
-    const X509_ALGOR *outer = NULL;
-    const X509_ALGOR *tbs;
-
-    if (certificate == NULL)
-        return 0;
-    X509_get0_signature(&signature, &outer, certificate);
-    tbs = X509_get0_tbs_sigalg(certificate);
-    return signature != NULL && ASN1_STRING_length(signature) == 76
-        && algorithm_is_exact(outer)
-        && algorithm_is_exact(tbs)
-        && X509_ALGOR_cmp(outer, tbs) == 0
-        && public_key_algorithm_is_exact(
-            X509_get_X509_PUBKEY((X509 *)certificate));
-}
-
 static int algor_negative_controls(void)
 {
     X509_ALGOR *wrong = X509_ALGOR_new();
@@ -174,9 +112,9 @@ static int algor_negative_controls(void)
         foreign = NULL;
         X509_ALGOR_set0(with_null, target, V_ASN1_NULL, NULL);
         target = NULL;
-        ok = !algorithm_is_exact(wrong)
-            && !algorithm_is_exact(with_null)
-            && !algorithm_is_exact(missing);
+        ok = !d00_pki_algorithm_is_exact(wrong)
+            && !d00_pki_algorithm_is_exact(with_null)
+            && !d00_pki_algorithm_is_exact(missing);
     }
     ASN1_OBJECT_free(target);
     ASN1_OBJECT_free(foreign);
@@ -189,8 +127,10 @@ static int algor_negative_controls(void)
 int main(void)
 {
     D00_REQUIRE_RUNTIME_BINDING();
-    OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(NULL, "default");
-    OSSL_PROVIDER *draft = OSSL_PROVIDER_load(NULL, D00_PROVIDER);
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *draft;
+    d00_property = D00_PKI_PROP;
+    draft = d00_load_named(NULL, &deflt, D00_PKI_PROVIDER);
     EVP_PKEY *ca_key = d00_keygen(NULL);
     EVP_PKEY *leaf_key = d00_keygen(NULL);
 
@@ -225,10 +165,8 @@ int main(void)
                 && X509_REQ_set_pubkey(req, leaf_key) == 1
                 && X509_REQ_sign(req, leaf_key, NULL) > 0,
             "CSR creation and signing");
-        D00_CHECK(req != NULL && X509_REQ_verify(req, leaf_key) == 1,
-            "CSR verifies");
-        D00_CHECK(request_algorithms_are_exact(req),
-            "CSR outer signature and SPKI AlgorithmIdentifiers are exact");
+        D00_CHECK(req != NULL && d00_pki_verify_request(req, leaf_key),
+            "strict CSR wrapper enforces identifiers and verifies");
 
         if (req != NULL) {
             const ASN1_BIT_STRING *signature = NULL;
@@ -255,8 +193,8 @@ int main(void)
                     (unsigned char *)ASN1_STRING_get0_data(signature);
 
                 bytes[0] ^= 1;
-                D00_CHECK(X509_REQ_verify(req, leaf_key) != 1,
-                    "corrupted CSR signature is rejected");
+                D00_CHECK(!d00_pki_verify_request(req, leaf_key),
+                    "strict CSR wrapper rejects a corrupted signature");
                 ERR_clear_error();
                 bytes[0] ^= 1;
             }
@@ -282,8 +220,8 @@ int main(void)
                     ordinary_verify = X509_REQ_verify(mutated, leaf_key);
                 }
                 D00_CHECK(mutated != NULL
-                        && !request_algorithms_are_exact(mutated),
-                    "application precheck rejects CSR NULL parameters");
+                        && !d00_pki_verify_request(mutated, leaf_key),
+                    "strict CSR wrapper rejects NULL parameters");
                 printf("ordinary CSR verify without precheck: %d "
                     "(outside provider enforcement)\n", ordinary_verify);
                 ERR_clear_error();
@@ -301,17 +239,16 @@ int main(void)
         X509 *leaf_cert = NULL;
 
         D00_CHECK(ca_cert != NULL, "self-signed CA certificate");
-        D00_CHECK(ca_cert != NULL && X509_verify(ca_cert, ca_key) == 1,
-            "self-signed certificate verifies");
-        D00_CHECK(certificate_algorithms_are_exact(ca_cert),
-            "CA outer, TBS and SPKI AlgorithmIdentifiers are exact");
+        D00_CHECK(ca_cert != NULL
+                && d00_pki_verify_certificate(ca_cert, ca_key),
+            "strict certificate wrapper verifies the self-signed CA");
 
         if (ca_cert != NULL) {
             leaf_cert = make_cert("draft-00 test leaf",
                 X509_get_subject_name(ca_cert), leaf_key, ca_key, 0, 2);
             D00_CHECK(leaf_cert != NULL, "CA-signed leaf certificate");
-            D00_CHECK(certificate_algorithms_are_exact(leaf_cert),
-                "leaf outer, TBS and SPKI AlgorithmIdentifiers are exact");
+            D00_CHECK(d00_pki_certificate_is_exact(leaf_cert),
+                "leaf identifiers are exact before chain validation");
         }
 
         if (ca_cert != NULL && leaf_cert != NULL) {
@@ -322,8 +259,9 @@ int main(void)
                     && X509_STORE_add_cert(store, ca_cert) == 1
                     && X509_STORE_CTX_init(store_ctx, store, leaf_cert,
                         NULL) == 1
-                    && X509_verify_cert(store_ctx) == 1,
-                "leaf chain verifies against the CA root");
+                    && d00_pki_verify_two_certificate_chain(
+                        store_ctx, leaf_cert, ca_cert),
+                "strict chain wrapper verifies the leaf and CA profile");
             X509_STORE_CTX_free(store_ctx);
 
             /* Corrupt the leaf signature: chain must fail. */
@@ -342,9 +280,9 @@ int main(void)
                     D00_CHECK(bad_ctx != NULL
                             && X509_STORE_CTX_init(bad_ctx, store,
                                 leaf_cert, NULL) == 1
-                            && X509_verify_cert(bad_ctx) != 1,
-                        "corrupted leaf signature fails chain "
-                        "verification");
+                            && !d00_pki_verify_two_certificate_chain(
+                                bad_ctx, leaf_cert, ca_cert),
+                        "strict chain wrapper rejects a corrupted leaf");
                     ERR_clear_error();
                     bytes[10] ^= 1;
                 }
@@ -352,8 +290,8 @@ int main(void)
             }
 
             /* Wrong-key verification fails. */
-            D00_CHECK(X509_verify(leaf_cert, leaf_key) != 1,
-                "leaf does not verify under its own subject key");
+            D00_CHECK(!d00_pki_verify_certificate(leaf_cert, leaf_key),
+                "strict certificate wrapper rejects the wrong key");
             ERR_clear_error();
 
             {
@@ -372,9 +310,8 @@ int main(void)
                     ordinary_verify = X509_verify(mutated, ca_key);
                 }
                 D00_CHECK(mutated != NULL
-                        && !certificate_algorithms_are_exact(mutated),
-                    "application precheck rejects certificate NULL "
-                    "parameters");
+                        && !d00_pki_verify_certificate(mutated, ca_key),
+                    "strict certificate wrapper rejects NULL parameters");
                 printf("ordinary X509 verify without precheck: %d "
                     "(outside provider enforcement)\n", ordinary_verify);
                 ERR_clear_error();

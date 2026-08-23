@@ -7,6 +7,9 @@
 
 #include <pthread.h>
 
+#include <openssl/decoder.h>
+#include <openssl/encoder.h>
+
 #include "harness_common.h"
 #include "vectors.h"
 
@@ -174,6 +177,9 @@ int main(void)
         EVP_SIGNATURE *sig_alg;
         EVP_SIGNATURE *by_oid;
         EVP_KEYMGMT *keymgmt;
+        OSSL_ENCODER *encoder;
+        OSSL_DECODER *decoder;
+        int registry_nid = NID_undef;
 
         D00_CHECK(libctx != NULL, "library context");
         draft = d00_load(libctx, &deflt);
@@ -189,11 +195,24 @@ int main(void)
         keymgmt = EVP_KEYMGMT_fetch(libctx, D00_ALG, D00_PROP);
         D00_CHECK(keymgmt != NULL, "keymgmt fetch by name and property");
         by_oid = EVP_SIGNATURE_fetch(libctx, D00_OID_TEXT, D00_PROP);
-        D00_CHECK(by_oid != NULL, "signature fetch by ephemeral test OID");
+        D00_CHECK(by_oid == NULL,
+            "ordinary provider exposes no OID alias");
+        ERR_clear_error();
+        encoder = OSSL_ENCODER_fetch(libctx, D00_ALG, D00_PROP);
+        decoder = OSSL_DECODER_fetch(libctx, D00_ALG, D00_PROP);
+        D00_CHECK(encoder == NULL && decoder == NULL,
+            "ordinary provider exposes no PKI codec operations");
+        D00_CHECK(d00_registry_identity_state(&registry_nid)
+                == D00_REGISTRY_FREE
+                && d00_registry_sigid_state(registry_nid)
+                    == D00_REGISTRY_FREE,
+            "ordinary provider leaves the global OID/SIGID registry free");
 
         EVP_SIGNATURE_free(sig_alg);
         EVP_SIGNATURE_free(by_oid);
         EVP_KEYMGMT_free(keymgmt);
+        OSSL_ENCODER_free(encoder);
+        OSSL_DECODER_free(decoder);
 
         /*
          * Unload independence: correctly owned key and signature results
@@ -251,8 +270,13 @@ int main(void)
         D00_CHECK(first_draft != NULL && second_draft != NULL
                 && first_alg != NULL && second_alg != NULL,
             "independent library contexts");
-        D00_CHECK(d00_registry_is_exact(),
-            "OID and sigid registry is process-global and exact");
+        {
+            int registry_nid = NID_undef;
+
+            D00_CHECK(d00_registry_identity_state(&registry_nid)
+                    == D00_REGISTRY_FREE,
+                "ordinary providers do not populate the global registry");
+        }
         EVP_SIGNATURE_free(first_alg);
         EVP_SIGNATURE_free(second_alg);
         OSSL_PROVIDER_unload(first_draft);
@@ -263,8 +287,13 @@ int main(void)
             EVP_SIGNATURE_fetch(second, D00_ALG, D00_PROP);
         D00_CHECK(again != NULL,
             "second context unaffected by first teardown");
-        D00_CHECK(d00_registry_is_exact(),
-            "process-global registry remains exact after first teardown");
+        {
+            int registry_nid = NID_undef;
+
+            D00_CHECK(d00_registry_identity_state(&registry_nid)
+                    == D00_REGISTRY_FREE,
+                "global registry remains untouched after teardown");
+        }
         EVP_SIGNATURE_free(again);
         OSSL_PROVIDER_unload(second_draft);
         OSSL_PROVIDER_unload(second_def);

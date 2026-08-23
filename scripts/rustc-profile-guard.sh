@@ -1,18 +1,35 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -lt 1 ]; then
-    echo "rustc-profile-guard: missing rustc command" >&2
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+
+if [ "$#" -lt 1 ] || [ -z "${ED301_PROFILE_MARKER_DIR:-}" ]; then
+    echo "rustc-profile-guard: compiler or marker directory missing" >&2
     exit 2
 fi
-if [ -z "${ED301_PROFILE_MARKER_DIR:-}" ]; then
-    echo "rustc-profile-guard: ED301_PROFILE_MARKER_DIR is unset" >&2
-    exit 2
+
+compiler=$1
+shift
+case "$compiler" in
+    rustc) compiler_selected=$(command -v rustc) ;;
+    */*) compiler_selected=$compiler ;;
+    *)
+        echo "rustc-profile-guard: unsupported compiler selector" >&2
+        exit 1
+        ;;
+esac
+compiler_real=$(readlink -f -- "$compiler_selected")
+trusted_rustc=$(readlink -f -- /usr/bin/rustc)
+if [ "$compiler_real" != "$trusted_rustc" ]; then
+    echo "rustc-profile-guard: compiler is not canonical /usr/bin/rustc" >&2
+    exit 1
 fi
-if [ -z "${ED301_PROFILE_EXPECTATIONS:-}" ]; then
-    echo "rustc-profile-guard: ED301_PROFILE_EXPECTATIONS is unset" >&2
+test -d "$ED301_PROFILE_MARKER_DIR" \
+    && test ! -L "$ED301_PROFILE_MARKER_DIR" || {
+    echo "rustc-profile-guard: unsafe marker directory" >&2
     exit 2
-fi
+}
 
 crate_name=
 overflow_state=absent
@@ -64,32 +81,47 @@ for argument in "$@"; do
     esac
 done
 
-expected_overflow=
-for expectation in $ED301_PROFILE_EXPECTATIONS; do
-    expected_crate=${expectation%%=*}
-    expected_value=${expectation#*=}
-    if [ "$expected_crate" = "$crate_name" ]; then
-        if [ "$expected_value" != on ] && [ "$expected_value" != off ]; then
-            echo "rustc-profile-guard: invalid expectation: $expectation" >&2
-            exit 2
-        fi
-        expected_overflow=$expected_value
-        break
-    fi
-done
+record_success() {
+    kind=$1
+    shift
+    marker=$(mktemp "$ED301_PROFILE_MARKER_DIR/invocation.XXXXXX")
+    printf 'kind=%s %s\n' "$kind" "$*" >"$marker"
+    mv -- "$marker" "$marker.success"
+}
 
-if [ -z "$expected_overflow" ]; then
-    exec "$@"
+if [ -z "$crate_name" ]; then
+    "$compiler_selected" "$@"
+    record_success probe compiler="$compiler_real"
+    exit 0
 fi
-
 case "$crate_name" in
-    *[!A-Za-z0-9_]*)
-        echo "rustc-profile-guard: unsafe tracked crate name" >&2
+    *[!A-Za-z0-9_]*|"")
+        echo "rustc-profile-guard: unsafe crate name" >&2
         exit 2
         ;;
 esac
 
-if [ "$overflow_state" != absent ] && [ "$overflow_state" != "$expected_overflow" ]; then
+if [ "$crate_name" = build_script_build ]; then
+    "$compiler_selected" "$@"
+    record_success host crate="$crate_name"
+    exit 0
+fi
+
+expected_overflow=on
+for exception in ${ED301_PROFILE_EXCEPTIONS:-}; do
+    exception_crate=${exception%%=*}
+    exception_value=${exception#*=}
+    if [ "$exception_value" != on ] && [ "$exception_value" != off ]; then
+        echo "rustc-profile-guard: invalid exception: $exception" >&2
+        exit 2
+    fi
+    if [ "$exception_crate" = "$crate_name" ]; then
+        expected_overflow=$exception_value
+    fi
+done
+
+if [ "$overflow_state" != absent ] \
+        && [ "$overflow_state" != "$expected_overflow" ]; then
     echo "rustc-profile-guard: $crate_name overflow=$overflow_state, expected $expected_overflow" >&2
     exit 1
 fi
@@ -97,11 +129,11 @@ if [ "$panic_state" != absent ] && [ "$panic_state" != unwind ]; then
     echo "rustc-profile-guard: $crate_name panic=$panic_state, expected unwind" >&2
     exit 1
 fi
-if [ "$opt_state" != 3 ]; then
+if [ "$opt_state" != absent ] && [ "$opt_state" != 3 ]; then
     echo "rustc-profile-guard: $crate_name opt=$opt_state, expected 3" >&2
     exit 1
 fi
-if [ "$cgu_state" != 1 ]; then
+if [ "$cgu_state" != absent ] && [ "$cgu_state" != 1 ]; then
     echo "rustc-profile-guard: $crate_name cgu=$cgu_state, expected 1" >&2
     exit 1
 fi
@@ -110,28 +142,8 @@ if [ "$dbgassert_state" != absent ] && [ "$dbgassert_state" != off ]; then
     exit 1
 fi
 
-# Cargo omits flags whose effective value is the rustc default (notably
-# panic=unwind for dependencies).  Append every security-relevant value to the
-# real compiler invocation so the marker attests enforced code generation, not
-# merely the presence or absence of a Cargo command-line spelling.  Explicitly
-# conflicting values were rejected above; the final flags also dominate any
-# opaque earlier argument source supported by rustc.
-mkdir -p "$ED301_PROFILE_MARKER_DIR"
-printf 'overflow=%s panic=unwind opt=3 cgu=1 dbgassert=off enforced=yes\n' \
-    "$expected_overflow" \
-    >>"$ED301_PROFILE_MARKER_DIR/$crate_name"
-{
-    printf '%s:' "$crate_name"
-    for argument in "$@"; do
-        printf ' [%s]' "$argument"
-    done
-    printf ' [-Coverflow-checks=%s]' "$expected_overflow"
-    printf ' [-Cpanic=unwind]'
-    printf ' [-Copt-level=3]'
-    printf ' [-Ccodegen-units=1]'
-    printf ' [-Cdebug-assertions=off]'
-    printf '\n'
-} >>"$ED301_PROFILE_MARKER_DIR/rustc_invocations.log"
-
-exec "$@" "-Coverflow-checks=$expected_overflow" -Cpanic=unwind \
-    -Copt-level=3 -Ccodegen-units=1 -Cdebug-assertions=off
+"$compiler_selected" "$@" "-Coverflow-checks=$expected_overflow" \
+    -Cpanic=unwind -Copt-level=3 -Ccodegen-units=1 \
+    -Cdebug-assertions=off
+record_success target crate="$crate_name" overflow="$expected_overflow" \
+    panic=unwind opt=3 cgu=1 dbgassert=off enforced=yes

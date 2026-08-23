@@ -1,5 +1,5 @@
 /*
- * Fresh-process parallel FIRST-load races after F2/F4.
+ * Fresh-process parallel first-use races for the host-owned PKI registry.
  *
  * The earlier parallel-load harness had already registered the ephemeral
  * OID serially before its threads started, so the initial
@@ -26,8 +26,6 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <pthread.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -100,14 +98,14 @@ static void *fresh_worker_main(void *argument)
 
     deflt = OSSL_PROVIDER_load(libctx, "default");
     d00_seed_error_sentinel();
-    draft = d00_load_named(libctx, NULL, D00_PROVIDER);
+    draft = d00_load_named(libctx, NULL, D00_PKI_PROVIDER);
     if (worker->expect_success) {
         if (deflt == NULL || draft == NULL
                 || !d00_queue_is_sentinel_only()) {
             worker->failed = 1;
             goto done;
         }
-        fetched = EVP_SIGNATURE_fetch(libctx, D00_ALG, D00_PROP);
+        fetched = EVP_SIGNATURE_fetch(libctx, D00_ALG, D00_PKI_PROP);
         if (fetched == NULL)
             worker->failed = 1;
     } else {
@@ -230,54 +228,27 @@ static int spawn_child(const char *self, const char *mode,
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-static int copy_file(const char *source, const char *destination)
-{
-    FILE *in = fopen(source, "rb");
-    FILE *out = in == NULL ? NULL : fopen(destination, "wb");
-    unsigned char buffer[65536];
-    size_t chunk;
-    int ok = in != NULL && out != NULL;
-
-    while (ok && (chunk = fread(buffer, 1, sizeof(buffer), in)) > 0)
-        ok = fwrite(buffer, 1, chunk, out) == chunk;
-    if (in != NULL)
-        fclose(in);
-    if (out != NULL)
-        ok = fclose(out) == 0 && ok;
-    return ok;
-}
-
 int main(int argc, char **argv)
 {
     D00_REQUIRE_RUNTIME_BINDING();
     const char *modules = getenv("OPENSSL_MODULES");
+    const char *dir_b = getenv("D00_FRESH_COPY_DIR");
     char self[4096];
-    char dir_b[4200];
-    char module_a[4300];
-    char module_b[4300];
     ssize_t self_length;
     int repeat;
 
     if (argc >= 5 && strcmp(argv[1], "child") == 0)
         return child_main(argv[2], argv[3], argv[4]);
 
-    if (modules == NULL) {
-        fprintf(stderr, "OPENSSL_MODULES must point at the module dir\n");
+    if (modules == NULL || dir_b == NULL) {
+        fprintf(stderr,
+            "OPENSSL_MODULES and D00_FRESH_COPY_DIR are required\n");
         return 2;
     }
     self_length = readlink("/proc/self/exe", self, sizeof(self) - 1);
     if (self_length <= 0)
         return 2;
     self[self_length] = '\0';
-
-    /* Physically separate byte-identical module copy. */
-    snprintf(dir_b, sizeof(dir_b), "%s/fresh-copy", modules);
-    snprintf(module_a, sizeof(module_a), "%s/" D00_PROVIDER ".so",
-        modules);
-    snprintf(module_b, sizeof(module_b), "%s/" D00_PROVIDER ".so", dir_b);
-    (void)mkdir(dir_b, 0755);
-    D00_CHECK(copy_file(module_a, module_b),
-        "separate module copy created");
 
     for (repeat = 0; repeat < FRESH_REPEATS; repeat++) {
         D00_CHECK(spawn_child(self, "same-dso", modules, dir_b) == 0,

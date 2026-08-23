@@ -1,46 +1,67 @@
 #!/bin/sh
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 FIXTURE=$ROOT/integration/downstream-workspace
-
-if [ -z "${CARGO_HOME:-}" ]; then
-    echo "check-downstream.sh requires CARGO_HOME to be set by the invoking gate" >&2
-    exit 2
-fi
-
-sh "$ROOT/scripts/verify-source-tree.sh"
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 sh "$ROOT/scripts/check-rust-build-environment.sh"
+case "$ROOT" in
+    *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
+esac
 
-DOWNSTREAM_TARGET_DIR=
-ED301_PROFILE_MARKER_DIR=
+WORK=$(mktemp -d /tmp/ed301-downstream-gate.XXXXXX)
+HOME_DIR=$WORK/home
+CARGO_HOME_DIR=$WORK/cargo-home
+ANALYSIS_TARGET_DIR=$WORK/analysis-target
+TARGET_DIR=$WORK/target
+MARKERS=$WORK/profile-markers
+mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$ANALYSIS_TARGET_DIR" \
+    "$TARGET_DIR" "$MARKERS"
+{
+    printf '%s\n' '[source.crates-io]' 'replace-with = "vendored-sources"' \
+        '' '[source.vendored-sources]'
+    printf "directory = '%s'\n" "$ROOT/vendor"
+    printf '%s\n' '' '[net]' 'offline = true'
+} >"$CARGO_HOME_DIR/config.toml"
+chmod 600 "$CARGO_HOME_DIR/config.toml"
+printf 'cargo_config_sha256=%s\n' \
+    "$(sha256sum "$CARGO_HOME_DIR/config.toml" | awk '{print $1}')"
 cleanup() {
-    if [ -n "$DOWNSTREAM_TARGET_DIR" ]; then
-        rm -rf -- "$DOWNSTREAM_TARGET_DIR"
-    fi
-    if [ -n "$ED301_PROFILE_MARKER_DIR" ]; then
-        rm -rf -- "$ED301_PROFILE_MARKER_DIR"
-    fi
+    rm -rf -- "$WORK"
 }
 trap cleanup EXIT HUP INT TERM
 
-DOWNSTREAM_TARGET_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ed301-rust-r2-downstream-target.XXXXXX")
-ED301_PROFILE_MARKER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ed301-rust-r2-profile-markers.XXXXXX")
+run_cargo() {
+    (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        CARGO_HOME="$CARGO_HOME_DIR" \
+        CARGO_TARGET_DIR="$ANALYSIS_TARGET_DIR" \
+        CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+        /usr/bin/cargo "$@")
+}
+run_guarded_cargo() {
+    (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$TARGET_DIR" \
+        CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+        ED301_PROFILE_MARKER_DIR="$MARKERS" \
+        ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+        RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+        /usr/bin/cargo "$@")
+}
 
-export CARGO_TARGET_DIR=$DOWNSTREAM_TARGET_DIR
-export ED301_PROFILE_MARKER_DIR
-export ED301_PROFILE_EXPECTATIONS='crypto_bigint=off ed301_eddsa=on ed301_eddsa_downstream_check=on'
-export RUSTC_WRAPPER=$ROOT/scripts/rustc-profile-guard.sh
-
-{
-    command -v rustc
-    rustc --version --verbose
-} >"$ED301_PROFILE_MARKER_DIR/toolchain.txt"
-
-cargo build --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml"
-cargo fmt --manifest-path "$FIXTURE/Cargo.toml" -- --check
-cargo clippy --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml" --all-targets -- -D warnings
-cargo test --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml"
-cargo run --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml"
-sh "$ROOT/scripts/check-profile-markers.sh" "$ED301_PROFILE_MARKER_DIR" \
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
+run_guarded_cargo build --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release
+run_cargo fmt --manifest-path "$FIXTURE/Cargo.toml" -- --check
+run_cargo clippy --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release --all-targets -- -D warnings
+run_guarded_cargo test --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release
+run_guarded_cargo run --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release
+sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
     crypto_bigint=off ed301_eddsa=on ed301_eddsa_downstream_check=on
+sh "$ROOT/scripts/require-verified-snapshot.sh"

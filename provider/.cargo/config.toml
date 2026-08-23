@@ -5,7 +5,7 @@ rustflags = ["-Cpanic=unwind"]
 replace-with = "vendored-sources"
 
 [source.vendored-sources]
-directory = "../../vendor"
+directory = "../vendor"
 
 [net]
 offline = true

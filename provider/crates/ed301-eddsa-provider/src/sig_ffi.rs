@@ -21,7 +21,7 @@ use ed301_eddsa::{
     parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
     validate_public_key, verify,
 };
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 /// Function table consumed by the provider's C shim.
 #[repr(C)]
@@ -247,12 +247,9 @@ pub(crate) unsafe extern "C" fn key_import(
         };
 
         // SAFETY: Present parameter storage is readable for this call.
-        let Some(raw_private) =
-            (unsafe { read_optional_exact::<SEED_BYTES>(private, private_len) })
-        else {
+        let Some(raw_private) = (unsafe { read_optional_secret_seed(private, private_len) }) else {
             return 0;
         };
-        let mut raw_private = raw_private.map(Zeroizing::new);
         // SAFETY: Present parameter storage is readable for this call.
         let Some(raw_public) =
             (unsafe { read_optional_exact::<PUBLIC_KEY_BYTES>(public, public_len) })
@@ -265,7 +262,7 @@ pub(crate) unsafe extern "C" fn key_import(
         }
 
         let derived_public = match raw_private.as_ref() {
-            Some(seed) => match derive_public(seed) {
+            Some(seed) => match derive_public(&seed.0) {
                 Some(derived) => Some(derived),
                 None => return 0,
             },
@@ -284,8 +281,10 @@ pub(crate) unsafe extern "C" fn key_import(
         }
 
         let public = derived_public.or(raw_public);
-        let private = raw_private.take().map(|seed| SecretSeed(*seed));
-        *key = DraftKey { private, public };
+        *key = DraftKey {
+            private: raw_private,
+            public,
+        };
         1
     })
 }
@@ -336,18 +335,15 @@ pub(crate) unsafe extern "C" fn key_from_seed(seed: *const u8, seed_len: usize) 
         hit_panic_failpoint("key_generate");
         // SAFETY: The shim supplies exactly seed_len readable bytes for this
         // call and cleanses its temporary immediately afterwards.
-        let Some(Some(seed)) = (unsafe { read_optional_exact::<SEED_BYTES>(seed, seed_len) })
-        else {
+        let Some(Some(seed)) = (unsafe { read_optional_secret_seed(seed, seed_len) }) else {
             return core::ptr::null_mut();
         };
-        let seed = Zeroizing::new(seed);
-        let Some(public) = derive_public(&seed) else {
+        let Some(public) = derive_public(&seed.0) else {
             return core::ptr::null_mut();
         };
-        let private = SecretSeed(*seed);
 
         let key = DraftKey {
-            private: Some(private),
+            private: Some(seed),
             public: Some(public),
         };
         match try_box_at("key_generate", key) {
@@ -740,6 +736,28 @@ unsafe fn read_optional_exact<const N: usize>(
     let mut output = [0_u8; N];
     // SAFETY: The caller guarantees input_len readable bytes at input.
     unsafe { core::ptr::copy_nonoverlapping(input, output.as_mut_ptr(), N) };
+    Some(Some(output))
+}
+
+/// Copy an optional private seed directly into its non-`Copy`, zeroizing
+/// owner.  No plain `[u8; SEED_BYTES]` temporary exists between the FFI
+/// input and the retained key object.
+unsafe fn read_optional_secret_seed(
+    input: *const u8,
+    input_len: usize,
+) -> Option<Option<SecretSeed>> {
+    if input.is_null() && input_len == 0 {
+        return Some(None);
+    }
+    if input.is_null() || input_len != SEED_BYTES {
+        return None;
+    }
+
+    let mut output = SecretSeed([0_u8; SEED_BYTES]);
+    // SAFETY: The caller guarantees exactly SEED_BYTES readable bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(input, output.0.as_mut_ptr(), SEED_BYTES);
+    }
     Some(Some(output))
 }
 

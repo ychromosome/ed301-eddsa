@@ -33,6 +33,8 @@
 #define D00_PROP "provider=ed301_eddsa_draft00"
 #define D00_FAILPOINT_PROVIDER "ed301_eddsa_draft00_failpoint"
 #define D00_FAILPOINT_PROP "provider=ed301_eddsa_draft00_failpoint"
+#define D00_PKI_PROVIDER "ed301_eddsa_draft00_pki_test"
+#define D00_PKI_PROP "provider=ed301_eddsa_draft00_pki_test"
 #define D00_TLS_PROVIDER "ed301_eddsa_draft00_tls_test"
 #define D00_TLS_PROP "provider=ed301_eddsa_draft00_tls_test"
 #define D00_TLS_COLLIDER_PROVIDER "ed301_eddsa_draft00_tls_collider"
@@ -197,6 +199,36 @@ static inline int d00_registry_is_exact(void)
 
     return d00_registry_identity_state(&nid) == D00_REGISTRY_EXACT
         && d00_registry_sigid_state(nid) == D00_REGISTRY_EXACT;
+}
+
+static inline int d00_registry_ensure_exact(void)
+{
+    int nid = NID_undef;
+    enum d00_registry_state identity = d00_registry_identity_state(&nid);
+    enum d00_registry_state sigid;
+
+    if (identity == D00_REGISTRY_CONFLICT)
+        return 0;
+    sigid = d00_registry_sigid_state(nid);
+    if (sigid == D00_REGISTRY_CONFLICT)
+        return 0;
+    if (identity == D00_REGISTRY_EXACT || sigid == D00_REGISTRY_EXACT)
+        return identity == D00_REGISTRY_EXACT
+            && sigid == D00_REGISTRY_EXACT;
+
+    nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
+    if (nid == NID_undef || OBJ_add_sigid(nid, NID_undef, nid) != 1)
+        return 0;
+    return d00_registry_is_exact();
+}
+
+static inline int d00_provider_requires_test_registry(
+    const char *provider_name)
+{
+    return provider_name != NULL
+        && (strcmp(provider_name, D00_PKI_PROVIDER) == 0
+            || strcmp(provider_name, D00_TLS_PROVIDER) == 0
+            || strcmp(provider_name, D00_TLS_COLLIDER_PROVIDER) == 0);
 }
 
 /*
@@ -398,6 +430,8 @@ static inline OSSL_PROVIDER *d00_load_named(
 {
     OSSL_PROVIDER *deflt = NULL;
     OSSL_PROVIDER *draft = NULL;
+    const int requires_registry =
+        d00_provider_requires_test_registry(provider_name);
 
     if (defp != NULL)
         *defp = NULL;
@@ -412,13 +446,16 @@ static inline OSSL_PROVIDER *d00_load_named(
             || d00_registry_lock == NULL
             || CRYPTO_THREAD_write_lock(d00_registry_lock) != 1)
         return NULL;
-    if (!d00_registry_preflight_ok())
+    if (requires_registry && !d00_registry_preflight_ok())
+        goto done;
+    if (requires_registry && !d00_registry_ensure_exact())
         goto done;
     deflt = OSSL_PROVIDER_load(libctx, "default");
     if (deflt == NULL)
         goto done;
     draft = OSSL_PROVIDER_load(libctx, provider_name);
-    if (draft == NULL || !d00_registry_is_exact()) {
+    if (draft == NULL
+            || (requires_registry && !d00_registry_is_exact())) {
         OSSL_PROVIDER_unload(draft);
         draft = NULL;
         OSSL_PROVIDER_unload(deflt);

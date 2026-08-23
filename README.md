@@ -11,37 +11,40 @@ elliptic curve.
 
 ## Test
 
-In a Git checkout, the gates bind `SOURCE_MANIFEST.sha256` to `HEAD` and
-reject every extra, missing, non-regular or changed source path before Cargo
-runs:
+Authoritative gates run only from a caller-created, read-only source snapshot.
+The caller must authenticate the enclosing archive and pass the expected
+manifest digest explicitly:
 
 ```sh
-sh scripts/check.sh
-sh scripts/check-secret-taint.sh
+ED301_SOURCE_MODE=archive \
+ED301_VERIFIED_SNAPSHOT=1 \
+ED301_EXPECTED_SOURCE_MANIFEST_SHA256=<trusted-sha256> \
+    sh scripts/check.sh
 ```
 
-For a source archive, first authenticate the enclosing archive and obtain the
-manifest digest from that trusted handoff. Then pass it explicitly:
-
-```sh
-ED301_EXPECTED_SOURCE_MANIFEST_SHA256=<trusted-sha256> sh scripts/check.sh
-```
-
-The manifest inside an unauthenticated archive is not its own trust anchor.
+The same three variables are required by `scripts/check-downstream.sh`,
+`scripts/check-secret-taint.sh`, and `scripts/test-provider.sh`. The manifest
+inside an unauthenticated archive is not its own trust anchor. Git mode exists
+only as a source-verification primitive and additionally requires an external
+exact commit; authoritative build gates do not accept it.
 
 ## Experimental OpenSSL provider
 
-The `provider-experiment` branch contains a signature-only provider with
-test-only identifiers.  Given an unmodified OpenSSL 3.5.7 or 4.0.1 prefix:
+The `provider-experiment` branch contains a signature-only provider. OpenSSL
+must first be built into a sealed lane from a pinned public release tarball.
+The externally recorded digest of that lane's evidence manifest is then an
+input to the provider gate:
 
 ```sh
-scripts/test-provider.sh /path/to/openssl-prefix 3.5.7
-scripts/test-provider.sh /path/to/openssl-prefix 4.0.1
+scripts/build-openssl-provider-lane.sh 3.5.7 /trusted/upstream /private/lane-root
+scripts/test-provider.sh /private/lane-root 3.5.7 <trusted-evidence-manifest-sha256>
 ```
 
-The ordinary module exposes no TLS capability.  The runner builds the
-private-use TLS proof and its full-provider collision fixture as separately
-named, disabled-by-default test artifacts.
+Repeat with `4.0.1` for OpenSSL 4. The ordinary module exposes only `KEYMGMT`
+and `SIGNATURE`: no OID alias, encoder, decoder, PKI registration, or TLS
+capability. PKI encoders and the private-use TLS proof are separately named,
+disabled-by-default test artifacts whose registry setup belongs to the host
+harness.
 
 The provider is an integration candidate, not a release.  See
 `PROVIDER_STATUS.md`.

@@ -78,15 +78,25 @@
 # define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_tls_test"
 #elif defined(ED301D00_TLS_COLLIDER_ARTIFACT)
 # define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_tls_collider"
+#elif defined(ED301D00_PKI_EXPERIMENT_ARTIFACT)
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_pki_test"
 #else
 # define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00"
+#endif
+
+#ifdef ED301D00_PKI_EXPERIMENT_ARTIFACT
+# define ED301D00_HAS_TEST_PKI_INTEGRATION 1
+#else
+# define ED301D00_HAS_TEST_PKI_INTEGRATION 0
 #endif
 
 #if defined(ED301D00_TLS_EXPERIMENT_ARTIFACT) \
     || defined(ED301D00_TLS_COLLIDER_ARTIFACT)
 # define ED301D00_HAS_TEST_TLS_CAPABILITY 1
+# define ED301D00_HAS_TEST_DECODER 1
 #else
 # define ED301D00_HAS_TEST_TLS_CAPABILITY 0
+# define ED301D00_HAS_TEST_DECODER 0
 #endif
 
 static const char ED301D00_PROVIDER_NAME[] =
@@ -96,12 +106,11 @@ static const char ED301D00_PROVIDER_BUILDINFO[] =
     "ed301_eddsa_draft00 provider-experiment-1 (test-only, nonregistrable "
     "identifiers); headers: " OPENSSL_VERSION_TEXT;
 static const char ED301D00_ALGORITHM_NAME[] = "Ed301-EdDSA-draft-00";
-static const char ED301D00_OID[] = ED301D00_OID_TEXT;
-static const char ED301D00_ALGORITHM_NAMES[] =
-    "Ed301-EdDSA-draft-00:" ED301D00_OID_TEXT;
+static const char ED301D00_ALGORITHM_NAMES[] = "Ed301-EdDSA-draft-00";
 static const char ED301D00_PROPERTY[] =
     "provider=" ED301D00_PROVIDER_BASENAME;
 #if ED301D00_HAS_TEST_TLS_CAPABILITY
+static const char ED301D00_OID[] = ED301D00_OID_TEXT;
 static const char ED301D00_TLS_SIGALG_CAPABILITY[] = "TLS-SIGALG";
 static const char ED301D00_TLS_SIGALG_IANA_NAME[] =
     "ed301_eddsa_draft00_test";
@@ -181,7 +190,7 @@ enum {
     ED301D00_R_INVALID_STATE = 2,
     ED301D00_R_INVALID_PARAMETER = 3,
     ED301D00_R_ALLOCATION_FAILURE = 4,
-    ED301D00_R_OBJECT_REGISTRATION_FAILURE = 5,
+    /* Reason 5 was the removed object-registration failure. */
     ED301D00_R_SERIALIZATION_FAILURE = 6,
     ED301D00_R_UNSUPPORTED_MODE = 7
 };
@@ -192,8 +201,6 @@ static const OSSL_ITEM ED301D00_REASON_STRINGS[] = {
     { ED301D00_R_INVALID_STATE, "invalid state" },
     { ED301D00_R_INVALID_PARAMETER, "invalid parameter" },
     { ED301D00_R_ALLOCATION_FAILURE, "allocation failure" },
-    { ED301D00_R_OBJECT_REGISTRATION_FAILURE,
-        "object registration failure" },
     { ED301D00_R_SERIALIZATION_FAILURE, "serialization failure" },
     { ED301D00_R_UNSUPPORTED_MODE, "unsupported mode" },
     { 0, NULL }
@@ -792,7 +799,7 @@ static void *ed301d00_key_gen(
             provider->libctx,
             seed,
             sizeof(seed),
-            0) != 1) {
+            ED301D00_SECURITY_BITS) != 1) {
         ed301d00_raise(provider, ED301D00_R_INVALID_KEY,
             "OpenSSL private RAND failed during draft-00 key generation");
         goto cleanup;
@@ -810,6 +817,14 @@ cleanup:
     rust->cleanse(seed, sizeof(seed));
     if (inner != NULL)
         rust->key_free(inner);
+    /*
+     * RAND_priv_bytes_ex() may create private-DRBG state owned by this
+     * thread and keyed by the provider child OSSL_LIB_CTX.  Key generation
+     * is the provider's only child-context operation, and no such operation
+     * is live reentrantly here, so release that state on the same thread
+     * before provider teardown can free the child context.
+     */
+    OPENSSL_thread_stop_ex(provider->libctx);
     return key;
 }
 
@@ -1200,7 +1215,7 @@ static int ed301d00_signature_digest_verify(
 }
 
 /* ------------------------------------------------------------------ */
-/* Encoders and decoders                                              */
+/* Test-only encoders                                                 */
 /* ------------------------------------------------------------------ */
 
 static ED301D00_CODEC_CONTEXT *ed301d00_codec_new_context(
@@ -1211,8 +1226,7 @@ static ED301D00_CODEC_CONTEXT *ed301d00_codec_new_context(
     ED301D00_PROVIDER_CONTEXT *provider = provider_context;
     ED301D00_CODEC_CONTEXT *codec;
 
-    if (provider == NULL || provider->bio_read_ex == NULL
-            || provider->bio_write_ex == NULL || provider->bio_ctrl == NULL)
+    if (provider == NULL || provider->bio_write_ex == NULL)
         return NULL;
     codec = ed301d00_allocate(provider, sizeof(*codec));
     if (codec == NULL) {
@@ -1413,17 +1427,15 @@ static int ed301d00_codec_write_all(
     return 1;
 }
 
+#if ED301D00_HAS_TEST_DECODER
 static int ed301d00_codec_read_exact(
     const ED301D00_CODEC_CONTEXT *codec,
     OSSL_CORE_BIO *input,
     unsigned char *data,
-    size_t data_length,
-    size_t *consumed)
+    size_t data_length)
 {
     size_t offset = 0;
 
-    if (consumed != NULL)
-        *consumed = 0;
     if (codec == NULL || codec->provider == NULL
             || codec->provider->bio_read_ex == NULL || input == NULL
             || (data == NULL && data_length != 0))
@@ -1437,12 +1449,57 @@ static int ed301d00_codec_read_exact(
                 data_length - offset,
                 &read_length) != 1
                 || read_length == 0 || read_length > data_length - offset)
-            break;
+            return 0;
         offset += read_length;
     }
-    if (consumed != NULL)
-        *consumed = offset;
-    return offset == data_length;
+    return 1;
+}
+
+/*
+ * Decoder composition is transactional.  OpenSSL's decoder framework
+ * supplies a seekable core BIO (wrapping an unseekable source in its bounded
+ * read-buffer BIO).  Prove that contract before consuming anything, and
+ * restore the checkpoint whenever this candidate has not positively matched
+ * the Ed301 OID.  A retry or short read therefore leaves the next attempt at
+ * the original byte instead of retaining a partial parser state.
+ */
+static int ed301d00_codec_checkpoint(
+    const ED301D00_CODEC_CONTEXT *codec,
+    OSSL_CORE_BIO *input,
+    long *position)
+{
+    long current;
+
+    if (codec == NULL || codec->provider == NULL
+            || codec->provider->bio_ctrl == NULL || input == NULL
+            || position == NULL)
+        return 0;
+    current = codec->provider->bio_ctrl(
+        input, BIO_C_FILE_TELL, 0, NULL);
+    if (current < 0)
+        return 0;
+    (void)codec->provider->bio_ctrl(
+        input, BIO_C_FILE_SEEK, current, NULL);
+    if (codec->provider->bio_ctrl(
+            input, BIO_C_FILE_TELL, 0, NULL) != current)
+        return 0;
+    *position = current;
+    return 1;
+}
+
+static int ed301d00_codec_restore(
+    const ED301D00_CODEC_CONTEXT *codec,
+    OSSL_CORE_BIO *input,
+    long position)
+{
+    if (codec == NULL || codec->provider == NULL
+            || codec->provider->bio_ctrl == NULL || input == NULL
+            || position < 0)
+        return 0;
+    (void)codec->provider->bio_ctrl(
+        input, BIO_C_FILE_SEEK, position, NULL);
+    return codec->provider->bio_ctrl(
+        input, BIO_C_FILE_TELL, 0, NULL) == position;
 }
 
 static int ed301d00_codec_has_target_oid(
@@ -1467,6 +1524,7 @@ static int ed301d00_codec_has_target_oid(
             prefix + oid_offset,
             ED301D00_OID_TLV_BYTES) == 0;
 }
+#endif
 
 static int ed301d00_codec_write_pem(
     const ED301D00_CODEC_CONTEXT *codec,
@@ -1515,34 +1573,6 @@ static int ed301d00_codec_get_key_bytes(
         return codec->provider->rust->key_get_public(
             key->inner, output, ED301D00_PUBLIC_KEY_BYTES);
     return 0;
-}
-
-static void *ed301d00_codec_import_key(
-    ED301D00_CODEC_CONTEXT *codec,
-    const unsigned char key_bytes[ED301D00_SEED_BYTES])
-{
-    OSSL_PARAM parameters[2];
-    void *key = NULL;
-    const int selection = ed301d00_codec_required_selection(codec);
-    const char *parameter_name;
-
-    if (codec == NULL || key_bytes == NULL || selection == 0)
-        return NULL;
-    parameter_name = codec->structure == ED301D00_CODEC_PRIVATE_KEY_INFO
-        ? OSSL_PKEY_PARAM_PRIV_KEY
-        : OSSL_PKEY_PARAM_PUB_KEY;
-    parameters[0] = OSSL_PARAM_construct_octet_string(
-        parameter_name,
-        (void *)key_bytes,
-        ED301D00_SEED_BYTES);
-    parameters[1] = OSSL_PARAM_construct_end();
-
-    key = ed301d00_key_new(codec->provider);
-    if (key == NULL || !ed301d00_key_import(key, selection, parameters)) {
-        ed301d00_key_free(key);
-        return NULL;
-    }
-    return key;
 }
 
 static void *ed301d00_codec_import_object(
@@ -1621,6 +1651,35 @@ cleanup:
     return result;
 }
 
+#if ED301D00_HAS_TEST_DECODER
+static void *ed301d00_codec_import_key(
+    ED301D00_CODEC_CONTEXT *codec,
+    const unsigned char key_bytes[ED301D00_SEED_BYTES])
+{
+    OSSL_PARAM parameters[2];
+    void *key = NULL;
+    const int selection = ed301d00_codec_required_selection(codec);
+    const char *parameter_name;
+
+    if (codec == NULL || key_bytes == NULL || selection == 0)
+        return NULL;
+    parameter_name = codec->structure == ED301D00_CODEC_PRIVATE_KEY_INFO
+        ? OSSL_PKEY_PARAM_PRIV_KEY
+        : OSSL_PKEY_PARAM_PUB_KEY;
+    parameters[0] = OSSL_PARAM_construct_octet_string(
+        parameter_name,
+        (void *)key_bytes,
+        ED301D00_SEED_BYTES);
+    parameters[1] = OSSL_PARAM_construct_end();
+
+    key = ed301d00_key_new(codec->provider);
+    if (key == NULL || !ed301d00_key_import(key, selection, parameters)) {
+        ed301d00_key_free(key);
+        return NULL;
+    }
+    return key;
+}
+
 static int ed301d00_codec_decode(
     void *codec_context,
     OSSL_CORE_BIO *input,
@@ -1637,10 +1696,12 @@ static int ed301d00_codec_decode(
     void *reference;
     size_t prefix_length = 0;
     size_t encoded_length = 0;
-    size_t consumed = 0;
+    long checkpoint = -1;
+    long pending;
     int object_type = OSSL_OBJECT_PKEY;
     char *data_type;
     OSSL_PARAM object_parameters[4];
+    int owns_input = 0;
     int result = 1;
 
     (void)passphrase_callback;
@@ -1656,36 +1717,37 @@ static int ed301d00_codec_decode(
     if (prefix == NULL || encoded_length > sizeof(encoded))
         return 0;
 
+    /* Reject an unrewindable stream before consuming its first byte. */
+    if (!ed301d00_codec_checkpoint(codec, input, &checkpoint))
+        goto cleanup;
+
     /*
-     * One-object stream boundary (B1-DER): this decoder owns exactly one
-     * canonical DER object per call.  Read only the two-byte outer header
-     * first; the expected body length (0x45 or 0x41) is a canonical
-     * short-form length byte, so a plain equality test also rejects
-     * long-form and indefinite lengths.  The body is read only after the
-     * header is valid, and nothing is read past the declared body: no
-     * pending probe, no extra byte, no stream-EOF requirement.  Bytes or
-     * objects after this one stay in the BIO for the caller; a
-     * whole-buffer no-trailing-data policy belongs to the caller,
-     * outside this one-object decoder.
+     * This test-only decoder accepts only a fully buffered candidate.  In
+     * particular, a retryable/nonblocking source with fewer bytes available
+     * is declined before the first read.  That removes partial parser state
+     * entirely: a later call starts from the unchanged input once the whole
+     * fixed-size object is available.
      */
-    if (!ed301d00_codec_read_exact(codec, input, encoded, 2, &consumed))
-        goto cleanup;   /* no complete header: empty source, retry or EOF */
-    if (encoded[0] != 0x30
-            || encoded[1] != (unsigned char)(encoded_length - 2)) {
-        ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
-            "draft-00 key decoding rejected outer DER header");
-        result = 0;
+    pending = codec->provider->bio_ctrl(
+        input, BIO_CTRL_PENDING, 0, NULL);
+    if (pending < 0 || (size_t)pending < encoded_length)
         goto cleanup;
-    }
+
+    /*
+     * Read one bounded candidate.  Unexpected short reads, outer-shape
+     * mismatches and foreign OIDs are all "not mine": cleanup rewinds the
+     * core BIO and permits another decoder to start at exactly the same byte.
+     */
     if (!ed301d00_codec_read_exact(
-            codec, input, encoded + 2, encoded_length - 2, &consumed)) {
-        ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
-            "truncated draft-00 key encoding");
-        result = 0;
+            codec, input, encoded, encoded_length))
         goto cleanup;
-    }
+    if (encoded[0] != 0x30
+            || encoded[1] != (unsigned char)(encoded_length - 2))
+        goto cleanup;
     if (!ed301d00_codec_has_target_oid(codec, encoded, encoded_length))
         goto cleanup;
+
+    owns_input = 1;
     if (memcmp(encoded, prefix, prefix_length) != 0) {
         ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
             "non-canonical draft-00 key encoding");
@@ -1719,6 +1781,12 @@ static int ed301d00_codec_decode(
     key = reference;
 
 cleanup:
+    if (!owns_input && checkpoint >= 0
+            && !ed301d00_codec_restore(codec, input, checkpoint)) {
+        ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
+            "draft-00 decoder could not restore an unowned input");
+        result = 0;
+    }
     ed301d00_key_free(key);
     ed301d00_codec_cleanse(codec, encoded, sizeof(encoded));
     return result;
@@ -1747,6 +1815,7 @@ static int ed301d00_codec_export_object(
     return ed301d00_key_export(
         key, selection, export_callback, callback_argument);
 }
+#endif
 
 #define ED301D00_DEFINE_ENCODER_DISPATCH(name, new_context, does_selection) \
     static const OSSL_DISPATCH name[] = {                                   \
@@ -1785,7 +1854,8 @@ static int ed301d00_codec_export_object(
         { 0, NULL }                                                         \
     }
 
-#define ED301D00_DEFINE_DECODER_DISPATCH(name, new_context, does_selection) \
+#if ED301D00_HAS_TEST_DECODER
+# define ED301D00_DEFINE_DECODER_DISPATCH(name, new_context, does_selection) \
     static const OSSL_DISPATCH name[] = {                                   \
         { OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))new_context },          \
         { OSSL_FUNC_DECODER_FREECTX,                                        \
@@ -1798,6 +1868,7 @@ static int ed301d00_codec_export_object(
             (void (*)(void))ed301d00_codec_export_object },                 \
         { 0, NULL }                                                         \
     }
+#endif
 
 ED301D00_DEFINE_PRIVATE_ENCODER_DISPATCH(
     ED301D00_PKCS8_DER_ENCODER_DISPATCH,
@@ -1816,14 +1887,12 @@ ED301D00_DEFINE_ENCODER_DISPATCH(
     ed301d00_spki_pem_codec_new_context,
     ed301d00_public_codec_does_selection);
 
-ED301D00_DEFINE_DECODER_DISPATCH(
-    ED301D00_PKCS8_DER_DECODER_DISPATCH,
-    ed301d00_pkcs8_der_codec_new_context,
-    ed301d00_private_codec_does_selection);
+#if ED301D00_HAS_TEST_DECODER
 ED301D00_DEFINE_DECODER_DISPATCH(
     ED301D00_SPKI_DER_DECODER_DISPATCH,
     ed301d00_spki_der_codec_new_context,
     ed301d00_public_codec_does_selection);
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Dispatch and algorithm tables                                      */
@@ -1976,21 +2045,17 @@ static const OSSL_ALGORITHM ED301D00_ENCODER_ALGORITHMS[] = {
     { NULL, NULL, NULL, NULL }
 };
 
+#if ED301D00_HAS_TEST_DECODER
 static const OSSL_ALGORITHM ED301D00_DECODER_ALGORITHMS[] = {
-    {
-        ED301D00_ALGORITHM_NAMES,
-        "provider=" ED301D00_PROVIDER_BASENAME ",input=der,structure=PrivateKeyInfo",
-        ED301D00_PKCS8_DER_DECODER_DISPATCH,
-        "draft-00 PKCS#8 DER decoder (test-only)"
-    },
     {
         ED301D00_ALGORITHM_NAMES,
         "provider=" ED301D00_PROVIDER_BASENAME ",input=der,structure=SubjectPublicKeyInfo",
         ED301D00_SPKI_DER_DECODER_DISPATCH,
-        "draft-00 SPKI DER decoder (test-only)"
+        "draft-00 transactional SPKI DER decoder (TLS test-only)"
     },
     { NULL, NULL, NULL, NULL }
 };
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Capabilities                                                       */
@@ -2129,10 +2194,12 @@ static const OSSL_ALGORITHM *ed301d00_provider_query_operation(
         return ED301D00_KEYMGMT_ALGORITHMS;
     if (operation_id == OSSL_OP_SIGNATURE)
         return ED301D00_SIGNATURE_ALGORITHMS;
-    if (operation_id == OSSL_OP_ENCODER)
+    if (operation_id == OSSL_OP_ENCODER && ED301D00_HAS_TEST_PKI_INTEGRATION)
         return ED301D00_ENCODER_ALGORITHMS;
+#if ED301D00_HAS_TEST_DECODER
     if (operation_id == OSSL_OP_DECODER)
         return ED301D00_DECODER_ALGORITHMS;
+#endif
     return NULL;
 }
 
@@ -2229,49 +2296,6 @@ static int ed301d00_core_version_is_supported(
         && ed301d00_core_version_text_is_supported(core_version);
 }
 
-static int ed301d00_object_registry_register(
-    const OSSL_CORE_HANDLE *handle,
-    OSSL_FUNC_core_obj_create_fn *obj_create,
-    OSSL_FUNC_core_obj_add_sigid_fn *obj_add_sigid,
-    OSSL_FUNC_core_set_error_mark_fn *set_error_mark,
-    OSSL_FUNC_core_clear_last_error_mark_fn *clear_last_error_mark,
-    OSSL_FUNC_core_pop_error_to_mark_fn *pop_error_to_mark)
-{
-    int marked;
-    int ok;
-
-    if (handle == NULL || obj_create == NULL || obj_add_sigid == NULL
-            || set_error_mark == NULL || clear_last_error_mark == NULL
-            || pop_error_to_mark == NULL)
-        return 0;
-
-    /*
-     * Registration belongs to the loading core.  No direct OBJ_* or ERR_*
-     * call is made from the provider, because a separately linked libcrypto
-     * may have a different process-global registry and error queue.  Exact
-     * identity/collision checks are consequently a host-side integration
-     * preflight and postflight responsibility.
-     */
-    marked = set_error_mark(handle) == 1;
-    ok = obj_create(
-             handle,
-             ED301D00_OID,
-             ED301D00_ALGORITHM_NAME,
-             ED301D00_ALGORITHM_NAME) == 1
-        && obj_add_sigid(
-               handle,
-               ED301D00_OID,
-               "",
-               ED301D00_OID) == 1;
-    if (marked) {
-        if (ok)
-            ok = pop_error_to_mark(handle) == 1;
-        else
-            (void)clear_last_error_mark(handle);
-    }
-    return ok;
-}
-
 /* ------------------------------------------------------------------ */
 /* Entry point called by the Rust cdylib wrapper                      */
 /* ------------------------------------------------------------------ */
@@ -2331,11 +2355,6 @@ int ed301_eddsa_draft00_shim_init(
     OSSL_FUNC_BIO_read_ex_fn *bio_read_ex = NULL;
     OSSL_FUNC_BIO_write_ex_fn *bio_write_ex = NULL;
     OSSL_FUNC_BIO_ctrl_fn *bio_ctrl = NULL;
-    OSSL_FUNC_core_obj_create_fn *obj_create = NULL;
-    OSSL_FUNC_core_obj_add_sigid_fn *obj_add_sigid = NULL;
-    OSSL_FUNC_core_set_error_mark_fn *set_error_mark = NULL;
-    OSSL_FUNC_core_clear_last_error_mark_fn *clear_last_error_mark = NULL;
-    OSSL_FUNC_core_pop_error_to_mark_fn *pop_error_to_mark = NULL;
     OSSL_FUNC_core_get_params_fn *core_get_params = NULL;
     ED301D00_PROVIDER_CONTEXT *provider;
 
@@ -2378,33 +2397,18 @@ int ed301_eddsa_draft00_shim_init(
         case OSSL_FUNC_BIO_CTRL:
             bio_ctrl = OSSL_FUNC_BIO_ctrl(dispatch);
             break;
-        case OSSL_FUNC_CORE_OBJ_CREATE:
-            obj_create = OSSL_FUNC_core_obj_create(dispatch);
-            break;
-        case OSSL_FUNC_CORE_OBJ_ADD_SIGID:
-            obj_add_sigid = OSSL_FUNC_core_obj_add_sigid(dispatch);
-            break;
-        case OSSL_FUNC_CORE_SET_ERROR_MARK:
-            set_error_mark = OSSL_FUNC_core_set_error_mark(dispatch);
-            break;
-        case OSSL_FUNC_CORE_CLEAR_LAST_ERROR_MARK:
-            clear_last_error_mark =
-                OSSL_FUNC_core_clear_last_error_mark(dispatch);
-            break;
-        case OSSL_FUNC_CORE_POP_ERROR_TO_MARK:
-            pop_error_to_mark = OSSL_FUNC_core_pop_error_to_mark(dispatch);
-            break;
         default:
             break;
         }
     }
 
-    if (zalloc == NULL || clear_free == NULL || bio_read_ex == NULL
-            || bio_write_ex == NULL || bio_ctrl == NULL || obj_create == NULL
-            || obj_add_sigid == NULL || set_error_mark == NULL
-            || clear_last_error_mark == NULL || pop_error_to_mark == NULL
+    if (zalloc == NULL || clear_free == NULL || bio_write_ex == NULL
             || core_get_params == NULL)
         return 0;
+#if ED301D00_HAS_TEST_DECODER
+    if (bio_read_ex == NULL || bio_ctrl == NULL)
+        return 0;
+#endif
     if (!ed301d00_core_version_is_supported(handle, core_get_params))
         return 0;
     provider = zalloc(sizeof(*provider), __FILE__, __LINE__);
@@ -2423,21 +2427,6 @@ int ed301_eddsa_draft00_shim_init(
     provider->rust = rust_api;
     provider->libctx = OSSL_LIB_CTX_new_child(handle, input_dispatch);
     if (provider->libctx == NULL) {
-        clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
-        return 0;
-    }
-
-    if (!ed301d00_object_registry_register(
-            handle,
-            obj_create,
-            obj_add_sigid,
-            set_error_mark,
-            clear_last_error_mark,
-            pop_error_to_mark)) {
-        ed301d00_raise(provider, ED301D00_R_OBJECT_REGISTRATION_FAILURE,
-            "core rejected ephemeral draft-00 test OID registration");
-        OSSL_LIB_CTX_free(provider->libctx);
-        provider->libctx = NULL;
         clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
         return 0;
     }

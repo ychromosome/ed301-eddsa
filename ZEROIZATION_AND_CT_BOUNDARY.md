@@ -13,6 +13,12 @@ create additional stack, register or ABI copies beyond the named owners. The
 candidate therefore makes no forensic stack-remanence or every-copy
 zeroization claim.
 
+The provider seed-import boundary constructs the fixed-size seed directly
+inside its non-`Copy`, zeroizing owner. It no longer creates a plain Rust
+array and then copies that array into the owner. The C key-generation buffer
+is cleared on every path after import. This removes the avoidable
+source-level temporary but does not strengthen the physical-copy disclaimer.
+
 Destructors do not run under `panic=abort`. The core crate and OpenSSL provider
 therefore reject every non-unwinding panic strategy at compile time. The
 checked release gates additionally append `panic=unwind` to the actual `rustc`
@@ -26,6 +32,12 @@ The separate Valgrind harness marks the seed undefined and exercises public
 key derivation and signing through explicit public-output boundaries. It is a
 preliminary control-flow and memory check for one local build, not a proof of
 constant-time execution, complete zeroization or fault resistance.
+
+Provider key generation requests 149 bits from the application-linked private
+RAND path in a child `OSSL_LIB_CTX`. A thread that uses that RAND path calls
+`OPENSSL_thread_stop_ex()` for the child context before provider teardown;
+the cross-thread unload regression keeps the worker alive while the final
+provider reference is released.
 
 The deferred assurance work includes a fresh exact-revision full-scope source
 security scan, disassembly and secret-dependent branch/address review,

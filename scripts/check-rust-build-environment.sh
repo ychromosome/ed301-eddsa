@@ -1,23 +1,30 @@
 #!/bin/sh
 set -eu
 
-for name in \
-        RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTC RUSTC_WRAPPER \
-        RUSTC_WORKSPACE_WRAPPER ED301_PROFILE_MARKER_DIR \
-        ED301_PROFILE_EXPECTATIONS; do
-    if env | grep -q "^${name}="; then
-        echo "inherited Rust build override is forbidden: $name" >&2
-        exit 1
-    fi
-done
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
 
-if env | grep -Eq \
-        '^(CARGO_PROFILE_RELEASE(_[A-Za-z0-9_]+)?|CARGO_TARGET_[A-Za-z0-9_]+_RUSTFLAGS|CARGO_BUILD_RUSTFLAGS|CARGO_BUILD_RUSTC|CARGO_BUILD_RUSTC_WRAPPER|CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER)='; then
-    echo "inherited Cargo profile or compiler override is forbidden" >&2
-    env | LC_ALL=C sort | grep -E \
-        '^(CARGO_PROFILE_RELEASE(_[A-Za-z0-9_]+)?|CARGO_TARGET_[A-Za-z0-9_]+_RUSTFLAGS|CARGO_BUILD_RUSTFLAGS|CARGO_BUILD_RUSTC|CARGO_BUILD_RUSTC_WRAPPER|CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER)=' \
-        | sed 's/=.*$/=<redacted>/' >&2
+FORBIDDEN='^(RUST[^=]*|CARGO[^=]*|CC|CC_[^=]*|CXX|CXX_[^=]*|AR|AR_[^=]*|RANLIB|RANLIB_[^=]*|LD|LD_[^=]*|CFLAGS|CFLAGS_[^=]*|CPPFLAGS|CPPFLAGS_[^=]*|CXXFLAGS|CXXFLAGS_[^=]*|LDFLAGS|LDFLAGS_[^=]*|LIBRARY_PATH|CPATH|C_INCLUDE_PATH|CPLUS_INCLUDE_PATH|OBJC_INCLUDE_PATH|PKG_CONFIG[^=]*|BINDGEN[^=]*|CRATE_CC[^=]*|HOST_CC|TARGET_CC|MAKEFLAGS|MFLAGS|PYTHON[^=]*|OPENSSL_[^=]*|BASH_ENV|ENV|TMPDIR)='
+
+if env -0 | grep -zEq "$FORBIDDEN"; then
+    echo "inherited build, compiler, runner, Python or linker override is forbidden" >&2
+    env -0 | awk -v RS='\0' -v pattern="$FORBIDDEN" '
+        $0 ~ pattern {
+            name = $0
+            sub(/=.*/, "", name)
+            print name "=<redacted>"
+        }
+    ' | sort >&2
     exit 1
 fi
 
-printf 'rust_build_environment=PASS\n'
+for tool in /usr/bin/cargo /usr/bin/rustc /usr/bin/rustfmt \
+        /usr/bin/cargo-clippy /usr/bin/rustdoc /usr/bin/gcc /usr/bin/ar \
+        /usr/bin/python3; do
+    test -x "$tool" || {
+        echo "missing canonical build tool: $tool" >&2
+        exit 127
+    }
+done
+
+printf 'rust_build_environment=PASS path=%s\n' "$PATH"

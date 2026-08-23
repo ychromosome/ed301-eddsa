@@ -10,6 +10,7 @@
  */
 
 #include <stdlib.h>
+#include <pthread.h>
 
 #include <openssl/rand.h>
 
@@ -23,7 +24,36 @@ typedef struct test_rand_context_st {
 } TEST_RAND_CONTEXT;
 
 static int test_rand_fail;
+static unsigned int test_rand_advertised_strength = 256U;
+static unsigned int test_rand_instantiate_strength;
+static unsigned int test_rand_generate_strength;
 static unsigned int test_rand_generate_calls;
+
+typedef struct lifecycle_worker_st {
+    OSSL_LIB_CTX *libctx;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    int ready;
+    int release;
+    int keygen_ok;
+} LIFECYCLE_WORKER;
+
+static void *lifecycle_keygen_worker(void *argument)
+{
+    LIFECYCLE_WORKER *worker = argument;
+    EVP_PKEY *key = d00_keygen(worker->libctx);
+
+    worker->keygen_ok = key != NULL;
+    EVP_PKEY_free(key);
+    if (pthread_mutex_lock(&worker->mutex) != 0)
+        return NULL;
+    worker->ready = 1;
+    pthread_cond_signal(&worker->condition);
+    while (!worker->release)
+        pthread_cond_wait(&worker->condition, &worker->mutex);
+    pthread_mutex_unlock(&worker->mutex);
+    return NULL;
+}
 
 static void *test_rand_new_context(
     void *provider_context,
@@ -55,7 +85,7 @@ static int test_rand_instantiate(
 {
     TEST_RAND_CONTEXT *context = rand_context;
 
-    (void)strength;
+    test_rand_instantiate_strength = strength;
     (void)prediction_resistance;
     (void)personalization;
     (void)personalization_length;
@@ -88,13 +118,14 @@ static int test_rand_generate(
     TEST_RAND_CONTEXT *context = rand_context;
     size_t index;
 
-    (void)strength;
+    test_rand_generate_strength = strength;
     (void)prediction_resistance;
     (void)additional_input;
     (void)additional_input_length;
     test_rand_generate_calls++;
     if (context == NULL || context->state != EVP_RAND_STATE_READY
-            || output == NULL || test_rand_fail)
+            || output == NULL || test_rand_fail
+            || strength > test_rand_advertised_strength)
         return 0;
     for (index = 0; index < output_length; index++)
         output[index] = (unsigned char)(0xa0U + (index % 0x40U));
@@ -146,7 +177,9 @@ static int test_rand_get_context_params(
             && OSSL_PARAM_set_int(parameter, context->state) != 1)
         return 0;
     parameter = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_STRENGTH);
-    if (parameter != NULL && OSSL_PARAM_set_uint(parameter, 256U) != 1)
+    if (parameter != NULL
+            && OSSL_PARAM_set_uint(
+                parameter, test_rand_advertised_strength) != 1)
         return 0;
     parameter = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_MAX_REQUEST);
     if (parameter != NULL
@@ -219,6 +252,7 @@ int main(void)
     OSSL_PROVIDER *deflt = NULL;
     OSSL_PROVIDER *draft = NULL;
     EVP_PKEY *key = NULL;
+    EVP_PKEY *weak_key = NULL;
     EVP_PKEY *failed_key = NULL;
     EVP_PKEY *recovered_key = NULL;
     unsigned char expected[D00_SEED_BYTES];
@@ -226,6 +260,13 @@ int main(void)
     size_t actual_length = 0;
     size_t index;
     unsigned int calls_before_failure;
+    LIFECYCLE_WORKER worker;
+    pthread_t worker_thread;
+    int worker_started = 0;
+    int worker_joined = 0;
+    int mutex_ready = 0;
+    int condition_ready = 0;
+    int synchronization_ready = 0;
 
     for (index = 0; index < sizeof(expected); index++)
         expected[index] = (unsigned char)(0xa0U + (index % 0x40U));
@@ -250,6 +291,10 @@ int main(void)
         key = d00_keygen(libctx);
     D00_CHECK(key != NULL && test_rand_generate_calls > 0,
         "keygen reaches the application-selected OpenSSL RAND provider");
+    D00_CHECK(key != NULL && test_rand_generate_strength >= 149U,
+        "keygen generate request carries at least 149-bit strength "
+        "(instantiate=%u, generate=%u)",
+        test_rand_instantiate_strength, test_rand_generate_strength);
     D00_CHECK(key != NULL
             && EVP_PKEY_get_octet_string_param(
                 key, OSSL_PKEY_PARAM_PRIV_KEY, actual, sizeof(actual),
@@ -257,6 +302,15 @@ int main(void)
             && actual_length == sizeof(actual)
             && memcmp(actual, expected, sizeof(actual)) == 0,
         "generated Ed301 seed is byte-exact from application RAND");
+
+    test_rand_advertised_strength = 128U;
+    calls_before_failure = test_rand_generate_calls;
+    weak_key = d00_keygen(libctx);
+    D00_CHECK(weak_key == NULL
+            && test_rand_generate_calls >= calls_before_failure,
+        "sub-149-bit application RAND makes Ed301 keygen fail closed");
+    ERR_clear_error();
+    test_rand_advertised_strength = 256U;
 
     calls_before_failure = test_rand_generate_calls;
     test_rand_fail = 1;
@@ -271,8 +325,57 @@ int main(void)
     D00_CHECK(recovered_key != NULL,
         "Ed301 keygen recovers after application RAND recovers");
 
+    memset(&worker, 0, sizeof(worker));
+    worker.libctx = libctx;
+    mutex_ready = pthread_mutex_init(&worker.mutex, NULL) == 0;
+    condition_ready = mutex_ready
+        && pthread_cond_init(&worker.condition, NULL) == 0;
+    synchronization_ready = mutex_ready && condition_ready;
+    D00_CHECK(synchronization_ready,
+        "cross-thread child-LIBCTX lifecycle synchronization setup");
+    if (synchronization_ready)
+        worker_started = pthread_create(
+            &worker_thread, NULL, lifecycle_keygen_worker, &worker) == 0;
+    D00_CHECK(worker_started,
+        "worker thread performs provider key generation");
+    if (worker_started) {
+        pthread_mutex_lock(&worker.mutex);
+        while (!worker.ready)
+            pthread_cond_wait(&worker.condition, &worker.mutex);
+        pthread_mutex_unlock(&worker.mutex);
+        D00_CHECK(worker.keygen_ok,
+            "worker keygen completes before final provider unload");
+
+        EVP_PKEY_free(recovered_key);
+        recovered_key = NULL;
+        EVP_PKEY_free(failed_key);
+        failed_key = NULL;
+        EVP_PKEY_free(weak_key);
+        weak_key = NULL;
+        EVP_PKEY_free(key);
+        key = NULL;
+        D00_CHECK(OSSL_PROVIDER_unload(draft) == 1,
+            "provider unload succeeds while the worker thread remains alive");
+        draft = NULL;
+        OSSL_PROVIDER_unload(deflt);
+        deflt = NULL;
+        OSSL_PROVIDER_unload(rand_provider);
+        rand_provider = NULL;
+        OSSL_LIB_CTX_free(libctx);
+        libctx = NULL;
+
+        pthread_mutex_lock(&worker.mutex);
+        worker.release = 1;
+        pthread_cond_signal(&worker.condition);
+        pthread_mutex_unlock(&worker.mutex);
+        worker_joined = pthread_join(worker_thread, NULL) == 0;
+        D00_CHECK(worker_joined,
+            "worker exits after child context teardown without stale TLS state");
+    }
+
     OPENSSL_cleanse(actual, sizeof(actual));
     OPENSSL_cleanse(expected, sizeof(expected));
+    EVP_PKEY_free(weak_key);
     EVP_PKEY_free(recovered_key);
     EVP_PKEY_free(failed_key);
     EVP_PKEY_free(key);
@@ -280,5 +383,9 @@ int main(void)
     OSSL_PROVIDER_unload(deflt);
     OSSL_PROVIDER_unload(rand_provider);
     OSSL_LIB_CTX_free(libctx);
+    if (condition_ready)
+        pthread_cond_destroy(&worker.condition);
+    if (mutex_ready)
+        pthread_mutex_destroy(&worker.mutex);
     return d00_summary("provider_rand");
 }

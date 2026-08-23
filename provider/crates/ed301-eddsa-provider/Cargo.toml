@@ -23,8 +23,9 @@ path = "src/lib.rs"
 [features]
 default = []
 test-failpoint = []
-tls-experiment = []
-tls-collider = []
+pki-experiment = []
+tls-experiment = ["pki-experiment"]
+tls-collider = ["pki-experiment"]
 secret-taint-instrumentation = ["ed301-eddsa/secret-taint-instrumentation"]
 
 [dependencies]

@@ -1,8 +1,13 @@
 #!/bin/sh
 set -eu
 
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 MANIFEST=$ROOT/SOURCE_MANIFEST.sha256
+MODE=${ED301_SOURCE_MODE:-}
+EXPECTED_DIGEST=${ED301_EXPECTED_SOURCE_MANIFEST_SHA256:-}
 
 for tool in awk cmp diff find grep mktemp sed sha256sum sort tr wc; do
     command -v "$tool" >/dev/null 2>&1 || {
@@ -11,74 +16,86 @@ for tool in awk cmp diff find grep mktemp sed sha256sum sort tr wc; do
     }
 done
 
-test -f "$MANIFEST" || {
-    echo "missing source manifest: $MANIFEST" >&2
+if ! printf '%s\n' "$EXPECTED_DIGEST" | grep -Eq '^[0-9a-f]{64}$'; then
+    echo "ED301_EXPECTED_SOURCE_MANIFEST_SHA256 must be an external lowercase SHA-256" >&2
+    exit 2
+fi
+test -f "$MANIFEST" && test ! -L "$MANIFEST" || {
+    echo "missing regular source manifest: $MANIFEST" >&2
     exit 1
 }
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/ed301-source-tree.XXXXXX")
+TMP=$(mktemp -d /tmp/ed301-source-tree.XXXXXX)
 cleanup() {
     rm -rf -- "$TMP"
 }
 trap cleanup EXIT HUP INT TERM
-
-for generated_directory in target provider/target \
-        integration/downstream-workspace/target secret-taint/target \
-        secret-taint/valgrind-client/target; do
-    generated_path=$ROOT/$generated_directory
-    if [ -e "$generated_path" ] || [ -L "$generated_path" ]; then
-        if [ ! -d "$generated_path" ] || [ -L "$generated_path" ]; then
-            echo "reserved build path is not a real directory: $generated_directory" >&2
-            exit 1
-        fi
-    fi
-done
+mkdir -m 700 "$TMP/home"
 
 manifest_digest=$(sha256sum "$MANIFEST" | awk '{ print $1 }')
-expected_digest=${ED301_EXPECTED_SOURCE_MANIFEST_SHA256:-}
-
-if [ -n "$expected_digest" ]; then
-    if ! printf '%s\n' "$expected_digest" \
-            | grep -Eq '^[0-9a-f]{64}$'; then
-        echo "ED301_EXPECTED_SOURCE_MANIFEST_SHA256 is not lowercase SHA-256" >&2
-        exit 2
-    fi
-    if [ "$manifest_digest" != "$expected_digest" ]; then
-        echo "source manifest does not match the externally supplied digest" >&2
-        echo "expected: $expected_digest" >&2
-        echo "actual:   $manifest_digest" >&2
-        exit 1
-    fi
-    anchor="external manifest digest $expected_digest"
-elif command -v git >/dev/null 2>&1 \
-        && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git_root=$(git -C "$ROOT" rev-parse --show-toplevel)
-    git_root=$(CDPATH= cd -- "$git_root" && pwd -P)
-    if [ "$git_root" != "$ROOT" ]; then
-        echo "source root is not the Git worktree root" >&2
-        exit 1
-    fi
-    if ! git -C "$ROOT" show HEAD:SOURCE_MANIFEST.sha256 \
-            >"$TMP/manifest.from-head"; then
-        echo "HEAD does not contain SOURCE_MANIFEST.sha256" >&2
-        exit 1
-    fi
-    if ! cmp -s "$MANIFEST" "$TMP/manifest.from-head"; then
-        echo "working source manifest is not anchored to HEAD" >&2
-        echo "for an intentional uncommitted candidate, supply its trusted digest" >&2
-        echo "through ED301_EXPECTED_SOURCE_MANIFEST_SHA256" >&2
-        exit 1
-    fi
-    revision=$(git -C "$ROOT" rev-parse HEAD)
-    anchor="Git HEAD $revision"
-else
-    echo "source manifest has no external trust anchor" >&2
-    echo "verify the enclosing archive first, then pass its trusted manifest" >&2
-    echo "digest through ED301_EXPECTED_SOURCE_MANIFEST_SHA256" >&2
+if [ "$manifest_digest" != "$EXPECTED_DIGEST" ]; then
+    echo "source manifest does not match the external trust anchor" >&2
+    echo "expected: $EXPECTED_DIGEST" >&2
+    echo "actual:   $manifest_digest" >&2
     exit 1
 fi
 
-LC_ALL=C awk '
+case "$MODE" in
+    git)
+        EXPECTED_COMMIT=${ED301_EXPECTED_GIT_COMMIT:-}
+        if ! printf '%s\n' "$EXPECTED_COMMIT" \
+                | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "git mode requires external ED301_EXPECTED_GIT_COMMIT" >&2
+            exit 2
+        fi
+        test -d "$ROOT/.git" && test ! -L "$ROOT/.git" || {
+            echo "git mode requires a non-symlink .git directory at the source root" >&2
+            exit 1
+        }
+        git_clean() {
+            env -i PATH=/usr/bin:/bin HOME="$TMP/home" LC_ALL=C \
+                GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+                /usr/bin/git --no-optional-locks --no-replace-objects \
+                -C "$ROOT" "$@"
+        }
+        git_root=$(git_clean rev-parse --show-toplevel)
+        git_root=$(CDPATH= cd -- "$git_root" && pwd -P)
+        [ "$git_root" = "$ROOT" ] || {
+            echo "source root is not the Git worktree root" >&2
+            exit 1
+        }
+        revision=$(git_clean rev-parse --verify 'HEAD^{commit}')
+        [ "$revision" = "$EXPECTED_COMMIT" ] || {
+            echo "Git HEAD does not match the external commit anchor" >&2
+            exit 1
+        }
+        git_clean cat-file blob \
+            "$EXPECTED_COMMIT:SOURCE_MANIFEST.sha256" \
+            >"$TMP/manifest.from-commit"
+        cmp -s "$MANIFEST" "$TMP/manifest.from-commit" || {
+            echo "source manifest is not the blob from the anchored commit" >&2
+            exit 1
+        }
+        anchor="git-commit:$EXPECTED_COMMIT manifest:$EXPECTED_DIGEST"
+        ;;
+    archive)
+        if [ -e "$ROOT/.git" ] || [ -L "$ROOT/.git" ]; then
+            echo "archive mode rejects Git metadata" >&2
+            exit 1
+        fi
+        if [ -n "${ED301_EXPECTED_GIT_COMMIT:-}" ]; then
+            echo "archive mode rejects ED301_EXPECTED_GIT_COMMIT" >&2
+            exit 2
+        fi
+        anchor="archive-manifest:$EXPECTED_DIGEST"
+        ;;
+    *)
+        echo "ED301_SOURCE_MODE must explicitly be git or archive" >&2
+        exit 2
+        ;;
+esac
+
+awk '
     {
         digest = substr($0, 1, 64)
         separator = substr($0, 65, 2)
@@ -105,7 +122,7 @@ LC_ALL=C awk '
     }
 ' "$MANIFEST" >"$TMP/expected-files"
 
-LC_ALL=C awk '
+awk '
     {
         count = split($0, component, "/")
         directory = ""
@@ -117,16 +134,12 @@ LC_ALL=C awk '
             print directory
         }
     }
-' "$TMP/expected-files" | LC_ALL=C sort -u >"$TMP/expected-directories"
+' "$TMP/expected-files" | sort -u >"$TMP/expected-directories"
 
 (
     cd "$ROOT"
     find . -mindepth 1 \
-        \( -path './.git' -o -path './target' \
-           -o -path './provider/target' \
-           -o -path './integration/downstream-workspace/target' \
-           -o -path './secret-taint/target' \
-           -o -path './secret-taint/valgrind-client/target' \) -prune -o \
+        \( -path './.git' \) -prune -o \
         ! -type d ! -type f -print
 ) >"$TMP/special-paths"
 if [ -s "$TMP/special-paths" ]; then
@@ -138,24 +151,16 @@ fi
 (
     cd "$ROOT"
     find . -mindepth 1 \
-        \( -path './.git' -o -path './target' \
-           -o -path './provider/target' \
-           -o -path './integration/downstream-workspace/target' \
-           -o -path './secret-taint/target' \
-           -o -path './secret-taint/valgrind-client/target' \) -prune -o \
+        \( -path './.git' \) -prune -o \
         -type f ! -path './SOURCE_MANIFEST.sha256' -print
-) | sed 's|^\./||' | LC_ALL=C sort >"$TMP/actual-files"
+) | sed 's|^\./||' | sort >"$TMP/actual-files"
 
 (
     cd "$ROOT"
     find . -mindepth 1 \
-        \( -path './.git' -o -path './target' \
-           -o -path './provider/target' \
-           -o -path './integration/downstream-workspace/target' \
-           -o -path './secret-taint/target' \
-           -o -path './secret-taint/valgrind-client/target' \) -prune -o \
+        \( -path './.git' \) -prune -o \
         -type d -print
-) | sed 's|^\./||' | LC_ALL=C sort >"$TMP/actual-directories"
+) | sed 's|^\./||' | sort >"$TMP/actual-directories"
 
 if ! cmp -s "$TMP/expected-files" "$TMP/actual-files"; then
     echo "source file inventory does not match SOURCE_MANIFEST.sha256" >&2

@@ -19,12 +19,16 @@ mutations in tests/test_edge_vectors.py (22 cases).
 """
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
+if len(sys.argv) != 4:
+    raise SystemExit(
+        "usage: gen_vectors.py <repository> <vectors.h> <policy_vectors.rs>")
+
 REPOSITORY = Path(sys.argv[1]).resolve()
 OUT = Path(sys.argv[2]).resolve()
+RUST_OUT = Path(sys.argv[3]).resolve()
 
 ORACLE = REPOSITORY / "inputs" / "round4"
 POSITIVE = json.loads(
@@ -481,10 +485,6 @@ emit("};")
 emit("")
 
 # ---- Rust direct-parse policy data (FBL-08) --------------------------
-RUST_OUT = REPOSITORY / "provider" / "crates" \
-    / "ed301-eddsa-provider" / "src" / "policy_vectors_data.rs"
-
-
 def rust_bytes(data):
     body = ", ".join(f"0x{b:02x}" for b in data)
     return f"&[{body}]"
@@ -521,11 +521,6 @@ rust_lines.append(
 rust_lines.append(
     f"pub const VALID_S: &[u8] = {rust_bytes(base_signature[FIELD_BYTES:])};")
 RUST_OUT.write_text("\n".join(rust_lines) + "\n")
-# The generated module must satisfy the workspace `cargo fmt -- --check`
-# gate on a FRESH generation, so the generator itself normalizes its
-# output with the same rustfmt toolchain and fails if formatting fails.
-subprocess.run(
-    ["rustfmt", "--edition", "2024", str(RUST_OUT)], check=True)
 
 # ---- historical Ed301-Sig-v1 incompatibility demonstration ----------
 hist_vector = HIST["vectors"][0]

@@ -126,7 +126,7 @@ static int run_lane(const char *label, const char *module_dir,
 
     started = now_seconds();
     d00_seed_error_sentinel();
-    draft = d00_load_named(libctx, NULL, D00_PROVIDER);
+    draft = d00_load_named(libctx, NULL, D00_PKI_PROVIDER);
     elapsed = now_seconds() - started;
     first_queue_ok = d00_queue_is_sentinel_only();
     pthread_join(thread, NULL);
@@ -137,7 +137,7 @@ static int run_lane(const char *label, const char *module_dir,
         goto done;
     }
     d00_seed_error_sentinel();
-    retry = d00_load_named(libctx, NULL, D00_PROVIDER);
+    retry = d00_load_named(libctx, NULL, D00_PKI_PROVIDER);
     printf("%s: unsafe first load %s in %.3f s; explicit retry %s\n",
         label, draft == NULL ? "blocked" : "unexpectedly succeeded",
         elapsed, retry != NULL ? "succeeded" : "blocked");

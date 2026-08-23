@@ -63,6 +63,9 @@ Under the lane root, `logs/<version>/` contains:
   that the only RPATH/RUNPATH is that prefix's `lib/`;
 - `lane_identity.seal`, the machine-readable release/header/library/loader
   identity record; and
+- `prefix_manifest.sha256`, `prefix_inventory.tsv`, and
+  `prefix_symlinks.tsv`, which bind every installed regular file, directory,
+  and symlink and reject special objects or links escaping the prefix; and
 - `evidence_manifest.sha256` and its seal, hashing every preceding executable
   step's log and exit file plus the identity, provenance, source, loader, and
   artifact records. The manifest intentionally excludes its own log/exit, its
@@ -76,6 +79,13 @@ Any failed manifest, version, loader, linker, or hash check records
 `LANE <version> FAILED` and a nonzero `lane_status.exit`; no later command can
 overwrite it with `OK`.
 
+The lane consumer does not trust the directory name or an unbound version
+label. Before executing the lane CLI or linking any provider artifact it
+requires the exact lane root, version, and an evidence-manifest SHA-256
+supplied by the outer controller. `scripts/verify-openssl-provider-lane.sh`
+then rechecks the complete prefix inventory, regular-file hashes, symlink
+containment, release identity, and evidence chain.
+
 The source manifest is a content/presence seal for all regular files present
 after extraction and the version check. OpenSSL's in-tree build may add
 generated files, so the
@@ -87,9 +97,10 @@ not falsely call the entire post-build directory pristine.
 
 The OpenSSL lane helper does not build the Ed301 provider module and does not
 claim to sanitize OpenSSL or the provider. The acceptance runner records
-ordinary, failpoint, private-use TLS and full TLS-collider provider-module
-hashes after the harness build and again after the targeted execution gates,
-and compares them byte-for-byte. Those hashes are separate from
+ordinary, failpoint, optional PKI, private-use TLS and full TLS-collider
+provider-module hashes before any module or harness execution and again after
+the targeted execution gates. Every executable harness and generated input is
+covered by the same pre/post boundary. Those hashes are separate from
 `openssl_modules_post.sha256`, which covers only OpenSSL's installed module
 directory.
 
