@@ -3,7 +3,7 @@
 The `provider-experiment` branch contains an experimental,
 signature-only OpenSSL provider for `Ed301-EdDSA-draft-00`.
 
-Fresh local builds on 2026-08-22 passed the same source-driven matrix against
+Fresh local builds on 2026-08-23 passed the same source-driven matrix against
 unmodified OpenSSL 3.5.7 and 4.0.1:
 
 - provider loading, unloading and parallel first registration;
@@ -15,6 +15,13 @@ unmodified OpenSSL 3.5.7 and 4.0.1:
 - negative digest, context, streaming, parser, collision and malformed-input
   cases;
 - targeted ASan/UBSan, Valgrind, GCC analyzer and allocation-failure gates.
+
+Before any Cargo command, the provider runner now authenticates the complete
+regular-file and directory inventory and rejects extra source, symlinks and
+special files. Its release build uses the same effective-profile enforcement
+as the core and secret-taint gates, including explicit `panic=unwind` and the
+crate-specific overflow policy; the final source inventory is verified again
+after the matrix.
 
 The repaired integration boundary is:
 
@@ -37,7 +44,8 @@ The tests use the ephemeral OID
 SignatureScheme `0xFE84`. The codepoint appears only in the TLS test
 artifacts. Neither identifier is registered or suitable for deployment.
 
-Open gates remain the deferred Deep Security Scan, independent external
-review, AArch64, coverage-guided fuzzing, QEMU/container lanes, final
-constant-time and zeroization review, permanent identifiers, and the closing
-Rust-1.85 run.  No production, standardization or release claim is made.
+Open gates remain the fresh exact-revision full-scope Deep Security Scan,
+independent external review, AArch64, coverage-guided fuzzing, QEMU/container
+lanes, final constant-time and zeroization review, permanent identifiers, and
+the closing Rust-1.85 run. No production, standardization or release claim is
+made.

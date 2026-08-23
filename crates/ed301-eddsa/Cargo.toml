@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 description = "Review candidate for the Ed301-EdDSA-draft-00 byte contract"
+build = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 
 [lib]
 path = "src/lib.rs"

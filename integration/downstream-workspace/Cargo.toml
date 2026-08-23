@@ -7,6 +7,15 @@ name = "ed301-eddsa-downstream-check"
 version = "0.0.0"
 edition = "2024"
 publish = false
+build = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[[bin]]
+name = "ed301-eddsa-downstream-check"
+path = "src/main.rs"
 
 [dependencies]
 ed301-eddsa = { path = "../../crates/ed301-eddsa" }

@@ -12,6 +12,9 @@
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(not(panic = "unwind"))]
+compile_error!("the Ed301 OpenSSL provider requires panic=unwind at its FFI boundary");
+
 use core::ffi::{c_int, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 

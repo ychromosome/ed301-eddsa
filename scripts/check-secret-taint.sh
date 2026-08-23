@@ -9,9 +9,16 @@ for tool in cargo valgrind; do
     }
 done
 
+sh "$ROOT/scripts/verify-source-tree.sh"
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+
 cleanup_home=0
 cleanup_target=0
+PROFILE_MARKER_DIR=
 cleanup() {
+    if [ -n "$PROFILE_MARKER_DIR" ]; then
+        rm -rf -- "$PROFILE_MARKER_DIR"
+    fi
     if [ "$cleanup_target" -eq 1 ]; then
         rm -rf -- "$CARGO_TARGET_DIR"
     fi
@@ -63,8 +70,19 @@ export CARGO_NET_OFFLINE=true
 export CARGO_INCREMENTAL=0
 export CCACHE_DISABLE=1
 
-cd "$ROOT/secret-taint"
-cargo build --locked --offline --release
+PROFILE_MARKER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ed301-rust-r2-taint-profile.XXXXXX")
+{
+    command -v rustc
+    rustc --version --verbose
+} >"$PROFILE_MARKER_DIR/toolchain.txt"
+ED301_PROFILE_MARKER_DIR=$PROFILE_MARKER_DIR \
+ED301_PROFILE_EXPECTATIONS='crypto_bigint=off ed301_eddsa=on ed301_valgrind_client=on ed301_eddsa_secret_taint=on' \
+RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+    cargo build --manifest-path "$ROOT/secret-taint/Cargo.toml" \
+        --locked --offline --release
+sh "$ROOT/scripts/check-profile-markers.sh" "$PROFILE_MARKER_DIR" \
+    crypto_bigint=off ed301_eddsa=on ed301_valgrind_client=on \
+    ed301_eddsa_secret_taint=on
 
 export ED301_CT_SECRET_HEX=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425
 export ED301_CT_EXPECTED_PUBLIC_HEX=8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890

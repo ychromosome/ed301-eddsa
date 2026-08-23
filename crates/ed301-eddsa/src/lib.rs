@@ -8,6 +8,9 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+#[cfg(not(panic = "unwind"))]
+compile_error!("ed301-eddsa requires panic=unwind so named secret owners are dropped");
+
 mod edwards;
 mod field;
 pub mod parameters;

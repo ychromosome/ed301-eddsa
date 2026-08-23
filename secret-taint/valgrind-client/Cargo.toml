@@ -6,6 +6,11 @@ rust-version = "1.85"
 license = "Apache-2.0"
 publish = false
 description = "Test-only Valgrind client requests for the ED301 secret-taint gate"
+build = "build.rs"
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 
 [lib]
 path = "src/lib.rs"

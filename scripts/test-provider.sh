@@ -51,6 +51,9 @@ for tool in cargo rustc rustfmt cargo-clippy python3 gcc clang nm strings \
     command -v "$tool" >/dev/null
 done
 
+sh "$ROOT/scripts/verify-source-tree.sh"
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+
 export CARGO_HOME="$TEMP_CARGO_HOME"
 export CARGO_TARGET_DIR="$BUILD/cargo-target"
 export CARGO_NET_OFFLINE=true
@@ -79,8 +82,9 @@ cargo clippy -V
     sha256sum --strict --quiet -c SHA256SUMS
 )
 
-python3 "$ROOT/provider-tests/gen_vectors.py" \
-    "$ROOT" "$ROOT/provider-tests/vectors.h"
+mkdir -p "$BUILD/generated"
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/provider-tests/gen_vectors.py" \
+    "$ROOT" "$BUILD/generated/vectors.h"
 
 cargo fmt --manifest-path "$ROOT/provider/Cargo.toml" --all -- --check
 cargo metadata --manifest-path "$ROOT/provider/Cargo.toml" \
@@ -97,19 +101,19 @@ cargo test --manifest-path "$ROOT/provider/Cargo.toml" \
 
 MARKERS="$BUILD/profile-markers"
 mkdir -p "$MARKERS"
+{
+    command -v rustc
+    rustc --version --verbose
+} >"$MARKERS/toolchain.txt"
 cargo clean --manifest-path "$ROOT/provider/Cargo.toml"
 ED301_PROFILE_MARKER_DIR="$MARKERS" \
-RUSTC_WRAPPER="$ROOT/scripts/provider-profile-guard.sh" \
+ED301_PROFILE_EXPECTATIONS='crypto_bigint=off ed301_eddsa=on ed301_eddsa_draft00=on' \
+RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
     cargo build --manifest-path "$ROOT/provider/Cargo.toml" \
         --release --locked --offline
 
-for crate in crypto_bigint ed301_eddsa ed301_eddsa_draft00; do
-    test -s "$MARKERS/$crate"
-    grep -E 'panic=unwind .*opt=3 .*cgu=1 ' "$MARKERS/$crate" >/dev/null
-done
-grep -E '^overflow=(off|absent) ' "$MARKERS/crypto_bigint" >/dev/null
-grep -E '^overflow=on ' "$MARKERS/ed301_eddsa" >/dev/null
-grep -E '^overflow=on ' "$MARKERS/ed301_eddsa_draft00" >/dev/null
+sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
+    crypto_bigint=off ed301_eddsa=on ed301_eddsa_draft00=on
 
 cp "$CARGO_TARGET_DIR/release/libed301_eddsa_draft00.so" \
     "$BUILD/modules/ed301_eddsa_draft00.so"
@@ -162,6 +166,7 @@ for harness in "${HARNESSES[@]}"; do
     gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
         -I"$OPENSSL_PREFIX/include" \
         -I"$ROOT/provider/crates/ed301-eddsa-provider/c" \
+        -I"$BUILD/generated" \
         -I"$ROOT/provider-tests" \
         -o "$BUILD/bin/$harness" \
         "$ROOT/provider-tests/$harness.c" \
@@ -196,7 +201,8 @@ test "$POLICY_RC" -ne 0
 grep -E 'failed|FAIL provider_signature' "$POLICY_LOG" >/dev/null
 
 gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
-    -I"$OPENSSL_PREFIX/include" -I"$ROOT/provider-tests" \
+    -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
+    -I"$ROOT/provider-tests" \
     -o "$BUILD/bin/provider_load_no_rpath" \
     "$ROOT/provider-tests/provider_load.c" \
     -L"$OPENSSL_LIB" -lcrypto -lssl -lpthread -ldl
@@ -251,7 +257,7 @@ for harness in provider_signature provider_keymgmt provider_serialization \
         val01_decoder_bio provider_load provider_rand provider_tls; do
     clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g \
         -fsanitize=address,undefined -fno-sanitize-recover=all \
-        -I"$OPENSSL_PREFIX/include" \
+        -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
         -I"$ROOT/provider/crates/ed301-eddsa-provider/c" \
         -I"$ROOT/provider-tests" \
         -o "$BUILD/bin/${harness}_asan" \
@@ -280,7 +286,7 @@ gcc -std=c11 -Wall -Wextra -Werror -fanalyzer -c \
 
 scan-build --status-bugs --use-cc=clang -o "$BUILD/scan-build" \
     clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
-    -I"$OPENSSL_PREFIX/include" -c \
+    -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" -c \
     "$ROOT/provider/crates/ed301-eddsa-provider/c/provider_shim.c" \
     -o "$BUILD/provider_shim.scan-build.o"
 
@@ -293,4 +299,4 @@ for artifact in "$OPENSSL_BIN" \
     sha256sum "$artifact"
 done > "$BUILD/evidence/artifacts.sha256"
 
-git -C "$ROOT" diff --check
+sh "$ROOT/scripts/verify-source-tree.sh"

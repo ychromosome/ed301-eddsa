@@ -10,12 +10,19 @@ for tool in sha256sum cargo rustc rustfmt cargo-clippy; do
     }
 done
 
-(cd "$ROOT" && sha256sum --strict --quiet -c SOURCE_MANIFEST.sha256)
+sh "$ROOT/scripts/verify-source-tree.sh"
 (cd "$ROOT/inputs/round4" && sha256sum --strict --quiet -c SHA256SUMS)
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+sh "$ROOT/scripts/test-source-tree-gate.sh"
+sh "$ROOT/scripts/test-rustc-profile-guard.sh"
 
 cleanup_home=0
 cleanup_target=0
+PROFILE_MARKER_DIR=
 cleanup() {
+    if [ -n "$PROFILE_MARKER_DIR" ]; then
+        rm -rf -- "$PROFILE_MARKER_DIR"
+    fi
     if [ "$cleanup_target" -eq 1 ]; then
         rm -rf -- "$CARGO_TARGET_DIR"
     fi
@@ -77,6 +84,16 @@ cargo metadata --locked --offline --format-version=1 >/dev/null
 cargo fmt --all -- --check
 cargo clippy --locked --offline --workspace --all-targets -- -D warnings
 cargo test --locked --offline --workspace --all-targets
-cargo test --locked --offline --release --workspace --all-targets
+PROFILE_MARKER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ed301-rust-r2-profile.XXXXXX")
+{
+    command -v rustc
+    rustc --version --verbose
+} >"$PROFILE_MARKER_DIR/toolchain.txt"
+ED301_PROFILE_MARKER_DIR=$PROFILE_MARKER_DIR \
+ED301_PROFILE_EXPECTATIONS='crypto_bigint=off ed301_eddsa=on' \
+RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+    cargo test --locked --offline --release --workspace --all-targets
+sh "$ROOT/scripts/check-profile-markers.sh" "$PROFILE_MARKER_DIR" \
+    crypto_bigint=off ed301_eddsa=on
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --offline --workspace --no-deps
 sh "$ROOT/scripts/check-downstream.sh"

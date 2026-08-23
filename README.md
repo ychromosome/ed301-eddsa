@@ -11,10 +11,23 @@ elliptic curve.
 
 ## Test
 
+In a Git checkout, the gates bind `SOURCE_MANIFEST.sha256` to `HEAD` and
+reject every extra, missing, non-regular or changed source path before Cargo
+runs:
+
 ```sh
 sh scripts/check.sh
 sh scripts/check-secret-taint.sh
 ```
+
+For a source archive, first authenticate the enclosing archive and obtain the
+manifest digest from that trusted handoff. Then pass it explicitly:
+
+```sh
+ED301_EXPECTED_SOURCE_MANIFEST_SHA256=<trusted-sha256> sh scripts/check.sh
+```
+
+The manifest inside an unauthenticated archive is not its own trust anchor.
 
 ## Experimental OpenSSL provider
 
@@ -35,7 +48,8 @@ The provider is an integration candidate, not a release.  See
 
 ## Status
 
-Round-2 pre-deep-scan candidate. Not production-ready.
+Round-2 post-finding-repair candidate awaiting a fresh full-scope deep scan.
+Not production-ready.
 
 See `STATUS.md` and `ZEROIZATION_AND_CT_BOUNDARY.md` for the current assurance
 boundary.

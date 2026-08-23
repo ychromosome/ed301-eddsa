@@ -6,6 +6,11 @@ rust-version = "1.85"
 license = "Apache-2.0"
 publish = false
 description = "Valgrind secret-taint harness for Ed301-EdDSA-draft-00"
+build = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 
 [features]
 default = ["instrumented"]

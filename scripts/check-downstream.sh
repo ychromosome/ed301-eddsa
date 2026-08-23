@@ -9,6 +9,9 @@ if [ -z "${CARGO_HOME:-}" ]; then
     exit 2
 fi
 
+sh "$ROOT/scripts/verify-source-tree.sh"
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+
 DOWNSTREAM_TARGET_DIR=
 ED301_PROFILE_MARKER_DIR=
 cleanup() {
@@ -26,31 +29,18 @@ ED301_PROFILE_MARKER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ed301-rust-r2-profile-mark
 
 export CARGO_TARGET_DIR=$DOWNSTREAM_TARGET_DIR
 export ED301_PROFILE_MARKER_DIR
-export RUSTC_WRAPPER=$FIXTURE/rustc-profile-guard.sh
+export ED301_PROFILE_EXPECTATIONS='crypto_bigint=off ed301_eddsa=on ed301_eddsa_downstream_check=on'
+export RUSTC_WRAPPER=$ROOT/scripts/rustc-profile-guard.sh
+
+{
+    command -v rustc
+    rustc --version --verbose
+} >"$ED301_PROFILE_MARKER_DIR/toolchain.txt"
 
 cargo build --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml"
-
-crypto_marker=$ED301_PROFILE_MARKER_DIR/crypto_bigint
-ed301_marker=$ED301_PROFILE_MARKER_DIR/ed301_eddsa
-for marker in "$crypto_marker" "$ed301_marker"; do
-    if [ ! -s "$marker" ]; then
-        echo "missing rustc profile marker: $marker" >&2
-        exit 1
-    fi
-done
-if grep -qvE '^(off|absent)$' "$crypto_marker"; then
-    echo "crypto_bigint unexpectedly enabled overflow checks:" >&2
-    sed -n '1,20p' "$crypto_marker" >&2
-    exit 1
-fi
-if grep -qvx on "$ed301_marker"; then
-    echo "ed301_eddsa did not retain top-level overflow checks:" >&2
-    sed -n '1,20p' "$ed301_marker" >&2
-    exit 1
-fi
-
-unset RUSTC_WRAPPER
 cargo fmt --manifest-path "$FIXTURE/Cargo.toml" -- --check
 cargo clippy --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml" --all-targets -- -D warnings
 cargo test --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml"
 cargo run --locked --offline --release --manifest-path "$FIXTURE/Cargo.toml"
+sh "$ROOT/scripts/check-profile-markers.sh" "$ED301_PROFILE_MARKER_DIR" \
+    crypto_bigint=off ed301_eddsa=on ed301_eddsa_downstream_check=on
