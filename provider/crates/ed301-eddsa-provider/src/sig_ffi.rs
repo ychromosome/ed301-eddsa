@@ -12,7 +12,13 @@
 //! callback catches unwinding so a Rust panic can never cross the C ABI
 //! boundary.
 
-use core::ffi::{c_int, c_void};
+use core::{
+    ffi::{c_int, c_void},
+    marker::PhantomData,
+    ops::Deref,
+    ptr::NonNull,
+    sync::atomic::{AtomicUsize, Ordering, fence},
+};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crypto_bigint::CtEq;
@@ -84,7 +90,6 @@ pub(crate) static SIGNATURE_RUST_API: SignatureRustApi = SignatureRustApi {
     cleanse,
 };
 
-#[derive(Clone)]
 struct SecretSeed([u8; SEED_BYTES]);
 
 impl Zeroize for SecretSeed {
@@ -99,24 +104,115 @@ impl Drop for SecretSeed {
     }
 }
 
-#[derive(Clone)]
 struct PrivateKeyMaterial {
     seed: SecretSeed,
-    expanded: ExpandedSigningKey,
+    expanded: Shared<ExpandedSigningKey>,
 }
+
+impl Clone for PrivateKeyMaterial {
+    fn clone(&self) -> Self {
+        Self {
+            seed: SecretSeed(self.seed.0),
+            expanded: self.expanded.clone(),
+        }
+    }
+}
+
+struct SharedInner<T> {
+    references: AtomicUsize,
+    value: T,
+}
+
+/// Fallibly allocated, immutable provider state shared by keys and signature
+/// contexts. This is deliberately narrower than `Arc`: it supports only
+/// construction, immutable dereference and cloning, so key replacement keeps
+/// snapshot semantics without copying the roughly 10-KiB verification table.
+struct Shared<T> {
+    inner: NonNull<SharedInner<T>>,
+    marker: PhantomData<SharedInner<T>>,
+}
+
+impl<T> Shared<T> {
+    fn try_new_at(site: &str, value: T) -> Option<Self> {
+        let inner = try_box_at(
+            site,
+            SharedInner {
+                references: AtomicUsize::new(1),
+                value,
+            },
+        )?;
+        let inner = NonNull::from(Box::leak(inner));
+        Some(Self {
+            inner,
+            marker: PhantomData,
+        })
+    }
+
+    #[cfg(test)]
+    fn reference_count(&self) -> usize {
+        // SAFETY: Every live Shared owns one reference to the allocation.
+        unsafe { self.inner.as_ref() }
+            .references
+            .load(Ordering::Relaxed)
+    }
+}
+
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        // SAFETY: `self` holds a live reference, so the allocation and counter
+        // remain valid throughout this increment.
+        let inner = unsafe { self.inner.as_ref() };
+        let previous = inner.references.fetch_add(1, Ordering::Relaxed);
+        if previous > isize::MAX as usize {
+            std::process::abort();
+        }
+        Self {
+            inner: self.inner,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Deref for Shared<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: A live Shared reference keeps the immutable value allocated.
+        &unsafe { self.inner.as_ref() }.value
+    }
+}
+
+impl<T> Drop for Shared<T> {
+    fn drop(&mut self) {
+        // SAFETY: `self` owns exactly one live reference to this allocation.
+        let inner = unsafe { self.inner.as_ref() };
+        if inner.references.fetch_sub(1, Ordering::Release) != 1 {
+            return;
+        }
+        fence(Ordering::Acquire);
+        // SAFETY: The final reference uniquely reclaims the original Box.
+        drop(unsafe { Box::from_raw(self.inner.as_ptr()) });
+    }
+}
+
+// SAFETY: Shared exposes immutable access only. Sending or sharing it is sound
+// exactly when the stored value is both Send and Sync.
+unsafe impl<T: Send + Sync> Send for Shared<T> {}
+// SAFETY: Same invariant as the Send implementation above.
+unsafe impl<T: Send + Sync> Sync for Shared<T> {}
 
 #[derive(Clone, Default)]
 pub(crate) struct DraftKey {
     private: Option<PrivateKeyMaterial>,
-    public: Option<VerifyingKey>,
+    public: Option<Shared<VerifyingKey>>,
 }
 
 #[derive(Clone, Default)]
 enum SignatureOperation {
     #[default]
     Uninitialized,
-    Sign(ExpandedSigningKey),
-    Verify(VerifyingKey),
+    Sign(Shared<ExpandedSigningKey>),
+    Verify(Shared<VerifyingKey>),
 }
 
 #[derive(Clone, Default)]
@@ -144,11 +240,13 @@ fn hit_panic_failpoint(_name: &str) {}
 
 /// Test-only allocation-failure selector, compiled in ONLY under the
 /// `test-failpoint` feature (same separately named test artifact as the
-/// panic failpoint): while the environment variable names one of the five
-/// allocating callbacks (`key_new`, `key_from_seed`, `key_duplicate`,
-/// `signature_new`, `signature_duplicate`), that callback reports
-/// allocation failure by returning null instead of panicking; clearing the
-/// variable restores normal allocation.  The ordinary module is built
+/// panic failpoint): while the environment variable names an allocating
+/// callback (`key_new`, `key_generate`, `key_duplicate`, `signature_new` or
+/// `signature_duplicate`), that callback reports
+/// allocation failure by returning null or zero instead of panicking;
+/// `key_import` and `key_set_encoded_public` cover the newly shared immutable
+/// key-state allocations as well. Clearing the variable restores normal
+/// allocation. The ordinary module is built
 /// without this feature and contains neither the hook nor the
 /// variable-name string.
 #[cfg(feature = "test-failpoint")]
@@ -274,15 +372,12 @@ pub(crate) unsafe extern "C" fn key_import(
         }
 
         let private = match raw_private {
-            Some(seed) => match prepare_private(seed) {
+            Some(seed) => match prepare_private(seed, "key_import") {
                 Some(private) => Some(private),
                 None => return 0,
             },
             None => None,
         };
-        let derived_public = private
-            .as_ref()
-            .map(|private| private.expanded.verifying_key());
 
         let supplied_public = match raw_public {
             Some(public) => match VerifyingKey::from_bytes(&public) {
@@ -292,15 +387,28 @@ pub(crate) unsafe extern "C" fn key_import(
             None => None,
         };
         if let Some(public) = supplied_public.as_ref() {
-            if derived_public
-                .as_ref()
-                .is_some_and(|derived| !bytes_equal(&derived.to_bytes(), &public.to_bytes()))
-            {
+            if private.as_ref().is_some_and(|private| {
+                !bytes_equal(private.expanded.verifying_key_bytes(), public.as_bytes())
+            }) {
                 return 0;
             }
         }
 
-        let public = derived_public.or(supplied_public);
+        let public = match (private.as_ref(), supplied_public) {
+            (Some(_), Some(public)) | (None, Some(public)) => {
+                match Shared::try_new_at("key_import", public) {
+                    Some(public) => Some(public),
+                    None => return 0,
+                }
+            }
+            (Some(private), None) => {
+                match Shared::try_new_at("key_import", private.expanded.verifying_key()) {
+                    Some(public) => Some(public),
+                    None => return 0,
+                }
+            }
+            (None, None) => None,
+        };
         *key = DraftKey { private, public };
         1
     })
@@ -329,19 +437,19 @@ pub(crate) unsafe extern "C" fn key_set_encoded_public(
         if key
             .public
             .as_ref()
-            .is_some_and(|existing| !bytes_equal(&existing.to_bytes(), &public.to_bytes()))
+            .is_some_and(|existing| !bytes_equal(existing.as_bytes(), public.as_bytes()))
         {
             return 0;
         }
         if let Some(private) = key.private.as_ref() {
-            if !bytes_equal(
-                &private.expanded.verifying_key().to_bytes(),
-                &public.to_bytes(),
-            ) {
+            if !bytes_equal(private.expanded.verifying_key_bytes(), public.as_bytes()) {
                 return 0;
             }
         }
 
+        let Some(public) = Shared::try_new_at("key_set_encoded_public", public) else {
+            return 0;
+        };
         key.public = Some(public);
         1
     })
@@ -357,10 +465,13 @@ pub(crate) unsafe extern "C" fn key_from_seed(seed: *const u8, seed_len: usize) 
         let Some(Some(seed)) = (unsafe { read_optional_secret_seed(seed, seed_len) }) else {
             return core::ptr::null_mut();
         };
-        let Some(private) = prepare_private(seed) else {
+        let Some(private) = prepare_private(seed, "key_generate") else {
             return core::ptr::null_mut();
         };
-        let public = private.expanded.verifying_key();
+        let Some(public) = Shared::try_new_at("key_generate", private.expanded.verifying_key())
+        else {
+            return core::ptr::null_mut();
+        };
 
         let key = DraftKey {
             private: Some(private),
@@ -439,12 +550,12 @@ pub(crate) unsafe extern "C" fn key_validate(
             match SigningKey::from_seed(&private.seed.0).and_then(|signing| signing.expand()) {
                 Ok(expanded) => {
                     if !bytes_equal(
-                        &expanded.verifying_key().to_bytes(),
-                        &private.expanded.verifying_key().to_bytes(),
+                        expanded.verifying_key_bytes(),
+                        private.expanded.verifying_key_bytes(),
                     ) {
                         return 0;
                     }
-                    Some(expanded.verifying_key())
+                    Some(*expanded.verifying_key_bytes())
                 }
                 Err(_) => return 0,
             }
@@ -458,7 +569,7 @@ pub(crate) unsafe extern "C" fn key_validate(
             };
             if derived
                 .as_ref()
-                .is_some_and(|derived| !bytes_equal(&derived.to_bytes(), &public.to_bytes()))
+                .is_some_and(|derived| !bytes_equal(derived, public.as_bytes()))
             {
                 return 0;
             }
@@ -490,7 +601,7 @@ pub(crate) unsafe extern "C" fn key_match(
             else {
                 return 0;
             };
-            if !bytes_equal(&first.to_bytes(), &second.to_bytes()) {
+            if !bytes_equal(first.as_bytes(), second.as_bytes()) {
                 return 0;
             }
         }
@@ -546,7 +657,7 @@ pub(crate) unsafe extern "C" fn key_get_public(
             return 0;
         };
         // SAFETY: The shim supplies output_len writable bytes.
-        if unsafe { write_exact(output, output_len, &public.to_bytes()) } {
+        if unsafe { write_exact(output, output_len, public.as_bytes()) } {
             1
         } else {
             0
@@ -620,10 +731,7 @@ pub(crate) unsafe extern "C" fn signature_sign_init(
             return 0;
         };
         if key.public.as_ref().is_some_and(|public| {
-            !bytes_equal(
-                &private.expanded.verifying_key().to_bytes(),
-                &public.to_bytes(),
-            )
+            !bytes_equal(private.expanded.verifying_key_bytes(), public.as_bytes())
         }) {
             return 0;
         }
@@ -737,9 +845,10 @@ pub(crate) unsafe extern "C" fn cleanse(buffer: *mut u8, length: usize) {
     }));
 }
 
-fn prepare_private(seed: SecretSeed) -> Option<PrivateKeyMaterial> {
+fn prepare_private(seed: SecretSeed, allocation_site: &str) -> Option<PrivateKeyMaterial> {
     let signing_key = SigningKey::from_seed(&seed.0).ok()?;
     let expanded = signing_key.expand().ok()?;
+    let expanded = Shared::try_new_at(allocation_site, expanded)?;
     Some(PrivateKeyMaterial { seed, expanded })
 }
 
@@ -812,12 +921,21 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static ZST_DROPS: AtomicUsize = AtomicUsize::new(0);
+    static SHARED_DROPS: AtomicUsize = AtomicUsize::new(0);
 
     struct ZeroSized;
+
+    struct SharedDrop;
 
     impl Drop for ZeroSized {
         fn drop(&mut self) {
             ZST_DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl Drop for SharedDrop {
+        fn drop(&mut self) {
+            SHARED_DROPS.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -826,6 +944,10 @@ mod tests {
             .expect("fixed-size test seed")
             .expand()
             .expect("test seed expansion")
+    }
+
+    fn shared<T>(value: T) -> Shared<T> {
+        Shared::try_new_at("unit_test", value).expect("small test allocation")
     }
 
     #[test]
@@ -841,6 +963,20 @@ mod tests {
     fn try_box_round_trips_a_sized_value() {
         let boxed = try_box([0xA5_u8; 16]).expect("small allocation should succeed");
         assert_eq!(*boxed, [0xA5_u8; 16]);
+    }
+
+    #[test]
+    fn shared_state_is_immutable_and_drops_after_the_last_reference() {
+        let before = SHARED_DROPS.load(Ordering::SeqCst);
+        let first = shared(SharedDrop);
+        assert_eq!(first.reference_count(), 1);
+        let second = first.clone();
+        assert_eq!(first.reference_count(), 2);
+        drop(first);
+        assert_eq!(second.reference_count(), 1);
+        assert_eq!(SHARED_DROPS.load(Ordering::SeqCst), before);
+        drop(second);
+        assert_eq!(SHARED_DROPS.load(Ordering::SeqCst), before + 1);
     }
 
     #[test]
@@ -875,12 +1011,12 @@ mod tests {
 
     #[test]
     fn key_duplicate_honors_component_selection_exactly() {
-        let expanded = expanded_key(0x11);
+        let expanded = shared(expanded_key(0x11));
         let source = DraftKey {
-            public: Some(expanded.verifying_key()),
+            public: Some(shared(expanded.verifying_key())),
             private: Some(PrivateKeyMaterial {
                 seed: SecretSeed([0x11; SEED_BYTES]),
-                expanded,
+                expanded: expanded.clone(),
             }),
         };
 
@@ -903,7 +1039,7 @@ mod tests {
     #[test]
     fn failed_reinitialization_invalidates_old_operation() {
         let mut context = Box::new(DraftSignatureContext {
-            operation: SignatureOperation::Sign(expanded_key(0xA5)),
+            operation: SignatureOperation::Sign(shared(expanded_key(0xA5))),
         });
         let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
         assert_eq!(
@@ -915,7 +1051,7 @@ mod tests {
             SignatureOperation::Uninitialized
         ));
 
-        context.operation = SignatureOperation::Verify(expanded_key(0x5A).verifying_key());
+        context.operation = SignatureOperation::Verify(shared(expanded_key(0x5A).verifying_key()));
         assert_eq!(
             unsafe { signature_verify_init(context_pointer, core::ptr::null()) },
             0
@@ -929,7 +1065,7 @@ mod tests {
     #[test]
     fn signature_reset_invalidates_initialized_secret() {
         let mut context = Box::new(DraftSignatureContext {
-            operation: SignatureOperation::Sign(expanded_key(0x3C)),
+            operation: SignatureOperation::Sign(shared(expanded_key(0x3C))),
         });
         let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
         unsafe { signature_reset(context_pointer) };
@@ -937,5 +1073,55 @@ mod tests {
             context.operation,
             SignatureOperation::Uninitialized
         ));
+    }
+
+    #[test]
+    fn signature_contexts_share_prepared_key_state() {
+        let expanded = shared(expanded_key(0x27));
+        let public = shared(expanded.verifying_key());
+        let key = DraftKey {
+            private: Some(PrivateKeyMaterial {
+                seed: SecretSeed([0x27; SEED_BYTES]),
+                expanded: expanded.clone(),
+            }),
+            public: Some(public.clone()),
+        };
+        assert_eq!(expanded.reference_count(), 2);
+        assert_eq!(public.reference_count(), 2);
+
+        let mut sign_context = DraftSignatureContext::default();
+        assert_eq!(
+            unsafe {
+                signature_sign_init(
+                    (&mut sign_context as *mut DraftSignatureContext).cast(),
+                    (&key as *const DraftKey).cast(),
+                )
+            },
+            1
+        );
+        assert_eq!(expanded.reference_count(), 3);
+
+        let duplicate =
+            unsafe { signature_duplicate((&sign_context as *const DraftSignatureContext).cast()) };
+        assert!(!duplicate.is_null());
+        assert_eq!(expanded.reference_count(), 4);
+        unsafe { signature_free(duplicate) };
+        assert_eq!(expanded.reference_count(), 3);
+        unsafe { signature_reset((&mut sign_context as *mut DraftSignatureContext).cast()) };
+        assert_eq!(expanded.reference_count(), 2);
+
+        let mut verify_context = DraftSignatureContext::default();
+        assert_eq!(
+            unsafe {
+                signature_verify_init(
+                    (&mut verify_context as *mut DraftSignatureContext).cast(),
+                    (&key as *const DraftKey).cast(),
+                )
+            },
+            1
+        );
+        assert_eq!(public.reference_count(), 3);
+        unsafe { signature_reset((&mut verify_context as *mut DraftSignatureContext).cast()) };
+        assert_eq!(public.reference_count(), 2);
     }
 }

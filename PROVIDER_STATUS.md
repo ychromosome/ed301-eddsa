@@ -4,9 +4,9 @@ The `provider-experiment` branch contains an experimental,
 signature-only OpenSSL provider for `Ed301-EdDSA-draft-00`.
 
 The provider and its evidence boundary were repaired on 2026-08-23 after an
-18-finding deep scan. Fresh exact-revision builds against OpenSSL 3.5.7 and
-4.0.1 are required before this candidate can be handed to the next reviewer.
-The intended matrix covers:
+18-finding deep scan. The 2026-08-24 performance-review revision keeps the
+same acceptance boundary: only fresh exact-revision builds against OpenSSL
+3.5.7 and 4.0.1 support a reviewer handoff. The matrix covers:
 
 - provider loading/unloading and parallel host-owned test registration;
 - `KEYMGMT`, `SIGNATURE`, EVP key generation, signing and verification;
@@ -53,31 +53,84 @@ TLS registration or a standards claim. Private-use TLS SignatureScheme
 `0xFE84` appears only in the TLS test artifacts and remains nonregistrable and
 unsuitable for deployment.
 
-The ordinary provider caches expanded secret state and the validated public
-verification table in each key object. Its default signing path follows the
-usual EdDSA construction without performing a second complete verification of
-its own output; a separately selected `sign-self-verify` build retains that
-additional fault-detection check. Neither choice changes the draft transcript,
-wire encoding, curve, verification equation, or acceptance language.
+The ordinary provider keeps expanded secret state and the validated public
+verification table in separate, immutable, fallibly allocated reference-counted
+objects. Signature contexts and context duplicates retain only the object they
+need instead of copying roughly 10 KiB of prepared state. A public-only key
+duplicate cannot retain the expanded signing secret, and each object is
+destroyed only after its final owner releases it. The default signing path
+follows the usual EdDSA construction without performing a second complete
+verification of its own output; a separately selected `sign-self-verify` build
+retains that additional fault-detection check. Neither choice changes the draft
+transcript, wire encoding, curve, verification equation, or acceptance
+language.
 
-Five CPU-pinned local runs on this development host for each supported OpenSSL
-line observed the following median ranges: 39.1--39.2 microseconds per
-prepared EVP signature, 126.1--126.6 microseconds per prepared EVP
-verification, 40.0--40.1 and 127.3--127.6 microseconds for the corresponding
-full fetch/context paths, and 244.3--244.6 microseconds for public-key import.
-The same harness measured OpenSSL Ed25519 at 22.6--22.8/75.9--76.5
-microseconds and Ed448 at 143.9--144.3/152.4--152.7 microseconds for prepared
-sign/verify. Earlier 31--33/93--95 microsecond Ed301 figures came from the
-rejected build in which the compiler had introduced a secret-dependent
-field-reduction branch; they are not retained performance claims. These values
-are comparative development evidence, not a portable performance guarantee or
-an acceptance gate.
+The integrated Safe-Rust performance step replaces the portable field
+reducer's borrow-heavy folding schedule with a positive
+multiply-accumulate fold and reuses the already required public
+odd-multiples table for external-key subgroup validation. The latter follows
+a fixed public width-8 wNAF encoding of `L` with 299 doublings and 17 mixed
+additions; the previous sparse 299-doubling/63-addition implementation remains
+a differential reference. Both changes preserve the curve, transcript, byte
+contract, canonicality and factor-4 verification language. The public core
+continues to forbid unsafe code. The experimental BMI2 backend was
+deliberately not integrated.
+
+Five CPU-2-pinned local runs on this development host observed the following
+medians after the first low-risk performance repairs and before the subsequent
+MAC-fold/wNAF step:
+
+| OpenSSL | Prepared sign | Prepared verify | Seed import | Public import |
+| --- | ---: | ---: | ---: | ---: |
+| 3.5.7 | 39.245 us | 127.492 us | 77.488 us | 164.490 us |
+| 4.0.1 | 39.291 us | 128.139 us | 77.198 us | 164.120 us |
+
+Five CPU-15-pinned exact-revision EVP runs after the MAC-fold/wNAF integration
+observed these medians:
+
+| OpenSSL | Prepared sign | Prepared verify | Seed import | Public import |
+| --- | ---: | ---: | ---: | ---: |
+| 3.5.7 | 35.447 us | 108.664 us | 67.820 us | 123.954 us |
+| 4.0.1 | 35.291 us | 108.773 us | 67.657 us | 124.146 us |
+
+Relative to the immediately preceding table, prepared signing improved by
+about 10%, prepared verification by about 15%, seed import by about 12%, and
+public import by about 24--25%. On the same runs the Ed25519/Ed448 prepared
+midpoints were approximately 84 microseconds for signing and 115 microseconds
+for verification, so Ed301 is faster than the stated midpoint target on this
+host. These measurements remain development evidence, not a portable
+performance guarantee.
+
+The exact parent revision measured 287.826/286.317 microseconds for seed
+import and 248.430/248.421 microseconds for public import on the two lanes.
+The repairs therefore reduce those medians by about 73% and 34% respectively,
+while prepared sign and verify remain within roughly 1% of the parent, as
+expected. The same harness continues to place Ed301 prepared signing between
+OpenSSL Ed25519 and Ed448. Earlier 31--33/93--95 microsecond Ed301 figures came
+from the rejected build in which the compiler had introduced a
+secret-dependent field-reduction branch; they are not retained performance
+claims. These values are comparative development evidence, not a portable
+performance guarantee or an acceptance gate.
+
+Symbol profiles found the wide scalar reducer and field inversion at only
+single-digit percentages of the measured signing and import paths. A measured
+fixed-`p-2` inversion prototype regressed prepared signing from about 39 to 48
+microseconds and seed import from about 77 to 95 microseconds, so it was
+discarded. A lazy verification table remains workload-dependent and was not
+added: it would shift rather than remove work and would introduce first-use
+synchronization. The accepted positive field fold is portable Safe Rust; no
+assembly, architecture intrinsic, native-CPU flag, secret-indexed table or new
+arithmetic unsafe boundary is part of this revision. The provider's manual
+shared-state owner remains inside the existing native FFI unsafe boundary.
 
 Local pre-push gates completed on 2026-08-24 include the complete provider
-matrix against OpenSSL 3.5.7 and 4.0.1, the core/provider compatibility gate
-with Rust 1.85.1, and the secret-taint lane. They remain local evidence and do
-not replace independent reproduction. Open gates include the fresh full-scope
-Deep Security Scan, independent external security and performance review,
-AArch64, coverage-guided fuzzing, QEMU/container lanes, final disassembly,
-timing and zeroization review, and an external TLS SignatureScheme allocation.
-No production, standardization or release claim is made.
+matrix against OpenSSL 3.5.7 and 4.0.1 under Rust 1.97.1, the secret-taint
+lane, and a current-code Rust 1.85.1 compatibility lane. The latter covers
+formatting, Clippy, 42 core tests in debug/release and `sign-self-verify`, 11
+provider unit tests, and loaded OpenSSL 3.5.7 load/key-management/signature
+harnesses with 20/36/226 checks. These remain local evidence and do not replace
+independent reproduction. Open gates include the fresh full-scope Deep
+Security Scan, independent external security and performance review, AArch64,
+coverage-guided fuzzing, QEMU/container lanes, final disassembly, timing and
+zeroization review, and an external TLS SignatureScheme allocation. No
+production, standardization or release claim is made.

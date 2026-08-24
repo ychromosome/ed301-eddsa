@@ -501,6 +501,15 @@ const fn reduce_wide_const(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
     conditional_subtract_modulus_const(reduce_wide_unreduced(product))
 }
 
+/// Fold a wide product into five limbs using the additive identity
+/// `2^301 = 2^99 - 947 (mod p)`.
+///
+/// The subtrahend-free formulation multiplies the high part by the positive
+/// two-limb constant `K = 2^99 - 947` and accumulates it onto the low part,
+/// so every carry chain is an addition with a fixed trip count. For a
+/// reachable wide product below `2^602` the first fold fits seven limbs, the
+/// remaining high part fits two limbs, and the final value stays below `2p`,
+/// so the callers' single conditional subtraction suffices.
 const fn reduce_wide_unreduced(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
     let low = [
         product[0],
@@ -516,8 +525,8 @@ const fn reduce_wide_unreduced(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
         (product[7] >> TOP_BITS) | (product[8] << (64 - TOP_BITS)),
         (product[8] >> TOP_BITS) | (product[9] << (64 - TOP_BITS)),
     ];
-    let mut first_fold = fold_five(high);
-    add_five_to_seven(&mut first_fold, low);
+    let mut first_fold = [0_u64; 7];
+    accumulate_fold(&low, &high, &mut first_fold);
 
     let second_low = [
         first_fold[0],
@@ -530,107 +539,63 @@ const fn reduce_wide_unreduced(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
         (first_fold[4] >> TOP_BITS) | (first_fold[5] << (64 - TOP_BITS)),
         (first_fold[5] >> TOP_BITS) | (first_fold[6] << (64 - TOP_BITS)),
     ];
-    let folded_high = fold_two(second_high);
-    let mut reduced = second_low;
-    add_four_to_five(&mut reduced, folded_high);
+    let mut reduced = [0_u64; 5];
+    accumulate_fold(&second_low, &second_high, &mut reduced);
     reduced
 }
 
-const fn fold_five(value: [u64; 5]) -> [u64; 7] {
-    let shifted = [
-        0,
-        value[0] << 35,
-        (value[0] >> 29) | (value[1] << 35),
-        (value[1] >> 29) | (value[2] << 35),
-        (value[2] >> 29) | (value[3] << 35),
-        (value[3] >> 29) | (value[4] << 35),
-        value[4] >> 29,
-    ];
-    let mut product = [0_u64; 7];
-    multiply_by_947(&value, &mut product);
-    subtract_seven(shifted, product)
-}
+/// Low limb of the positive fold constant `K = 2^99 - 947`.
+const FOLD_CONSTANT_LOW: u64 = 0_u64.wrapping_sub(FOLD_SUBTRAHEND);
+/// High limb of the positive fold constant `K = 2^99 - 947`.
+const FOLD_CONSTANT_HIGH: u64 = (1_u64 << 35) - 1;
 
-const fn fold_two(value: [u64; 2]) -> [u64; 4] {
-    let shifted = [
-        0,
-        value[0] << 35,
-        (value[0] >> 29) | (value[1] << 35),
-        value[1] >> 29,
-    ];
-    let mut product = [0_u64; 4];
-    multiply_by_947(&value, &mut product);
-    subtract_four(shifted, product)
-}
-
-const fn multiply_by_947<const INPUT: usize, const OUTPUT: usize>(
-    value: &[u64; INPUT],
+/// Compute `output = low + high * K` with addition-only carry chains.
+///
+/// Every loop bound is a compile-time constant and every carry is propagated
+/// through the full remaining width, so the instruction schedule is
+/// independent of the operand values.
+const fn accumulate_fold<const HIGH: usize, const OUTPUT: usize>(
+    low: &[u64],
+    high: &[u64; HIGH],
     output: &mut [u64; OUTPUT],
 ) {
+    let mut index = 0;
+    while index < low.len() {
+        output[index] = low[index];
+        index += 1;
+    }
     let mut carry = 0_u64;
-    let mut index = 0;
-    while index < INPUT {
-        let product = value[index] as u128 * FOLD_SUBTRAHEND as u128 + carry as u128;
-        output[index] = product as u64;
-        carry = (product >> 64) as u64;
-        index += 1;
-    }
-    output[INPUT] = carry;
-}
-
-const fn subtract_seven(left: [u64; 7], right: [u64; 7]) -> [u64; 7] {
-    let mut output = [0_u64; 7];
-    let mut borrow = 0_u64;
-    let mut index = 0;
-    while index < 7 {
-        let (difference, next_borrow) = sub_with_borrow(left[index], right[index], borrow);
-        output[index] = difference;
-        borrow = next_borrow;
-        index += 1;
-    }
-    output
-}
-
-const fn subtract_four(left: [u64; 4], right: [u64; 4]) -> [u64; 4] {
-    let mut output = [0_u64; 4];
-    let mut borrow = 0_u64;
-    let mut index = 0;
-    while index < 4 {
-        let (difference, next_borrow) = sub_with_borrow(left[index], right[index], borrow);
-        output[index] = difference;
-        borrow = next_borrow;
-        index += 1;
-    }
-    output
-}
-
-const fn add_five_to_seven(output: &mut [u64; 7], value: [u64; 5]) {
-    let mut carry = 0_u64;
-    let mut index = 0;
-    while index < 5 {
-        let accumulator = output[index] as u128 + value[index] as u128 + carry as u128;
+    index = 0;
+    while index < HIGH {
+        let accumulator =
+            output[index] as u128 + high[index] as u128 * FOLD_CONSTANT_LOW as u128 + carry as u128;
         output[index] = accumulator as u64;
         carry = (accumulator >> 64) as u64;
         index += 1;
     }
-    while index < 7 {
+    while index < OUTPUT {
         let accumulator = output[index] as u128 + carry as u128;
         output[index] = accumulator as u64;
         carry = (accumulator >> 64) as u64;
         index += 1;
     }
-}
-
-const fn add_four_to_five(output: &mut [u64; 5], value: [u64; 4]) {
-    let mut carry = 0_u64;
-    let mut index = 0;
-    while index < 4 {
-        let accumulator = output[index] as u128 + value[index] as u128 + carry as u128;
+    carry = 0;
+    index = 0;
+    while index < HIGH {
+        let accumulator = output[index + 1] as u128
+            + high[index] as u128 * FOLD_CONSTANT_HIGH as u128
+            + carry as u128;
+        output[index + 1] = accumulator as u64;
+        carry = (accumulator >> 64) as u64;
+        index += 1;
+    }
+    index += 1;
+    while index < OUTPUT {
+        let accumulator = output[index] as u128 + carry as u128;
         output[index] = accumulator as u64;
         carry = (accumulator >> 64) as u64;
         index += 1;
     }
-    output[4] = (output[4] as u128 + carry as u128) as u64;
 }
 
 #[cfg(test)]
@@ -656,6 +621,108 @@ mod tests {
         }
         words[4] &= TOP_MASK;
         Fe301(conditional_subtract_modulus_const(words))
+    }
+
+    fn split_mix(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut value = *state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+
+    /// Reduce an arbitrary wide value with the independent Montgomery oracle:
+    /// `value = low + high * 2^301` with both halves fed through the oracle.
+    fn oracle_reduce_wide(wide: [u64; LIMBS * 2]) -> [u8; FIELD_BYTES] {
+        fn oracle_from_limbs(limbs: [u64; LIMBS]) -> Oracle {
+            // A raw half is below 2^301 < 2p; one conditional subtraction of
+            // the long-standing helper canonicalizes it for the oracle.
+            let canonical = conditional_subtract_modulus_const(limbs);
+            let mut bytes = [0_u8; FIELD_BYTES];
+            let mut index = 0;
+            while index < FIELD_BYTES {
+                bytes[index] = (canonical[index / 8] >> ((index % 8) * 8)) as u8;
+                index += 1;
+            }
+            Oracle::from_canonical_bytes(&bytes).expect_copied("canonicalized halves are below p")
+        }
+        let low = [wide[0], wide[1], wide[2], wide[3], wide[4] & TOP_MASK];
+        let high = [
+            (wide[4] >> TOP_BITS) | (wide[5] << (64 - TOP_BITS)),
+            (wide[5] >> TOP_BITS) | (wide[6] << (64 - TOP_BITS)),
+            (wide[6] >> TOP_BITS) | (wide[7] << (64 - TOP_BITS)),
+            (wide[7] >> TOP_BITS) | (wide[8] << (64 - TOP_BITS)),
+            (wide[8] >> TOP_BITS) | (wide[9] << (64 - TOP_BITS)),
+        ];
+        // 2^301 mod p as a canonical oracle constant: 2^99 - 947.
+        let mut shift_bytes = [0_u8; FIELD_BYTES];
+        shift_bytes[0] = 0x4d;
+        shift_bytes[1] = 0xfc;
+        let mut index = 2;
+        while index < 12 {
+            shift_bytes[index] = 0xff;
+            index += 1;
+        }
+        shift_bytes[12] = 0x07;
+        let shift =
+            Oracle::from_canonical_bytes(&shift_bytes).expect_copied("2^99 - 947 is canonical");
+        let expected = oracle_from_limbs(low).add(oracle_from_limbs(high).mul(shift));
+        expected.to_canonical_bytes()
+    }
+
+    #[test]
+    fn wide_reduction_matches_the_montgomery_oracle_on_boundaries() {
+        let top_limb_mask = (1_u64 << 26) - 1;
+        let mut state = 0x4d41_4346_4f4c_4432_u64;
+        let mut case_index = 0_usize;
+        // 602 one-hot patterns, named boundaries, and randomized wide values,
+        // all limited to the reachable product range below 2^602.
+        while case_index < 50_000 {
+            let mut wide = [0_u64; LIMBS * 2];
+            if case_index < 602 {
+                wide[case_index / 64] = 1_u64 << (case_index % 64);
+            } else if case_index == 602 {
+                // all reachable bits set
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = u64::MAX;
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] = top_limb_mask;
+            } else if case_index == 603 {
+                wide[LIMBS * 2 - 1] = top_limb_mask;
+            } else if case_index == 604 {
+                // alternating bit pattern across the full reachable width
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = 0xaaaa_aaaa_aaaa_aaaa;
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] &= top_limb_mask;
+            } else if case_index == 605 {
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = 0x5555_5555_5555_5555;
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] &= top_limb_mask;
+            } else {
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = split_mix(&mut state);
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] &= top_limb_mask;
+            }
+            let reduced = conditional_subtract_modulus_const(reduce_wide_unreduced(wide));
+            let via_new = Fe301(reduced).to_canonical_bytes();
+            assert_eq!(
+                via_new,
+                oracle_reduce_wide(wide),
+                "wide reduction diverged from the Montgomery oracle"
+            );
+            case_index += 1;
+        }
     }
 
     #[test]

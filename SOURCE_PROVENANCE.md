@@ -49,6 +49,27 @@ remains explicit.
 The Git blob identifiers and SHA-256 values above preserve the exact origin
 mapping without making the historical repository part of this source tree.
 
+## Safe-Rust performance repair input
+
+The 2026-08-24 Safe-Rust MAC-fold and public-import wNAF changes were reviewed
+from `ED301_EDDSA_PERFORMANCE_ROUND2_CLAUDE_RESPONSE_2026-08-24.zip`, SHA-256
+`778557578b615e902753fe1e18227d4d7ecdd45b8b8f0d2148c2bccca3b8129c`.
+Its combined prototype diff has SHA-256
+`bd0f84f0dbc361ea046c49186ba1cbd2fdb84e04169efa9e344871d204aa518e`.
+
+The response archive's outer manifest and patch bytes verified, but its nested
+integrated source carried the unchanged parent `SOURCE_MANIFEST.sha256` and a
+host-absolute sidecar. The nested source archive was therefore not adopted as
+an authenticated checkpoint. The three code changes were instead applied to
+the current authoritative worktree, compared byte-for-byte with the proposed
+tree, documented here and placed behind a newly generated local source
+manifest before authoritative gates.
+
+The imported ideas change only the portable field reduction schedule and the
+public external-key subgroup schedule. The BMI2 spike, architecture
+intrinsics, runtime CPU dispatch and its proposed unsafe boundary were not
+imported. The public cryptographic crate retains `#![forbid(unsafe_code)]`.
+
 ## Freeze boundary
 
 Published checkpoints are identified by their Git commit and by

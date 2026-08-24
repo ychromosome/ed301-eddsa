@@ -30,4 +30,31 @@
   torsion regression matrix.
 - Kept the declared Rust 1.85 MSRV honest by replacing five provider-only
   post-1.85 `let`-chain expressions with equivalent stable control flow; the
-  core and provider are covered by an offline Rust 1.85.1 compatibility gate.
+  current core and ordinary provider are covered by an offline Rust 1.85.1
+  compatibility gate.
+- Applied the performance review's four low-risk repairs: internally derived
+  public points bypass hostile-input decoding and subgroup multiplication;
+  external public keys gained a fixed sparse `[L]P` reference schedule that is
+  retained as the differential oracle for the later shared-table wNAF path;
+  expanded signing state no longer embeds the 10-KiB verification table; and
+  immutable signing and verification state is shared across provider keys and
+  contexts with fallible allocation and last-owner destruction.
+- Added 2,048-case differential tests for both the internal public-key path
+  and the sparse subgroup schedule, including identity, order-2, order-4 and
+  mixed-torsion cases, plus provider allocation- and reference-lifetime tests.
+- Replaced the portable field reducer's subtract-and-borrow folds with an
+  addition-only multiply-accumulate fold using the positive constant
+  `2^99 - 947`. The fixed-schedule Safe Rust implementation is checked against
+  the independent Montgomery oracle over all 602 reachable one-hot inputs,
+  named boundaries and randomized wide values.
+- Reused the public verification key's odd-multiples table for a fixed
+  width-8 wNAF multiplication by the public group order during external key
+  import. The hardcoded schedule reconstructs `L`, performs 299 doublings and
+  17 mixed additions, constructs no `VerifyingKey` before validation, and is
+  differentially checked against the retained 299-doubling/63-addition sparse
+  reference across the complete order-4 torsion classes.
+- Kept `#![forbid(unsafe_code)]` on the public cryptographic core. The separate
+  BMI2 arithmetic spike was not integrated; no runtime CPU dispatch,
+  architecture intrinsic or new arithmetic unsafe boundary was added. The
+  provider continues to confine native pointers and its shared-state owner to
+  the existing FFI unsafe boundary.

@@ -52,7 +52,8 @@ impl SigningKey {
     /// Expand this seed into a reusable, zeroizing signing key.
     ///
     /// Reuse this object when signing more than once.  Expansion hashes the
-    /// seed, derives the public point and validates the resulting key once.
+    /// seed and derives the canonical public point once. Hostile external
+    /// public-key input continues to use the strict parser and subgroup test.
     pub fn expand(&self) -> Result<ExpandedSigningKey, SignatureError> {
         ExpandedSigningKey::derive(&self.seed)
     }
@@ -76,15 +77,37 @@ impl VerifyingKey {
         let encoded: &[u8; PUBLIC_KEY_BYTES] = bytes
             .try_into()
             .map_err(|_| SignatureError::InvalidPublicKey)?;
-        let point = EdwardsPoint::decode_strict_subgroup(encoded)
-            .map_err(|_| SignatureError::InvalidPublicKey)?;
-        Ok(Self::from_validated_point(*encoded, point))
+        // Same acceptance set as `decode_strict_subgroup`: canonical decode,
+        // nonidentity, then `[L]P = O`. The subgroup check reuses the
+        // verifier's odd-multiples table through the fixed public wNAF
+        // schedule, so an accepted import pays for that table exactly once.
+        // A rejected torsion or mixed-order point performs one bounded table
+        // construction before rejection; no `VerifyingKey` exists until every
+        // check has passed.
+        let point = EdwardsPoint::decode(encoded).map_err(|_| SignatureError::InvalidPublicKey)?;
+        if point.is_identity().to_bool() {
+            return Err(SignatureError::InvalidPublicKey);
+        }
+        let odd_multiples = point.prepare_vartime_table();
+        if !point.is_prime_subgroup_with_table(&odd_multiples).to_bool() {
+            return Err(SignatureError::InvalidPublicKey);
+        }
+        Ok(Self {
+            encoded: *encoded,
+            odd_multiples,
+        })
     }
 
     /// Return the canonical public-key bytes.
     #[must_use]
     pub const fn to_bytes(&self) -> [u8; PUBLIC_KEY_BYTES] {
         self.encoded
+    }
+
+    /// Borrow the canonical public-key bytes without copying prepared state.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; PUBLIC_KEY_BYTES] {
+        &self.encoded
     }
 
     /// Verify a parsed signature over one opaque message.
@@ -195,7 +218,7 @@ fn sign_expanded(
     };
     declassify(&mut commitment);
 
-    let challenge_digest = challenge_hash(&commitment, &expanded.verifying_key.encoded, message);
+    let challenge_digest = challenge_hash(&commitment, &expanded.public_key, message);
     let challenge = hash_to_scalar(challenge_digest);
     let secret_response_term = challenge.mul(&expanded.reduced_scalar);
     let response = nonce.add(&secret_response_term);
@@ -225,7 +248,7 @@ fn sign_expanded(
         response: *response,
     };
     #[cfg(feature = "sign-self-verify")]
-    if !expanded.verifying_key.verify(message, &signature) {
+    if !expanded.verifying_key().verify(message, &signature) {
         return Err(SignatureError::InternalFailure);
     }
     Ok(signature)
@@ -239,7 +262,8 @@ fn sign_expanded(
 pub struct ExpandedSigningKey {
     reduced_scalar: Secret<Scalar>,
     prefix: Secret<[u8; FIELD_BYTES]>,
-    verifying_key: VerifyingKey,
+    public_key: [u8; PUBLIC_KEY_BYTES],
+    public_point: EdwardsPoint,
 }
 
 impl Clone for ExpandedSigningKey {
@@ -247,16 +271,29 @@ impl Clone for ExpandedSigningKey {
         Self {
             reduced_scalar: secret(*self.reduced_scalar),
             prefix: secret(*self.prefix),
-            verifying_key: self.verifying_key.clone(),
+            public_key: self.public_key,
+            public_point: self.public_point,
         }
     }
 }
 
 impl ExpandedSigningKey {
-    /// Return the already validated public verification key.
+    /// Construct a prepared verifier from the internally validated public
+    /// point.
+    ///
+    /// The expanded signing state deliberately does not retain the roughly
+    /// 10-KiB verification table. Integrations that verify repeatedly should
+    /// call this once and retain the returned value.
     #[must_use]
     pub fn verifying_key(&self) -> VerifyingKey {
-        self.verifying_key.clone()
+        VerifyingKey::from_validated_point(self.public_key, self.public_point)
+    }
+
+    /// Borrow the canonical public-key bytes without cloning the prepared
+    /// verification table.
+    #[must_use]
+    pub const fn verifying_key_bytes(&self) -> &[u8; PUBLIC_KEY_BYTES] {
+        &self.public_key
     }
 
     /// Sign one opaque message without re-expanding the seed.
@@ -277,30 +314,46 @@ impl ExpandedSigningKey {
         #[cfg(test)]
         hit_secret_failpoint(SecretFailpoint::ExpandedSecret);
         let public_point = EdwardsPoint::scalar_mul_base_pruned(&pruned_scalar);
-        let mut public_is_valid = public_point.is_prime_subgroup_nonidentity();
-        declassify(&mut public_is_valid);
-        if !public_is_valid.to_bool() {
+
+        // Identity is mathematically impossible for the pruned scalar below,
+        // so this cheap declassified predicate is an internal fault check, not
+        // attacker-controlled public-key validation.
+        let mut public_is_identity = public_point.is_identity();
+        declassify(&mut public_is_identity);
+        if public_is_identity.to_bool() {
             return Err(SignatureError::InternalFailure);
         }
 
-        let mut public_key = match public_point.encode_public_artifact() {
-            Ok(public_key) => public_key,
+        /*
+         * `public_point` is constructed as `[s]B`, so it is in the subgroup
+         * generated by the exact-order base point.  The pruned scalar lies in
+         * `2^300 <= s < 2^301` and is divisible by four.  The only multiples
+         * of the odd, 300-bit order in that interval are 2L and 3L, neither
+         * divisible by four; therefore the point cannot be the identity. The
+         * cheap identity fault check above is retained, while re-running a
+         * generic `[L]P` check here would only repeat work on an internally
+         * constructed value. The optional fault-detection build retains that
+         * explicit subgroup invariant check.
+         */
+        #[cfg(feature = "sign-self-verify")]
+        {
+            let mut public_is_valid = public_point.is_prime_subgroup_nonidentity();
+            declassify(&mut public_is_valid);
+            if !public_is_valid.to_bool() {
+                return Err(SignatureError::InternalFailure);
+            }
+        }
+
+        let (public_key, public_point) = match public_point.canonical_public_artifact() {
+            Ok(artifact) => artifact,
             Err(_) => return Err(SignatureError::InternalFailure),
         };
-        declassify(&mut public_key);
-
-        // Reconstruct the cached verification point from the now-public wire
-        // artifact.  The scalar multiplier's projective Z coordinate is not
-        // itself part of the public API and therefore remains secret-tainted;
-        // treating that internal representation as public would hide possible
-        // post-derivation leakage during affine-table construction.
-        let public_point =
-            EdwardsPoint::decode(&public_key).map_err(|_| SignatureError::InternalFailure)?;
 
         Ok(Self {
             reduced_scalar,
             prefix,
-            verifying_key: VerifyingKey::from_validated_point(public_key, public_point),
+            public_key,
+            public_point,
         })
     }
 }
@@ -423,5 +476,37 @@ pub(crate) mod test_support {
         }
 
         assert!(core::mem::needs_drop::<ExpandedSigningKey>());
+    }
+
+    #[test]
+    fn internally_derived_public_keys_match_strict_external_validation() {
+        let mut state = 0x6a09_e667_f3bc_c909_u64;
+
+        for case_index in 0..2_048_u64 {
+            let mut seed = [0_u8; SEED_BYTES];
+            for byte in &mut seed {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                *byte = state as u8;
+            }
+
+            let expanded = SigningKey::from_seed(&seed)
+                .expect("fixed-size seed")
+                .expand()
+                .expect("internal public derivation");
+            let derived = expanded.verifying_key();
+            let encoded = derived.to_bytes();
+            let reparsed = VerifyingKey::from_bytes(&encoded)
+                .expect("every internally derived key must pass the external policy");
+            assert_eq!(encoded, *expanded.verifying_key_bytes());
+
+            if case_index % 64 == 0 {
+                let message = case_index.to_le_bytes();
+                let signature = expanded.sign(&message).expect("deterministic signature");
+                assert!(derived.verify(&message, &signature));
+                assert!(reparsed.verify(&message, &signature));
+            }
+        }
     }
 }

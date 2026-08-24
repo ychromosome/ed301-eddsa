@@ -139,6 +139,46 @@ static int allocation_fail_key_generate(OSSL_LIB_CTX *libctx)
     return failed;
 }
 
+static int allocation_fail_key_import(OSSL_LIB_CTX *libctx)
+{
+    EVP_PKEY *pkey = NULL;
+    int failed = 0;
+
+    if (set_alloc_failpoint("key_import")) {
+        pkey = d00_key_from_public(libctx, POSITIVE_CASES[0].public_key,
+            D00_PUB_BYTES);
+        failed = pkey == NULL;
+    }
+    clear_alloc_failpoint();
+    EVP_PKEY_free(pkey);
+
+    pkey = d00_key_from_public(libctx, POSITIVE_CASES[0].public_key,
+        D00_PUB_BYTES);
+    failed = failed && pkey != NULL;
+    EVP_PKEY_free(pkey);
+    return failed;
+}
+
+static int allocation_fail_key_set_encoded_public(OSSL_LIB_CTX *libctx)
+{
+    EVP_PKEY *pkey = d00_key_from_public(libctx,
+        POSITIVE_CASES[0].public_key, D00_PUB_BYTES);
+    int failed = 0;
+
+    if (pkey == NULL)
+        return 0;
+    if (set_alloc_failpoint("key_set_encoded_public")) {
+        failed = EVP_PKEY_set1_encoded_public_key(pkey,
+            POSITIVE_CASES[0].public_key, D00_PUB_BYTES) != 1;
+    }
+    clear_alloc_failpoint();
+    failed = failed
+        && EVP_PKEY_set1_encoded_public_key(pkey,
+            POSITIVE_CASES[0].public_key, D00_PUB_BYTES) == 1;
+    EVP_PKEY_free(pkey);
+    return failed;
+}
+
 static int allocation_fail_key_duplicate(OSSL_LIB_CTX *libctx)
 {
     EVP_PKEY *pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
@@ -317,6 +357,10 @@ int main(void)
             "key_new allocation failpoint returns null and recovers");
         D00_CHECK(allocation_fail_key_generate(libctx),
             "key_generate allocation failpoint returns null and recovers");
+        D00_CHECK(allocation_fail_key_import(libctx),
+            "key_import shared-state allocation fails closed and recovers");
+        D00_CHECK(allocation_fail_key_set_encoded_public(libctx),
+            "encoded-public shared-state allocation fails closed and recovers");
         D00_CHECK(allocation_fail_key_duplicate(libctx),
             "key_duplicate allocation failpoint returns null and recovers");
         D00_CHECK(allocation_fail_signature_new(libctx),

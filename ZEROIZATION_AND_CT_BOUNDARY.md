@@ -19,6 +19,23 @@ array and then copies that array into the owner. The C key-generation buffer
 is cleared on every path after import. This removes the avoidable
 source-level temporary but does not strengthen the physical-copy disclaimer.
 
+Provider keys and signature contexts share immutable expanded-signing and
+prepared-verification objects through a narrow atomic reference-counted owner.
+The owner is fallibly allocated, exposes no mutation, and destroys its value
+after the last reference. The expanded signing object remains separate from
+the public verification table: a public-only key or context therefore cannot
+keep a private scalar or nonce prefix alive. Last-owner destruction runs the
+existing zeroizing secret destructors; it does not strengthen the physical-copy
+disclaimer above.
+
+The owner necessarily uses raw-pointer operations and explicit `Send`/`Sync`
+implementations inside the provider's pre-existing native FFI unsafe boundary.
+Its ordering follows the standard immutable reference-count pattern: relaxed
+increments, release decrements, an acquire fence before last-owner destruction,
+and abort on reference-count overflow. It adds no unsafe code to the public
+cryptographic core or its arithmetic, but it is still part of the provider FFI
+surface that requires independent review and lifecycle stress testing.
+
 Destructors do not run under `panic=abort`. The core crate and OpenSSL provider
 therefore reject every non-unwinding panic strategy at compile time. The
 checked release gates additionally append `panic=unwind` to the actual `rustc`
@@ -45,6 +62,31 @@ public. Point decoding uses a public fixed-exponent square-root-ratio
 calculation and always verifies the candidate before accepting it. These
 source properties still require the fresh final-code disassembly, taint and
 timing gates listed below.
+
+The runtime wide-field reducer folds with the positive two-limb constant
+`2^99 - 947`. Its multiply-accumulate and carry loops have compile-time-fixed
+trip counts and end in the existing conditional-subtraction barrier. This
+removes the former source-level borrow chains without introducing a new
+unsafe block or architecture intrinsic. The source argument remains subject
+to exact-build disassembly, taint and timing checks; Safe Rust alone is not a
+constant-time proof.
+
+The subgroup test for an externally supplied public key now reuses that public
+point's odd-multiples verification table with a fixed width-8 wNAF encoding of
+the public order `L`. Its 299 doublings, 17 signed mixed additions and table
+indices depend only on the hardcoded public schedule, not on point data. The
+identity is rejected before table construction and no `VerifyingKey` is
+constructed before `[L]P = O`; decodable non-subgroup inputs nevertheless pay
+one bounded public table construction before rejection. The former sparse,
+input-independent 299-doubling/63-addition schedule remains the differential
+reference. Internally derived public keys do not repeat either hostile-input
+subgroup operation: `[s]B` is in the exact-order base-point subgroup by
+construction, and pruning makes an identity scalar impossible in the selected
+range. The ordinary build retains a cheap declassified identity fault check
+and validates the resulting curve encoding; `sign-self-verify` also retains
+the explicit subgroup and signature-equation fault checks. Canonical public
+bytes and their unique affine point cross the public-output declassification
+boundary, while the secret-correlated projective coordinate is discarded.
 
 The ordinary provider follows the standard EdDSA signing path and does not
 perform a second complete verification of each signature. The optional

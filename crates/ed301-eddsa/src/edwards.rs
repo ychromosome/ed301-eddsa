@@ -44,6 +44,43 @@ const PRIME_ORDER_BYTES: [u8; FIELD_BYTES] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x08,
 ];
 
+// Width-8 wNAF recoding of the fixed public prime order, from most to least
+// significant position. Exactly 18 nonzero odd digits; the leading digit is
+// `+1` at bit 299, so subgroup validation initializes its accumulator with
+// the point itself and then performs exactly 299 doublings and 17 signed
+// mixed additions from the shared odd-multiples table. The schedule is a
+// public constant and never depends on point data.
+const PRIME_ORDER_WNAF8_DESC: [(u16, i8); 18] = [
+    (299, 1),
+    (149, 1),
+    (141, -73),
+    (131, -103),
+    (119, 17),
+    (111, 37),
+    (99, 19),
+    (91, 9),
+    (82, -1),
+    (73, -91),
+    (65, 25),
+    (57, -109),
+    (45, 23),
+    (37, 29),
+    (28, 29),
+    (17, 95),
+    (9, 75),
+    (0, 3),
+];
+
+// Set bits of the fixed public prime order, from most to least significant.
+// The top bit is consumed by initializing the accumulator with `P`; the
+// remaining schedule therefore performs exactly 299 doublings and 63
+// additions instead of the generic add-always ladder's 301 additions.
+const PRIME_ORDER_SET_BITS_DESC: [u16; 64] = [
+    299, 148, 146, 145, 143, 142, 140, 139, 138, 135, 134, 131, 123, 119, 116, 113, 111, 103, 100,
+    99, 94, 90, 89, 88, 87, 86, 85, 84, 83, 81, 80, 78, 75, 73, 69, 68, 64, 61, 58, 57, 49, 47, 46,
+    45, 41, 40, 39, 37, 32, 31, 30, 28, 23, 21, 20, 19, 18, 17, 15, 12, 10, 9, 1, 0,
+];
+
 /// Generic failure from strict Edwards point decoding or encoding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EdwardsPointError;
@@ -347,6 +384,57 @@ impl EdwardsPoint {
         accumulator
     }
 
+    /// Return whether `[L]P` is the identity using the fixed public wNAF
+    /// schedule and the caller-supplied odd-multiples table of this point.
+    ///
+    /// The digit positions, digit values, loop counts and table indices come
+    /// only from [`PRIME_ORDER_WNAF8_DESC`], a public constant, so the
+    /// control flow is input-independent even though the point additions use
+    /// the variable-time mixed-addition path. Callers must pass the table
+    /// built from this same point.
+    pub(crate) fn is_prime_subgroup_with_table(&self, table: &VartimePointTable) -> Choice {
+        let (leading_position, leading_digit) = PRIME_ORDER_WNAF8_DESC[0];
+        debug_assert_eq!(leading_digit, 1);
+        let mut accumulator = *self;
+        let mut current_bit = leading_position as usize;
+        let mut digit_index = 1;
+
+        while digit_index < PRIME_ORDER_WNAF8_DESC.len() {
+            let (position, digit) = PRIME_ORDER_WNAF8_DESC[digit_index];
+            while current_bit > position as usize {
+                accumulator = accumulator.double();
+                current_bit -= 1;
+            }
+            accumulator = vartime_add_signed(accumulator, digit, table, false);
+            digit_index += 1;
+        }
+        accumulator.is_identity()
+    }
+
+    /// Multiply by the fixed public prime order using its sparse bit pattern.
+    ///
+    /// The loop counts and additions depend only on
+    /// [`PRIME_ORDER_SET_BITS_DESC`], never on point data. This is used for
+    /// strict public-key subgroup validation and remains safe when the point
+    /// was derived from a secret scalar because its control flow is entirely
+    /// input-independent.
+    fn scalar_mul_prime_order_sparse(self) -> Self {
+        let mut accumulator = self;
+        let mut current_bit = PRIME_ORDER_SET_BITS_DESC[0] as usize;
+        let mut set_bit_index = 1;
+
+        while set_bit_index < PRIME_ORDER_SET_BITS_DESC.len() {
+            let set_bit = PRIME_ORDER_SET_BITS_DESC[set_bit_index] as usize;
+            while current_bit > set_bit {
+                accumulator = accumulator.double();
+                current_bit -= 1;
+            }
+            accumulator = accumulator.add(self);
+            set_bit_index += 1;
+        }
+        accumulator
+    }
+
     /// Compute `[base_scalar]B - [point_scalar]point` for public verification.
     ///
     /// Both scalar recodings, branches and table indices are variable-time.
@@ -401,11 +489,36 @@ impl EdwardsPoint {
         self.encode_inner(true)
     }
 
+    /// Canonicalize a secret-derived public point without decoding its wire
+    /// encoding again.
+    ///
+    /// Only affine coordinates that are uniquely determined by the completed
+    /// public encoding cross the declassification boundary. The secret-tainted
+    /// projective `Z` coordinate is deliberately discarded rather than being
+    /// treated as public.
+    pub(crate) fn canonical_public_artifact(
+        self,
+    ) -> Result<([u8; FIELD_BYTES], Self), EdwardsPointError> {
+        let (mut encoded, affine_x, affine_y) = self.encode_components(true)?;
+        let mut canonical_point = Self::from_affine(affine_x, affine_y);
+        declassify(&mut encoded);
+        declassify(&mut canonical_point);
+        Ok((encoded, canonical_point))
+    }
+
     #[inline(always)]
     fn encode_inner(
         self,
         declassify_fault_predicates: bool,
     ) -> Result<[u8; FIELD_BYTES], EdwardsPointError> {
+        let (encoded, _, _) = self.encode_components(declassify_fault_predicates)?;
+        Ok(encoded)
+    }
+
+    fn encode_components(
+        self,
+        declassify_fault_predicates: bool,
+    ) -> Result<([u8; FIELD_BYTES], FieldElement, FieldElement), EdwardsPointError> {
         let mut point_is_valid = self.is_valid();
         if declassify_fault_predicates {
             declassify(&mut point_is_valid);
@@ -426,7 +539,7 @@ impl EdwardsPoint {
         let affine_y = self.y.mul(inverse);
         let mut encoded = affine_y.to_canonical_bytes();
         encoded[FIELD_BYTES - 1] |= affine_x.is_odd().to_u8() << 7;
-        Ok(encoded)
+        Ok((encoded, affine_x, affine_y))
     }
 
     /// Decode a canonical compressed ED301-v1 point.
@@ -487,7 +600,7 @@ impl EdwardsPoint {
 
     /// Return whether `[L]P` is the identity, allowing the identity itself.
     pub(crate) fn is_prime_subgroup(&self) -> Choice {
-        self.scalar_mul_encoded(&PRIME_ORDER_BYTES).is_identity()
+        self.scalar_mul_prime_order_sparse().is_identity()
     }
 
     /// Multiply by the public cofactor four using two complete doublings.
@@ -696,6 +809,12 @@ mod tests {
         hex_38(b"b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f");
     const ORDER_TWO_ENCODING: [u8; FIELD_BYTES] =
         hex_38(b"b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f");
+    const ORDER_FOUR_ENCODING: [u8; FIELD_BYTES] =
+        hex_38(b"0000000000000000000000000000000000000000000000000000000000000000000000000080");
+    const MIXED_ORDER_TWO_ENCODING: [u8; FIELD_BYTES] =
+        hex_38(b"480cc08aa5f37f9ac317c0308a9008280cb84e6d6ddb5398aadd8cbe61930d375775fd2c7707");
+    const MIXED_ORDER_FOUR_ENCODING: [u8; FIELD_BYTES] =
+        hex_38(b"3373a6039b6583c450910497e99e855dd7e20e877bc221b580d663671adb3f49ffd30524ed96");
 
     const fn hex_38(hex: &[u8; FIELD_BYTES * 2]) -> [u8; FIELD_BYTES] {
         let mut output = [0_u8; FIELD_BYTES];
@@ -828,6 +947,134 @@ mod tests {
 
         assert_eq!(rounds, 301);
         assert!(result.is_identity().to_bool());
+    }
+
+    #[test]
+    fn fixed_wnaf_subgroup_schedule_matches_the_sparse_reference() {
+        // The hardcoded schedule must reconstruct the prime order exactly.
+        let mut reconstructed = [0_i128; 5];
+        for (position, digit) in PRIME_ORDER_WNAF8_DESC {
+            let limb = position as usize / 64;
+            let shift = position as usize % 64;
+            reconstructed[limb] += (digit as i128) << shift;
+        }
+        let mut carried = [0_u64; 5];
+        let mut carry = 0_i128;
+        for (index, value) in reconstructed.into_iter().enumerate() {
+            let total = value + carry;
+            carried[index] = total as u64;
+            carry = total >> 64;
+        }
+        assert_eq!(carry, 0);
+        let mut expected = [0_u64; 5];
+        for (index, byte) in PRIME_ORDER_BYTES.iter().enumerate() {
+            expected[index / 8] |= (*byte as u64) << ((index % 8) * 8);
+        }
+        assert_eq!(carried, expected);
+
+        // Torsion representatives with canonical encodings.
+        let identity = {
+            let mut encoding = [0_u8; FIELD_BYTES];
+            encoding[0] = 1;
+            EdwardsPoint::decode(&encoding).expect("identity decodes")
+        };
+        let order_two = EdwardsPoint::decode(&ORDER_TWO_ENCODING).expect("order-2 decodes");
+        let order_four = EdwardsPoint::decode(&ORDER_FOUR_ENCODING).expect("order-4 decodes");
+        let mixed_two =
+            EdwardsPoint::decode(&MIXED_ORDER_TWO_ENCODING).expect("mixed order-2 decodes");
+        let mixed_four =
+            EdwardsPoint::decode(&MIXED_ORDER_FOUR_ENCODING).expect("mixed order-4 decodes");
+        let torsion = [identity, order_two, order_four, order_four.negate()];
+
+        let mut state: u64 = 0x574e_4146_3853_4348;
+        let mut checked = 0_usize;
+        let mut candidates = [EdwardsPoint::IDENTITY; 32];
+        candidates[0] = identity;
+        candidates[1] = order_two;
+        candidates[2] = order_four;
+        candidates[3] = order_four.negate();
+        candidates[4] = mixed_two;
+        candidates[5] = mixed_four;
+        candidates[6] = EdwardsPoint::BASEPOINT;
+        let mut index = 7;
+        while index < candidates.len() {
+            let mut scalar_bytes = [0_u8; FIELD_BYTES];
+            for byte in scalar_bytes.iter_mut() {
+                state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                let mut value = state;
+                value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                *byte = (value ^ (value >> 31)) as u8;
+            }
+            scalar_bytes[FIELD_BYTES - 1] &= 0x03;
+            let multiple = EdwardsPoint::BASEPOINT.scalar_mul_encoded(&scalar_bytes);
+            // Shift through the complete four-element torsion group.
+            candidates[index] = multiple.add(torsion[index % torsion.len()]);
+            index += 1;
+        }
+
+        for point in candidates {
+            // Table construction must be total for every decodable point.
+            let table = point.prepare_vartime_table();
+            let fast = point.is_prime_subgroup_with_table(&table).to_bool();
+            let reference = point.is_prime_subgroup().to_bool();
+            assert_eq!(
+                fast, reference,
+                "fixed wNAF subgroup predicate diverged from the sparse reference"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 32);
+    }
+
+    #[test]
+    fn sparse_prime_order_schedule_matches_the_generic_ladder() {
+        let mut reconstructed = [0_u8; FIELD_BYTES];
+        for bit in PRIME_ORDER_SET_BITS_DESC {
+            reconstructed[bit as usize >> 3] |= 1 << (bit as usize & 7);
+        }
+        assert_eq!(reconstructed, PRIME_ORDER_BYTES);
+
+        let mut point = EdwardsPoint::IDENTITY;
+        for _ in 0..2_048 {
+            let sparse = point.scalar_mul_prime_order_sparse();
+            let generic = point.scalar_mul_encoded(&PRIME_ORDER_BYTES);
+            assert!(
+                sparse.ct_eq(&generic).to_bool(),
+                "the fixed sparse order schedule must match the generic ladder"
+            );
+            point = point.add(EdwardsPoint::BASEPOINT);
+        }
+
+        for encoded in [
+            ORDER_TWO_ENCODING,
+            ORDER_FOUR_ENCODING,
+            MIXED_ORDER_TWO_ENCODING,
+            MIXED_ORDER_FOUR_ENCODING,
+        ] {
+            let point = EdwardsPoint::decode(&encoded).expect("the torsion case must decode");
+            assert!(
+                point
+                    .scalar_mul_prime_order_sparse()
+                    .ct_eq(&point.scalar_mul_encoded(&PRIME_ORDER_BYTES))
+                    .to_bool(),
+                "the sparse schedule must retain torsion behavior"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_public_artifact_matches_strict_decode() {
+        let mut point = EdwardsPoint::BASEPOINT;
+        for _ in 0..128 {
+            let (encoded, canonical) = point
+                .canonical_public_artifact()
+                .expect("a valid point must canonicalize");
+            let decoded = EdwardsPoint::decode(&encoded).expect("the artifact must decode");
+            assert!(canonical.ct_eq(&decoded).to_bool());
+            assert_eq!(canonical.encode(), Ok(encoded));
+            point = point.add(EdwardsPoint::BASEPOINT);
+        }
     }
 
     #[test]
