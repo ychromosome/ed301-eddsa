@@ -20,6 +20,8 @@ mod secret;
 mod secret_taint;
 pub mod signature;
 mod signature_hash;
+#[cfg(test)]
+mod test_support;
 
 pub use signature::{
     ExpandedSigningKey, Signature, SignatureError, SigningKey, VerifyingKey, sign,

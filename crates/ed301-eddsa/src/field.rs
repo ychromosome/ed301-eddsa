@@ -211,27 +211,11 @@ impl Default for FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::decode_hex_array;
 
-    const BASE_U_BYTES: [u8; FIELD_BYTES] =
-        hex_le_38(b"5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308");
-
-    const fn hex_le_38(hex: &[u8; FIELD_BYTES * 2]) -> [u8; FIELD_BYTES] {
-        let mut output = [0_u8; FIELD_BYTES];
-        let mut i = 0;
-        while i < FIELD_BYTES {
-            output[i] = (hex_nibble(hex[i * 2]) << 4) | hex_nibble(hex[i * 2 + 1]);
-            i += 1;
-        }
-        output
-    }
-
-    const fn hex_nibble(value: u8) -> u8 {
-        match value {
-            b'0'..=b'9' => value - b'0',
-            b'a'..=b'f' => value - b'a' + 10,
-            _ => panic!("invalid test hex"),
-        }
-    }
+    const BASE_U_BYTES: [u8; FIELD_BYTES] = decode_hex_array(
+        b"5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+    );
 
     fn le38(integer: U320) -> [u8; FIELD_BYTES] {
         let encoded = integer.to_le_bytes();

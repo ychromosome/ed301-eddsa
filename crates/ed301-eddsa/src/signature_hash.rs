@@ -45,29 +45,12 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::test_support::decode_hex_array;
     use std::vec::Vec;
 
-    const EMPTY_SHAKE256_76: [u8; HASH_BYTES] = hex_76(
+    const EMPTY_SHAKE256_76: [u8; HASH_BYTES] = decode_hex_array(
         b"46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be141e96616fb13957692cc7ed",
     );
-
-    const fn hex_76(hex: &[u8; HASH_BYTES * 2]) -> [u8; HASH_BYTES] {
-        let mut output = [0_u8; HASH_BYTES];
-        let mut index = 0;
-        while index < HASH_BYTES {
-            output[index] = (nibble(hex[index * 2]) << 4) | nibble(hex[index * 2 + 1]);
-            index += 1;
-        }
-        output
-    }
-
-    const fn nibble(value: u8) -> u8 {
-        match value {
-            b'0'..=b'9' => value - b'0',
-            b'a'..=b'f' => value - b'a' + 10,
-            _ => panic!("invalid test hex"),
-        }
-    }
 
     fn single_update(data: &[u8]) -> [u8; HASH_BYTES] {
         let mut state = Shake256::default();

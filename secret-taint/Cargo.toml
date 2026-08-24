@@ -2,6 +2,7 @@
 name = "ed301-eddsa-secret-taint"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.91"
 license = "Apache-2.0"
 publish = false
 description = "Valgrind secret-taint harness for Ed301-EdDSA-draft-00"

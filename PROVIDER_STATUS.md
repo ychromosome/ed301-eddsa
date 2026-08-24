@@ -108,8 +108,10 @@ final `CtAssign` selection boundary. This change is accepted for its concrete
 code-size and measured end-to-end benefit, not merely because a newer API is
 available; its compiler-specific branchlessness is rechecked in the final
 provider modules and secret-taint lane. The API was stabilized in Rust 1.91;
-that version is recorded as provenance for the feature, not claimed as a
-separately tested MSRV.
+the manifests declare that version as the minimum build toolchain while the
+canonical gates continue to use the current Fedora stable compiler. This
+declaration is not a portable constant-time claim: every compiler and final
+artifact must repeat the codegen and taint gates.
 
 This compiler-sensitive choice is enforced at the final artifact rather than
 only in an isolated Rust probe. Each OpenSSL-lane run disassembles its actual
@@ -123,6 +125,11 @@ Valgrind. These results remain specific to the recorded compiler, profile,
 architecture and exercised paths;
 `docs/ARITHMETIC_IMPLEMENTATION_REGISTER.md` records the mandatory re-review
 on every toolchain change.
+
+The provider's local `Shared<T>` owner and `try_box` allocation helper exist
+because stable Rust still lacks fallible `Arc` and `Box` construction. Their
+replacement triggers and required lifecycle evidence are recorded separately
+in `docs/PROVIDER_IMPLEMENTATION_REGISTER.md`.
 
 Five CPU-2-pinned local runs on this development host observed the following
 medians after the first low-risk performance repairs and before the subsequent

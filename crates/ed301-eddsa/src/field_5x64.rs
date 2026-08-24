@@ -631,6 +631,7 @@ const fn accumulate_fold<const HIGH: usize, const OUTPUT: usize>(
 mod tests {
     use super::*;
     use crate::field::FieldElement as Oracle;
+    use crate::test_support::splitmix64;
 
     fn oracle(value: Fe301) -> Oracle {
         Oracle::from_canonical_bytes(&value.to_canonical_bytes())
@@ -641,23 +642,11 @@ mod tests {
         let mut words = [0_u64; LIMBS];
         let mut index = 0;
         while index < LIMBS {
-            *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut value = *state;
-            value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            words[index] = value ^ (value >> 31);
+            words[index] = splitmix64(state);
             index += 1;
         }
         words[4] &= TOP_MASK;
         Fe301(conditional_subtract_modulus_const(words))
-    }
-
-    fn split_mix(state: &mut u64) -> u64 {
-        *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut value = *state;
-        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        value ^ (value >> 31)
     }
 
     /// Reduce an arbitrary wide value with the independent Montgomery oracle:
@@ -738,7 +727,7 @@ mod tests {
             } else {
                 let mut limb = 0;
                 while limb < LIMBS * 2 {
-                    wide[limb] = split_mix(&mut state);
+                    wide[limb] = splitmix64(&mut state);
                     limb += 1;
                 }
                 wide[LIMBS * 2 - 1] &= top_limb_mask;
@@ -791,19 +780,39 @@ mod tests {
 
     #[test]
     fn specialized_inversion_and_square_root_retain_oracle_results() {
+        fn assert_inversion_paths_match(value: Fe301) {
+            let safegcd = value.invert();
+            if value.is_zero().to_bool() {
+                assert!(safegcd.is_none().to_bool());
+                return;
+            }
+
+            let safegcd = safegcd.expect_copied("a nonzero field element is invertible");
+            let fermat = value.invert_const_nonzero();
+            assert_eq!(
+                safegcd.to_canonical_bytes(),
+                fermat.to_canonical_bytes(),
+                "safegcd and Fermat inversion must agree"
+            );
+            assert!(value.mul(safegcd).ct_eq(&Fe301::ONE).to_bool());
+            assert!(value.mul(fermat).ct_eq(&Fe301::ONE).to_bool());
+        }
+
+        let mut largest = MODULUS;
+        largest[0] -= 1;
+        for value in [
+            Fe301::ZERO,
+            Fe301::ONE,
+            Fe301::from_u64(2),
+            Fe301::from_canonical_words(largest),
+        ] {
+            assert_inversion_paths_match(value);
+        }
+
         let mut state = 0x4645_3330_312d_494e_u64;
         for _ in 0..128 {
             let value = generated(&mut state);
-            let inverse = value.invert();
-            assert_eq!(inverse.is_some().to_bool(), !value.is_zero().to_bool());
-            if inverse.is_some().to_bool() {
-                assert!(
-                    value
-                        .mul(inverse.to_inner_unchecked())
-                        .ct_eq(&Fe301::ONE)
-                        .to_bool()
-                );
-            }
+            assert_inversion_paths_match(value);
             let square = value.square();
             let root = square.sqrt().expect_copied("a square has a root");
             assert!(root.square().ct_eq(&square).to_bool());

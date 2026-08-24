@@ -792,47 +792,41 @@ fn select_basepoint(row: usize, digit: i8) -> AffineNielsPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{decode_hex_array, splitmix64};
 
-    const SCALAR_12345: [u8; FIELD_BYTES] =
-        hex_38(b"3930000000000000000000000000000000000000000000000000000000000000000000000000");
-    const MULTIPLE_12345_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"9ffa3fbe41c0ee7def76269467f7702cbe30ed930021f90ee241b5b1bdc34a6af128f51db512");
-    const DRAFT00_PRUNED_SECRET: [u8; FIELD_BYTES] =
-        hex_38(b"686d13326b81a70d3bb299eb137d475b59ddee671f92cdd334883fe6d784fc03813c2542a119");
-    const DRAFT00_PUBLIC_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890");
-    const DRAFT00_NONCE_SCALAR: [u8; FIELD_BYTES] =
-        hex_38(b"a3c7355a9c1ea903bc4fef22588ce6b75c292ccea514dbe689bacf7e3b3ca64449c9983cbd05");
-    const DRAFT00_COMMITMENT_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"2964a4e22d5ed6e41ad5d5bbfdf4d518bb067b8982f3f8f5900d074a6bee97567b9581033694");
-    const FIELD_MODULUS_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f");
-    const ORDER_TWO_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f");
-    const ORDER_FOUR_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"0000000000000000000000000000000000000000000000000000000000000000000000000080");
-    const MIXED_ORDER_TWO_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"480cc08aa5f37f9ac317c0308a9008280cb84e6d6ddb5398aadd8cbe61930d375775fd2c7707");
-    const MIXED_ORDER_FOUR_ENCODING: [u8; FIELD_BYTES] =
-        hex_38(b"3373a6039b6583c450910497e99e855dd7e20e877bc221b580d663671adb3f49ffd30524ed96");
-
-    const fn hex_38(hex: &[u8; FIELD_BYTES * 2]) -> [u8; FIELD_BYTES] {
-        let mut output = [0_u8; FIELD_BYTES];
-        let mut index = 0;
-        while index < FIELD_BYTES {
-            output[index] = (hex_nibble(hex[index * 2]) << 4) | hex_nibble(hex[index * 2 + 1]);
-            index += 1;
-        }
-        output
-    }
-
-    const fn hex_nibble(value: u8) -> u8 {
-        match value {
-            b'0'..=b'9' => value - b'0',
-            b'a'..=b'f' => value - b'a' + 10,
-            _ => panic!("invalid test hex"),
-        }
-    }
+    const SCALAR_12345: [u8; FIELD_BYTES] = decode_hex_array(
+        b"3930000000000000000000000000000000000000000000000000000000000000000000000000",
+    );
+    const MULTIPLE_12345_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"9ffa3fbe41c0ee7def76269467f7702cbe30ed930021f90ee241b5b1bdc34a6af128f51db512",
+    );
+    const DRAFT00_PRUNED_SECRET: [u8; FIELD_BYTES] = decode_hex_array(
+        b"686d13326b81a70d3bb299eb137d475b59ddee671f92cdd334883fe6d784fc03813c2542a119",
+    );
+    const DRAFT00_PUBLIC_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890",
+    );
+    const DRAFT00_NONCE_SCALAR: [u8; FIELD_BYTES] = decode_hex_array(
+        b"a3c7355a9c1ea903bc4fef22588ce6b75c292ccea514dbe689bacf7e3b3ca64449c9983cbd05",
+    );
+    const DRAFT00_COMMITMENT_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"2964a4e22d5ed6e41ad5d5bbfdf4d518bb067b8982f3f8f5900d074a6bee97567b9581033694",
+    );
+    const FIELD_MODULUS_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+    );
+    const ORDER_TWO_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+    );
+    const ORDER_FOUR_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"0000000000000000000000000000000000000000000000000000000000000000000000000080",
+    );
+    const MIXED_ORDER_TWO_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"480cc08aa5f37f9ac317c0308a9008280cb84e6d6ddb5398aadd8cbe61930d375775fd2c7707",
+    );
+    const MIXED_ORDER_FOUR_ENCODING: [u8; FIELD_BYTES] = decode_hex_array(
+        b"3373a6039b6583c450910497e99e855dd7e20e877bc221b580d663671adb3f49ffd30524ed96",
+    );
 
     fn scalar(bytes: &[u8; FIELD_BYTES]) -> Scalar {
         Scalar::from_canonical_bytes(bytes)
@@ -1000,11 +994,7 @@ mod tests {
         while index < candidates.len() {
             let mut scalar_bytes = [0_u8; FIELD_BYTES];
             for byte in scalar_bytes.iter_mut() {
-                state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-                let mut value = state;
-                value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                *byte = (value ^ (value >> 31)) as u8;
+                *byte = splitmix64(&mut state) as u8;
             }
             scalar_bytes[FIELD_BYTES - 1] &= 0x03;
             let multiple = EdwardsPoint::BASEPOINT.scalar_mul_encoded(&scalar_bytes);

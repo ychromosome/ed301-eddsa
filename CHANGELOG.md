@@ -80,8 +80,9 @@
   retains the explicit constant-evaluable identity. This deliberately newer
   API removes work rather than adding an architecture backend, preserves
   `#![forbid(unsafe_code)]`, and is accepted only with fresh codegen,
-  secret-taint and end-to-end evidence. Rust 1.91 is an API provenance point,
-  not a separately validated support promise.
+  secret-taint and end-to-end evidence. The manifests declare Rust 1.91 as
+  the minimum build toolchain; constant-time and code-generation claims remain
+  specific to each tested compiler and final artifact.
 - Made that compiler-sensitive replacement a permanent gate on both final
   Thin-LTO provider modules: named field, point, scalar-reduction and
   basepoint-selection symbols must retain the reviewed branchless SBB/CMOV
@@ -91,3 +92,8 @@
   material through the complete EVP-to-Rust signing path. Added a concise
   arithmetic implementation register so the historical reason and mandatory
   compiler-retest duty are not lost.
+- Added a direct safegcd-versus-Fermat inversion differential and consolidated
+  duplicated deterministic test helpers.
+- Added a provider implementation register for the local fallible `Shared<T>`
+  and `try_box` helpers, including their stable-Rust replacement triggers and
+  mandatory lifecycle evidence.

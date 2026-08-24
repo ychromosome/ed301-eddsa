@@ -185,31 +185,15 @@ fn uint_from_le38(bytes: &[u8; SCALAR_BYTES]) -> U320 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{decode_hex_array, splitmix64};
 
-    const L_BYTES: [u8; 38] =
-        hex_38(b"0396bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008");
+    const L_BYTES: [u8; 38] = decode_hex_array(
+        b"0396bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008",
+    );
     // Independently reproduced with Python integers and Perl Math::BigInt.
     const RADIX_304_REDUCED: U320 = U320::from_be_hex(
         "000007fffffffffffffffffffffffffffffffffffd3b43c6f6426d8f4892040c65a66f67b8ebd5a3",
     );
-
-    const fn hex_38(hex: &[u8; 76]) -> [u8; 38] {
-        let mut output = [0_u8; 38];
-        let mut index = 0;
-        while index < 38 {
-            output[index] = (nibble(hex[index * 2]) << 4) | nibble(hex[index * 2 + 1]);
-            index += 1;
-        }
-        output
-    }
-
-    const fn nibble(value: u8) -> u8 {
-        match value {
-            b'0'..=b'9' => value - b'0',
-            b'a'..=b'f' => value - b'a' + 10,
-            _ => panic!("invalid test hex"),
-        }
-    }
 
     fn division_oracle(bytes: &[u8; HASH_BYTES]) -> U320 {
         let mut low = [0_u8; U320::BYTES];
@@ -238,14 +222,6 @@ mod tests {
             bytes[offset..offset + SCALAR_BYTES].copy_from_slice(&encoded[..SCALAR_BYTES]);
             assert_reduction(&bytes);
         }
-    }
-
-    fn splitmix64(state: &mut u64) -> u64 {
-        *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut value = *state;
-        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        value ^ (value >> 31)
     }
 
     #[test]
