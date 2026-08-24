@@ -6,7 +6,9 @@
 - API: context-free one-shot key derivation, signing and verification.
 - Review state: the 2026-08-23 mixed-revision scan found two build-assurance
   defects at current HEAD. Both have focused repairs and local regression
-  evidence; a fresh exact-revision, full-scope deep scan is the next gate.
+  evidence. A complete security diff review of the post-Package-B integration
+  snapshot found no reportable issue; it does not replace the still-required
+  fresh exact-revision, full-repository deep scan.
 - Toolchain policy: regular gates use the current stable Rust supplied by the
   host Fedora release. The manifests declare Rust 1.91 as the minimum build
   toolchain because runtime field subtraction deliberately uses the
@@ -43,10 +45,15 @@
   multiplication, and explicitly public variable-time verification tables.
 - Performance state: the Safe-Rust positive MAC field fold and fixed public
   width-8 wNAF import schedule are integrated and locally validated. Prepared
-  EVP signing measures about 35.3--35.4 microseconds and verification about
-  108.7--108.8 microseconds on the two supported OpenSSL lanes. The core still
-  has `#![forbid(unsafe_code)]`; the separate BMI2 spike and its runtime
-  dispatch/fallback burden remain deferred research artifacts.
+  EVP signing of the fixed 24-byte short-message KAT measures about 31.9
+  microseconds and verification about 100.6 microseconds on both supported
+  OpenSSL lanes. An equal-weight rotation over all four positive KATs (0, 24,
+  256 and 4096-byte messages) measures about 35.8--35.9 and 102.6--102.7
+  microseconds respectively; the longer signing time is expected SHAKE input
+  work. These are medians of CPU-pinned batch means, not single-call latency
+  or portable guarantees. The core still has `#![forbid(unsafe_code)]`; the
+  separate BMI2 spike and its runtime dispatch/fallback burden remain deferred
+  research artifacts.
 - Current scan boundary: scan `0b7ec637-7435-486b-b36c-c01502374d58`
   formally targeted an older revision and excluded the provider, although its
   two retained findings were validated against then-current HEAD

@@ -44,6 +44,7 @@ cargo_clean() {
 (cd "$ROOT/inputs/round4" && sha256sum --strict --quiet -c SHA256SUMS)
 sh "$ROOT/scripts/test-source-tree-gate.sh"
 sh "$ROOT/scripts/test-rustc-profile-guard.sh"
+sh "$ROOT/scripts/check-blind-reference.sh"
 
 clean_env /usr/bin/cargo --version --verbose
 clean_env /usr/bin/rustc --version --verbose

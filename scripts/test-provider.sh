@@ -276,7 +276,7 @@ nm -D --defined-only "$BUILD/modules/ed301_eddsa_draft00.so" \
 HARNESSES=(
     provider_load provider_keymgmt provider_signature
     provider_serialization provider_pki provider_oid_collision provider_rand
-    provider_tls provider_hardening provider_load_fresh
+    provider_lifecycle provider_tls provider_hardening provider_load_fresh
     provider_shim_unit val01_decoder_bio val03_retry val05_codepoint
 )
 (cd "$BUILD" && sha256sum --strict --quiet -c \
@@ -303,7 +303,8 @@ done
     -L"$OPENSSL_LIB" -lcrypto -lssl -lpthread -ldl
 
 for harness in provider_signature provider_keymgmt provider_serialization \
-        val01_decoder_bio provider_load provider_rand provider_tls; do
+        val01_decoder_bio provider_load provider_rand provider_lifecycle \
+        provider_tls; do
     /usr/bin/clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g \
         -fsanitize=address,undefined -fno-sanitize-recover=all \
         -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
@@ -353,8 +354,9 @@ run_harness() {
         /usr/bin/timeout 240 "$BUILD/bin/$1"
 }
 for harness in provider_load provider_keymgmt provider_signature \
-        provider_serialization provider_pki provider_rand provider_tls \
-        provider_hardening provider_load_fresh provider_shim_unit \
+        provider_serialization provider_pki provider_rand \
+        provider_lifecycle provider_tls provider_hardening \
+        provider_load_fresh provider_shim_unit \
         val01_decoder_bio val05_codepoint; do
     run_harness "$harness"
 done
@@ -435,7 +437,8 @@ grep -F 'BEGIN PRIVATE KEY' "$BUILD/evidence/cli-generated-key.pem" \
     >/dev/null
 
 for harness in provider_signature provider_keymgmt provider_serialization \
-        val01_decoder_bio provider_load provider_rand provider_tls; do
+        val01_decoder_bio provider_load provider_rand provider_lifecycle \
+        provider_tls; do
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \
@@ -446,7 +449,7 @@ for harness in provider_signature provider_keymgmt provider_serialization \
         /usr/bin/timeout 240 "$BUILD/bin/${harness}_asan"
 done
 for harness in provider_signature provider_serialization val01_decoder_bio \
-        provider_load provider_rand; do
+        provider_load provider_rand provider_lifecycle; do
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \

@@ -160,12 +160,43 @@ The exact parent revision measured 287.826/286.317 microseconds for seed
 import and 248.430/248.421 microseconds for public import on the two lanes.
 The repairs therefore reduce those medians by about 73% and 34% respectively,
 while prepared sign and verify remain within roughly 1% of the parent, as
-expected. The same harness continues to place Ed301 prepared signing between
-OpenSSL Ed25519 and Ed448. Earlier 31--33/93--95 microsecond Ed301 figures came
-from the rejected build in which the compiler had introduced a
-secret-dependent field-reduction branch; they are not retained performance
-claims. These values are comparative development evidence, not a portable
-performance guarantee or an acceptance gate.
+expected. Historical paired figures of 31--33/93--95 microseconds came from a
+rejected build in which the compiler had introduced a secret-dependent
+field-reduction branch; that pair remains invalid evidence.
+
+After the final two-lane provider, secret-taint and code-generation gates, five
+independent CPU-0-pinned processes per lane measured the fixed 24-byte KAT as
+follows. Each entry is the median of five batch means with at least 250 ms per
+operation, not an isolated single-call latency:
+
+| OpenSSL | Algorithm | Prepared sign | Prepared verify |
+| --- | --- | ---: | ---: |
+| 3.5.7 | Ed25519 | 22.983 us | 77.007 us |
+| 3.5.7 | Ed301 | 31.909 us | 100.687 us |
+| 3.5.7 | Ed448 | 144.380 us | 154.112 us |
+| 4.0.1 | Ed25519 | 22.752 us | 76.541 us |
+| 4.0.1 | Ed301 | 31.918 us | 100.578 us |
+| 4.0.1 | Ed448 | 145.010 us | 153.695 us |
+
+The safe final Ed301 signing value therefore independently returns to roughly
+32 microseconds, but final verification is roughly 101 rather than the
+rejected 93--95 microseconds. On this host Ed301 signing is about 39--40%
+slower than Ed25519 and about 4.5 times faster than Ed448; verification is
+about 31% slower than Ed25519 and about 35% faster than Ed448.
+
+A separate three-process, CPU-2-pinned rotation gave each of the four positive
+KATs equal weight and retained independent prepared contexts per KAT:
+
+| OpenSSL | Equal-weight prepared sign | Equal-weight prepared verify |
+| --- | ---: | ---: |
+| 3.5.7 | 35.906 us | 102.667 us |
+| 4.0.1 | 35.819 us | 102.609 us |
+
+The short-message repetition differed from the five-process result by at most
+0.84%. The aggregate signing increase is accounted for by the 4096-byte KAT's
+additional SHAKE work; three distinct keys showed no key-specific regression.
+Both benchmark sets are comparative development evidence on one Ryzen 5950X
+x86-64 host, not portable performance guarantees or acceptance gates.
 
 Symbol profiles found the wide scalar reducer and field inversion at only
 single-digit percentages of the measured signing and import paths. A measured
@@ -178,15 +209,17 @@ assembly, architecture intrinsic, native-CPU flag, secret-indexed table or new
 arithmetic unsafe boundary is part of this revision. The provider's manual
 shared-state owner remains inside the existing native FFI unsafe boundary.
 
-Local pre-push gates completed on 2026-08-24 include the complete provider
+Local pre-push gates completed on 2026-08-25 include the complete provider
 matrix against OpenSSL 3.5.7 and 4.0.1 under Rust 1.97.1 and the secret-taint
-lane. A pre-`borrowing_sub` revision also passed an offline Rust-1.85.1 lane
+and final-provider code-generation lanes. A complete security diff review of
+all 16 source-like post-Package-B changes found no reportable candidate; it is
+not the deferred full-repository deep scan. A pre-`borrowing_sub` revision also
+passed an offline Rust-1.85.1 lane
 with format/lint, core tests, provider units and loaded OpenSSL 3.5.7
 load/key-management/signature harnesses. That one-time result remains useful
 historical compatibility evidence, but is not an MSRV, support promise or
 future release gate. These local results do not replace independent
 reproduction. Open gates include the fresh full-scope Deep Security Scan,
-independent external security and performance review, AArch64,
-coverage-guided fuzzing, QEMU/container lanes, final timing and zeroization
+AArch64, coverage-guided fuzzing, QEMU/container lanes, final zeroization
 review, and an external TLS SignatureScheme allocation. No production,
 standardization or release claim is made.

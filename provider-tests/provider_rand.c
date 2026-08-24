@@ -15,6 +15,7 @@
 #include <openssl/rand.h>
 
 #include "harness_common.h"
+#include "vectors.h"
 
 #define TEST_RAND_PROVIDER "ed301_test_rand"
 #define TEST_RAND_PROPERTY "provider=ed301_test_rand"
@@ -252,12 +253,23 @@ int main(void)
     OSSL_PROVIDER *deflt = NULL;
     OSSL_PROVIDER *draft = NULL;
     EVP_PKEY *key = NULL;
+    EVP_PKEY *kat_key = NULL;
     EVP_PKEY *weak_key = NULL;
     EVP_PKEY *failed_key = NULL;
     EVP_PKEY *recovered_key = NULL;
     unsigned char expected[D00_SEED_BYTES];
+    static const unsigned char expected_public[D00_PUB_BYTES] = {
+        0xca, 0x69, 0x43, 0x21, 0xce, 0x6f, 0xce, 0x86,
+        0xde, 0xfe, 0x10, 0x84, 0xfb, 0x49, 0xb8, 0xb7,
+        0x0f, 0xbf, 0xd5, 0xd2, 0x8c, 0xa2, 0x16, 0x80,
+        0x32, 0x88, 0x08, 0x08, 0xf6, 0xa5, 0xfc, 0x68,
+        0xba, 0x53, 0x10, 0xae, 0x0a, 0x90
+    };
     unsigned char actual[D00_SEED_BYTES];
+    unsigned char actual_public[D00_PUB_BYTES];
+    unsigned char deterministic_signature[D00_SIG_BYTES];
     size_t actual_length = 0;
+    size_t actual_public_length = 0;
     size_t index;
     unsigned int calls_before_failure;
     LIFECYCLE_WORKER worker;
@@ -289,6 +301,14 @@ int main(void)
         "Ed301 provider loads with a mirrored child library context");
     if (draft != NULL)
         key = d00_keygen(libctx);
+    /*
+     * R2 -- OpenSSL ECX keygen contract.
+     * Source: providers/implementations/keymgmt/ecx_kmgmt.c, whose Ed25519
+     * and Ed448 keygen paths consume the parent libctx's private RAND.  The
+     * expected public key below was calculated offline from the a0..c5 seed
+     * by both provider-tests/oracle/ed301_eddsa/reference.py and the frozen
+     * blind-0c482948 oracle; it is not read back from provider behaviour.
+     */
     D00_CHECK(key != NULL && test_rand_generate_calls > 0,
         "keygen reaches the application-selected OpenSSL RAND provider");
     D00_CHECK(key != NULL && test_rand_generate_strength >= 149U,
@@ -302,6 +322,44 @@ int main(void)
             && actual_length == sizeof(actual)
             && memcmp(actual, expected, sizeof(actual)) == 0,
         "generated Ed301 seed is byte-exact from application RAND");
+    D00_CHECK(key != NULL
+            && EVP_PKEY_get_octet_string_param(
+                key, OSSL_PKEY_PARAM_PUB_KEY,
+                actual_public, sizeof(actual_public),
+                &actual_public_length) == 1
+            && actual_public_length == sizeof(actual_public)
+            && memcmp(actual_public, expected_public,
+                sizeof(actual_public)) == 0,
+        "deterministic RAND seed derives the independently fixed public key");
+
+    /*
+     * R1 -- PureEdDSA determinism and RAND separation.
+     * Source: providers/implementations/signature/eddsa_sig.c and the
+     * Ed25519/Ed448 one-shot cases in test/recipes/30-test_evp_data/
+     * evppkey_ecx_sigalg.txt.  Once the key exists, signing and verification
+     * are deterministic and must not call RAND.  The poisoned generator
+     * makes any accidental call fail while the exact counter proves zero
+     * generate() invocations.
+     */
+    kat_key = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    calls_before_failure = test_rand_generate_calls;
+    test_rand_fail = 1;
+    D00_CHECK(kat_key != NULL
+            && d00_digest_sign(libctx, kat_key,
+                POSITIVE_CASES[0].message,
+                POSITIVE_CASES[0].message_len,
+                deterministic_signature)
+            && memcmp(deterministic_signature,
+                POSITIVE_CASES[0].signature,
+                sizeof(deterministic_signature)) == 0
+            && d00_digest_verify(libctx, kat_key,
+                POSITIVE_CASES[0].message,
+                POSITIVE_CASES[0].message_len,
+                deterministic_signature,
+                sizeof(deterministic_signature))
+            && test_rand_generate_calls == calls_before_failure,
+        "poisoned application RAND is never called by sign or verify");
+    test_rand_fail = 0;
 
     test_rand_advertised_strength = 128U;
     calls_before_failure = test_rand_generate_calls;
@@ -312,6 +370,12 @@ int main(void)
     ERR_clear_error();
     test_rand_advertised_strength = 256U;
 
+    /*
+     * R3 -- Keygen fails closed on application-RAND failure.
+     * Source: providers/implementations/keymgmt/ecx_kmgmt.c and
+     * test/testutil/fake_random.c.  A failed generate produces no EVP_PKEY;
+     * recovery must return the same independently specified keypair.
+     */
     calls_before_failure = test_rand_generate_calls;
     test_rand_fail = 1;
     failed_key = d00_keygen(libctx);
@@ -322,8 +386,22 @@ int main(void)
 
     test_rand_fail = 0;
     recovered_key = d00_keygen(libctx);
-    D00_CHECK(recovered_key != NULL,
-        "Ed301 keygen recovers after application RAND recovers");
+    actual_length = 0;
+    actual_public_length = 0;
+    D00_CHECK(recovered_key != NULL
+            && EVP_PKEY_get_octet_string_param(
+                recovered_key, OSSL_PKEY_PARAM_PRIV_KEY,
+                actual, sizeof(actual), &actual_length) == 1
+            && actual_length == sizeof(actual)
+            && memcmp(actual, expected, sizeof(actual)) == 0
+            && EVP_PKEY_get_octet_string_param(
+                recovered_key, OSSL_PKEY_PARAM_PUB_KEY,
+                actual_public, sizeof(actual_public),
+                &actual_public_length) == 1
+            && actual_public_length == sizeof(actual_public)
+            && memcmp(actual_public, expected_public,
+                sizeof(actual_public)) == 0,
+        "Ed301 keygen recovers with the exact deterministic keypair");
 
     memset(&worker, 0, sizeof(worker));
     worker.libctx = libctx;
@@ -352,6 +430,8 @@ int main(void)
         failed_key = NULL;
         EVP_PKEY_free(weak_key);
         weak_key = NULL;
+        EVP_PKEY_free(kat_key);
+        kat_key = NULL;
         EVP_PKEY_free(key);
         key = NULL;
         D00_CHECK(OSSL_PROVIDER_unload(draft) == 1,
@@ -374,10 +454,14 @@ int main(void)
     }
 
     OPENSSL_cleanse(actual, sizeof(actual));
+    OPENSSL_cleanse(actual_public, sizeof(actual_public));
+    OPENSSL_cleanse(deterministic_signature,
+        sizeof(deterministic_signature));
     OPENSSL_cleanse(expected, sizeof(expected));
     EVP_PKEY_free(weak_key);
     EVP_PKEY_free(recovered_key);
     EVP_PKEY_free(failed_key);
+    EVP_PKEY_free(kat_key);
     EVP_PKEY_free(key);
     OSSL_PROVIDER_unload(draft);
     OSSL_PROVIDER_unload(deflt);

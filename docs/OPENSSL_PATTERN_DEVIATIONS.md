@@ -1,0 +1,75 @@
+# OpenSSL pattern decisions and deviations
+
+Date: 2026-08-24
+
+This register records which OpenSSL Ed25519/Ed448 test patterns are adopted
+for the optional Ed301 PKI integration and where the draft-00 byte contract
+deliberately differs.  OpenSSL test sources are structural precedents, not
+normative Ed301 encodings.  The Ed301 draft and provider byte/API contracts
+remain authoritative.
+
+Local comparison sources:
+
+- `test/endecode_test.c`
+- `test/evp_extra_test.c`
+- `test/x509_req_test.c`
+- `test/x509_test.c`
+- `test/verify_extra_test.c`
+- `providers/implementations/keymgmt/ecx_kmgmt.c`
+- `providers/implementations/signature/eddsa_sig.c`
+
+## Serialization and decoder matrix
+
+| ID | Decision and contract source | Enforcement |
+| --- | --- | --- |
+| D1 | Adopt the OpenSSL encoder/decoder round-trip pattern. The provider contract requires PKCS#8 and SPKI DER -> PEM -> DER to remain byte-identical. | `provider-tests/provider_serialization.c` tests both structures. |
+| D2 | The project-owned complete-buffer boundary accepts exactly one DER object. One trailing octet is an error for both PKCS#8 and SPKI. | Both forms have explicit `DER + 1` rejection tests. |
+| D3 | Adopt the truncation categories from `endecode_test.c`, specialized to the fixed Ed301 layouts. Empty input, every tag/length/value boundary, and the final short value reject. | Boundary tables in `provider_serialization.c`. |
+| D4 | Follow the parameterless ECX AlgorithmIdentifier pattern. Encoders emit absent parameters; decoders reject `NULL` and every explicit parameter type. | Exact encoder bytes plus PKCS#8/SPKI parameter-negative tests. |
+| D5 | The assigned Ed301 OID must be byte-exact and must map to the no-digest SIGID. Historical Ed301-Sig-v1, X301, and other OIDs are foreign. | Serialization OID negatives and the host-registry assertions in `provider_pki.c`. |
+| D6 | **Deliberate deviation:** draft-00 accepts only PKCS#8 `PrivateKeyInfo` version 0. RFC 5958 `OneAsymmetricKey` version 1, with or without embedded public key, is rejected. The seed uniquely derives the public key and KEYMGMT validates that relation, so accepting a second embedded copy adds mismatch policy without a draft requirement. Revisit only if a later Ed301 PKI profile normatively adopts OneAsymmetricKey. | Explicit version-1 and canonical embedded-public-key rejection tests. No mismatch-acceptance path exists. |
+| D7 | The draft fixes the seed at 38 bytes. The nested private-key OCTET STRING accepts neither 37 nor 39 bytes. | Independently constructed, internally consistent DER objects carry actual 37- and 39-byte seeds in `provider_serialization.c`; both reject. |
+
+The ordinary and PKI artifacts deliberately expose no generic private-key
+decoder.  The private-use TLS test artifact exposes only the transactional
+SPKI DER decoder required for wire certificates.  Direct encrypted PKCS#8 is
+not a provider-encoder feature; generic application-side wrapping is outside
+this optional profile.
+
+## PKI matrix
+
+| ID | Decision and contract source | Enforcement |
+| --- | --- | --- |
+| P1 | Adopt the public X.509 round-trip pattern: a self-signed Ed301 CA certificate is DER-reparsed and verified. | `provider-tests/provider_pki.c`. |
+| P2 | The optional all-Ed301 profile supports a direct Ed301 CA -> Ed301 leaf chain through `X509_STORE`. | Strict profile and store verification test. |
+| P3 | Mixed-algorithm interoperability is supported through generic OpenSSL X.509 validation in both directions: classic P-256 ECDSA CA -> Ed301 leaf, and Ed301 CA -> classic P-256 ECDSA leaf. Such certificates intentionally fail the all-Ed301 profile predicate where their signature algorithm or SPKI is classic. | Two public-API chain tests; no ASN.1 byte mutation. |
+| P4 | Adopt the signed-TBS integrity pattern. A serial-number mutation through `X509_set_serialNumber()` after signing must invalidate verification. | Focused semantic TBS mutation test. |
+| P5 | An Ed301 CSR must sign and verify, survive DER and PEM reparsing, retain exact SPKI/signature identifiers, and reject signature/SPKI mutations. | CSR matrix in `provider_pki.c`. |
+| P6 | **Not supported in draft-00:** no Ed301 CRL-signing or OCSP-response profile is claimed. Their object identifiers, responder authorization, freshness and extension policies are not defined by the signature draft. Revisit only with a separate PKI profile and permanent identifiers; do not infer support merely because generic EVP signing could be wired to those containers. | Register-only negative scope decision; no synthetic CRL/OCSP test. |
+
+## SIGNATURE decisions reserved by the same register
+
+| ID | Decision and contract source | Enforcement |
+| --- | --- | --- |
+| S6 | Ed301-EdDSA draft-00 is pure-only. `OSSL_SIGNATURE_PARAM_CONTEXT_STRING`, including a non-empty context, is rejected rather than ignored; no Ed301ctx instance is defined. This deliberately differs from Ed448 and Ed25519ctx patterns in OpenSSL 4.0 `eddsa_sig.c`. | Existing `provider_signature.c` context rejection tests. |
+| S7 | Ed301-EdDSA draft-00 has one fixed pure instance. `OSSL_SIGNATURE_PARAM_INSTANCE`, prehash mode, external digest selection and streaming/prehashed signing are rejected rather than reinterpreted. This deliberately omits the Ed25519ph/Ed448ph instance family. | Existing pure-only, instance, digest, prehash and streaming rejection tests. |
+
+## KEYMGMT decisions reserved by the same register
+
+| ID | Decision and contract source | Enforcement |
+| --- | --- | --- |
+| K6 | Ed301 public-key import validates canonical encoding and prime-subgroup membership before an `EVP_PKEY` can materialize. Invalid torsion and mixed-order inputs therefore reject at the `EVP_PKEY_fromdata` API boundary; they are not retained as deferred-invalid objects for a later `EVP_PKEY_public_check`. This is deliberately stricter and more fail-closed than the deferred-check shape used by some ECX fixtures. | Existing invalid-point and mixed-order `fromdata` rejection tests; valid keys additionally pass `EVP_PKEY_check` and `EVP_PKEY_public_check`. |
+| K7 | An imported private seed derives one unique Ed301 public key. If an import supplies both components, seed/public equality is checked atomically and a mismatch never materializes as an `EVP_PKEY`; no partially replaced key is observable. | Existing mismatched-pair and atomic-import rejection tests; valid complete keys additionally pass `EVP_PKEY_check` and `EVP_PKEY_pairwise_check`. |
+
+## Lifecycle and failpoint decisions reserved by the same register
+
+| ID | Decision and contract source | Enforcement |
+| --- | --- | --- |
+| L6 | Use real provider-owned failure boundaries only. The `provider_hardening` signature-duplicate failpoint and the `provider_rand` generate-failure path are retained. No product hook is added merely to simulate host RAND installation failure, `pthread` failure, or allocation inside OpenSSL PKI containers, because those operations are not provider-owned. Revisit only if a combined PKI-plus-failpoint provider is deliberately built and reviewed. | Existing hardening and RAND failure tests; host-owned failures remain outside the product failpoint surface. |
+
+## Review rule
+
+Every future OpenSSL or Rust toolchain update must preserve the decisions
+above.  A new container form or PKI object class is a profile change, not a
+test-only compatibility tweak, and requires a new dated register entry plus
+positive and negative vectors.

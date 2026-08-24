@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Integrated the independently produced Package-A Python implementation as a
+  hash-bound, immutable test oracle after its 109/109 Package-B blind result.
+  A narrow adapter accepts only immutable byte strings and exposes no raw
+  point helpers, closing the two recorded LOW API findings without changing
+  the frozen source. Deterministic Python and Rust differential gates bind
+  public keys, byte-exact signatures and invalid-input decisions.
+- Translated the relevant OpenSSL Ed25519/Ed448 SIGNATURE, KEYMGMT, decoder,
+  RAND/library-context, PKI and lifecycle contracts into a numbered Ed301
+  matrix for both normative OpenSSL lanes.  The new cases cover pure-only
+  one-shot semantics, raw-key and validation discipline, strict DER,
+  deterministic RAND separation, mixed-algorithm X.509 chains, context
+  duplication, parallel shared-key use and repeated provider load/unload;
+  deliberate profile deviations are recorded separately.
+- Repeated the complete post-integration provider, secret-taint and final
+  code-generation gates on OpenSSL 3.5.7 and 4.0.1, and closed a complete
+  security diff review of all 16 source-like changes without a reportable
+  finding. Fresh single-KAT and equal-weight four-KAT EVP benchmarks document
+  both short-message throughput and message-length sensitivity without
+  treating either batch measurement as single-call latency.
 - Assigned `1.3.6.1.4.1.66282.301.3` to the fixed Ed301-EdDSA profile,
   retained `.301.1` as the retired Ed301-Sig-v1 identity, and left X301 on
   `.301.2`.

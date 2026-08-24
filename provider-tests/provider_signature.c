@@ -96,7 +96,13 @@ int main(void)
 
     D00_CHECK(draft != NULL, "provider load");
 
-    /* Positive vectors through the whole-message and DigestSign APIs. */
+    /*
+     * S1/S8 -- Draft pure-EdDSA contract and OpenSSL
+     * test/evp_extra_test.c Ed25519/Ed448 pattern: one-shot whole-message and
+     * DigestSign/DigestVerify paths, including the zero-byte KAT, are positive.
+     * S2 -- Provider contract: the size query is exactly 76 bytes and an
+     * undersized output buffer is rejected without a partial signature.
+     */
     for (index = 0; index < 4; index++) {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[index];
         EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
@@ -170,6 +176,41 @@ int main(void)
                 && memcmp(sig_again, tc->signature, D00_SIG_BYTES) == 0,
             "%s: one-shot DigestSign matches the vector", tc->id);
 
+        /*
+         * S2 must also bind OpenSSL's high-level DigestSign entry point, not
+         * only the provider-native whole-message EVP_PKEY operation.
+         */
+        {
+            EVP_MD_CTX *size_context = EVP_MD_CTX_new();
+            EVP_MD_CTX *small_context = EVP_MD_CTX_new();
+            unsigned char small[D00_SIG_BYTES - 1];
+            unsigned char canary[D00_SIG_BYTES - 1];
+            size_t digest_sig_len = 0;
+
+            D00_CHECK(size_context != NULL
+                    && EVP_DigestSignInit_ex(size_context, NULL, NULL,
+                        libctx, d00_property, pkey, NULL) == 1
+                    && EVP_DigestSign(size_context, NULL, &digest_sig_len,
+                        tc->message, tc->message_len) == 1
+                    && digest_sig_len == D00_SIG_BYTES,
+                "%s: DigestSign size query returns exactly 76", tc->id);
+
+            memset(small, 0x5a, sizeof(small));
+            memset(canary, 0x5a, sizeof(canary));
+            digest_sig_len = sizeof(small);
+            D00_CHECK(small_context != NULL
+                    && EVP_DigestSignInit_ex(small_context, NULL, NULL,
+                        libctx, d00_property, pkey, NULL) == 1
+                    && EVP_DigestSign(small_context, small,
+                        &digest_sig_len, tc->message, tc->message_len) != 1
+                    && memcmp(small, canary, sizeof(small)) == 0,
+                "%s: DigestSign 75-byte buffer rejects without write",
+                tc->id);
+            ERR_clear_error();
+            EVP_MD_CTX_free(small_context);
+            EVP_MD_CTX_free(size_context);
+        }
+
         /* The TBS verify API is likewise unavailable; message APIs accept. */
         pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
         D00_CHECK(pctx != NULL && EVP_PKEY_verify_init(pctx) != 1,
@@ -188,6 +229,30 @@ int main(void)
                 tc->message_len, tc->signature, D00_SIG_BYTES),
             "%s: DigestVerify accepts", tc->id);
 
+        EVP_PKEY_free(pkey);
+    }
+
+    /*
+     * S4 -- Draft deterministic-signing contract: five independent one-shot
+     * operations over the same key/message produce the exact KAT bytes.
+     */
+    {
+        const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
+        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        unsigned char signatures[5][D00_SIG_BYTES];
+        int deterministic = pkey != NULL;
+        size_t repetition;
+
+        for (repetition = 0; deterministic && repetition < 5; repetition++)
+            deterministic = d00_digest_sign(libctx, pkey,
+                    tc->message, tc->message_len, signatures[repetition])
+                && memcmp(signatures[repetition], tc->signature,
+                    D00_SIG_BYTES) == 0
+                && (repetition == 0
+                    || memcmp(signatures[repetition], signatures[0],
+                        D00_SIG_BYTES) == 0);
+        D00_CHECK(deterministic,
+            "five independent signatures are byte-identical to the KAT");
         EVP_PKEY_free(pkey);
     }
 
@@ -253,6 +318,7 @@ int main(void)
         EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
         unsigned char changed_message[1] = { 0x01 };
         unsigned char malformed[D00_SIG_BYTES];
+        unsigned char overlong[D00_SIG_BYTES + 1];
         int result;
 
         ERR_clear_error();
@@ -272,13 +338,24 @@ int main(void)
         D00_CHECK(result == 0,
             "noncanonical signature returns exactly zero");
 
+        /* S3 -- Draft signature encoding is exactly 76 bytes. */
         ERR_clear_error();
         result = pkey == NULL ? -1
             : d00_digest_verify_result(libctx, pkey,
                 tc->message, tc->message_len,
                 tc->signature, D00_SIG_BYTES - 1);
         D00_CHECK(result == 0,
-            "wrong signature length returns exactly zero");
+            "75-byte signature returns exactly zero");
+
+        memcpy(overlong, tc->signature, D00_SIG_BYTES);
+        overlong[D00_SIG_BYTES] = 0;
+        ERR_clear_error();
+        result = pkey == NULL ? -1
+            : d00_digest_verify_result(libctx, pkey,
+                tc->message, tc->message_len,
+                overlong, sizeof(overlong));
+        D00_CHECK(result == 0,
+            "77-byte signature returns exactly zero");
 
         ERR_clear_error();
         result = pkey == NULL ? 0
@@ -522,24 +599,55 @@ int main(void)
         size_t sig_len = sizeof(sig);
         static const unsigned char probe[] = "mode probe";
 
-        /* External digest names are rejected for sign and verify. */
-        mctx = EVP_MD_CTX_new();
-        D00_CHECK(pkey != NULL && mctx != NULL
-                && EVP_DigestSignInit_ex(mctx, NULL, "SHA2-256", libctx,
-                    D00_PROP, pkey, NULL) != 1,
-            "external digest rejected at DigestSignInit");
-        ERR_clear_error();
-        EVP_MD_CTX_free(mctx);
+        /*
+         * S5 -- Draft pure-EdDSA contract and OpenSSL
+         * providers/implementations/signature/eddsa_sig.c
+         * ed25519_digest_signverify_init(): non-NULL digest names are invalid.
+         * Fetch each
+         * digest first, and use no restrictive property query for the init,
+         * so that a missing/default-provider digest cannot make this matrix
+         * pass before the Ed301 signature implementation is selected.
+         */
+        {
+            static const char *const digest_names[] = {
+                "SHA256", "SHA512", "SHAKE256"
+            };
+            size_t digest_index;
 
-        mctx = EVP_MD_CTX_new();
-        D00_CHECK(pkey != NULL && mctx != NULL
-                && EVP_DigestVerifyInit_ex(mctx, NULL, "SHAKE-256", libctx,
-                    D00_PROP, pkey, NULL) != 1,
-            "external XOF digest rejected at DigestVerifyInit");
-        ERR_clear_error();
-        EVP_MD_CTX_free(mctx);
+            for (digest_index = 0;
+                    digest_index < sizeof(digest_names)
+                        / sizeof(digest_names[0]);
+                    digest_index++) {
+                const char *digest_name = digest_names[digest_index];
+                EVP_MD *digest = EVP_MD_fetch(libctx, digest_name, NULL);
 
-        /* Streaming update/final is rejected. */
+                D00_CHECK(digest != NULL,
+                    "%s is available for the external-digest rejection gate",
+                    digest_name);
+
+                mctx = EVP_MD_CTX_new();
+                D00_CHECK(pkey != NULL && digest != NULL && mctx != NULL
+                        && EVP_DigestSignInit_ex(mctx, NULL, digest_name,
+                            libctx, NULL, pkey, NULL) != 1,
+                    "%s rejected at DigestSignInit", digest_name);
+                ERR_clear_error();
+                EVP_MD_CTX_free(mctx);
+
+                mctx = EVP_MD_CTX_new();
+                D00_CHECK(pkey != NULL && digest != NULL && mctx != NULL
+                        && EVP_DigestVerifyInit_ex(mctx, NULL, digest_name,
+                            libctx, NULL, pkey, NULL) != 1,
+                    "%s rejected at DigestVerifyInit", digest_name);
+                ERR_clear_error();
+                EVP_MD_CTX_free(mctx);
+                EVP_MD_free(digest);
+            }
+        }
+
+        /*
+         * S1 -- OpenSSL providers/implementations/signature/eddsa_sig.c
+         * exposes one-shot EdDSA semantics; Update must fail on both sides.
+         */
         mctx = EVP_MD_CTX_new();
         D00_CHECK(pkey != NULL && mctx != NULL
                 && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
@@ -560,15 +668,23 @@ int main(void)
         ERR_clear_error();
         EVP_MD_CTX_free(mctx);
 
-        /* Context strings are rejected, not ignored. */
+        /*
+         * S6 -- Draft/provider pure-only contract: context strings are
+         * rejected explicitly, never ignored to create a different signature.
+         */
         {
             OSSL_PARAM params[2];
+            OSSL_PARAM empty_params[2];
             static const unsigned char context_value[] = "ctx";
 
             params[0] = OSSL_PARAM_construct_octet_string(
                 OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
                 (void *)context_value, sizeof(context_value) - 1);
             params[1] = OSSL_PARAM_construct_end();
+            empty_params[0] = OSSL_PARAM_construct_octet_string(
+                OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+                (void *)context_value, 0);
+            empty_params[1] = OSSL_PARAM_construct_end();
 
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
@@ -599,6 +715,53 @@ int main(void)
                 "context string rejected at DigestSignInit params");
             ERR_clear_error();
             EVP_MD_CTX_free(mctx);
+
+            /* An explicitly supplied empty context is still a context mode. */
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            D00_CHECK(pctx != NULL
+                    && d00_sign_message_init(libctx, pctx, NULL)
+                    && EVP_PKEY_CTX_set_params(pctx, empty_params) != 1,
+                "empty context string rejected via sign set_params");
+            ERR_clear_error();
+            EVP_PKEY_CTX_free(pctx);
+
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            D00_CHECK(pctx != NULL
+                    && !d00_sign_message_init(libctx, pctx, empty_params),
+                "empty context string rejected at message-sign init");
+            ERR_clear_error();
+            EVP_PKEY_CTX_free(pctx);
+
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            D00_CHECK(pctx != NULL
+                    && d00_verify_message_init(libctx, pctx, NULL)
+                    && EVP_PKEY_CTX_set_params(pctx, empty_params) != 1,
+                "empty context string rejected via verify set_params");
+            ERR_clear_error();
+            EVP_PKEY_CTX_free(pctx);
+
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            D00_CHECK(pctx != NULL
+                    && !d00_verify_message_init(libctx, pctx, empty_params),
+                "empty context string rejected at message-verify init");
+            ERR_clear_error();
+            EVP_PKEY_CTX_free(pctx);
+
+            mctx = EVP_MD_CTX_new();
+            D00_CHECK(pkey != NULL && mctx != NULL
+                    && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
+                        D00_PROP, pkey, empty_params) != 1,
+                "empty context string rejected at DigestSignInit params");
+            ERR_clear_error();
+            EVP_MD_CTX_free(mctx);
+
+            mctx = EVP_MD_CTX_new();
+            D00_CHECK(pkey != NULL && mctx != NULL
+                    && EVP_DigestVerifyInit_ex(mctx, NULL, NULL, libctx,
+                        D00_PROP, pkey, empty_params) != 1,
+                "empty context string rejected at DigestVerifyInit params");
+            ERR_clear_error();
+            EVP_MD_CTX_free(mctx);
         }
 
         /* A rejected parameter update or reinitialization invalidates the
@@ -607,6 +770,7 @@ int main(void)
             OSSL_PARAM bad_params[2];
             static const unsigned char context_value[] = "ctx";
             unsigned char stale_sig[76] = { 0 };
+            unsigned char canary[76];
             size_t stale_sig_len;
             EVP_PKEY_CTX *state_ctx;
 
@@ -616,25 +780,31 @@ int main(void)
             bad_params[1] = OSSL_PARAM_construct_end();
 
             state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            memset(stale_sig, 0xa5, sizeof(stale_sig));
+            memcpy(canary, stale_sig, sizeof(canary));
             stale_sig_len = sizeof(stale_sig);
             D00_CHECK(state_ctx != NULL
                     && d00_sign_message_init(libctx, state_ctx, NULL)
                     && EVP_PKEY_CTX_set_params(state_ctx, bad_params) != 1
                     && EVP_PKEY_sign(state_ctx, stale_sig, &stale_sig_len,
-                        probe, sizeof(probe) - 1) != 1,
-                "rejected sign set_params invalidates prior operation");
+                        probe, sizeof(probe) - 1) != 1
+                    && memcmp(stale_sig, canary, sizeof(stale_sig)) == 0,
+                "rejected context set_params cannot alter signature output");
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
             state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            memset(stale_sig, 0xa5, sizeof(stale_sig));
+            memcpy(canary, stale_sig, sizeof(canary));
             stale_sig_len = sizeof(stale_sig);
             D00_CHECK(state_ctx != NULL
                     && d00_sign_message_init(libctx, state_ctx, NULL)
                     && !d00_sign_message_init(
                         libctx, state_ctx, bad_params)
                     && EVP_PKEY_sign(state_ctx, stale_sig, &stale_sig_len,
-                        probe, sizeof(probe) - 1) != 1,
-                "rejected sign reinit invalidates prior operation");
+                        probe, sizeof(probe) - 1) != 1
+                    && memcmp(stale_sig, canary, sizeof(stale_sig)) == 0,
+                "rejected context reinit cannot alter signature output");
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
@@ -700,7 +870,7 @@ int main(void)
             }
         }
 
-        /* External digest via set_signature_md is rejected. */
+        /* S5 -- The equivalent high-level set_signature_md path rejects too. */
         pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
         D00_CHECK(pctx != NULL
                 && d00_sign_message_init(libctx, pctx, NULL)
@@ -709,6 +879,33 @@ int main(void)
             "set_signature_md rejected");
         ERR_clear_error();
         EVP_PKEY_CTX_free(pctx);
+
+        /* S5 -- Provider contract: the explicit digest context parameter is
+         * rejected symmetrically rather than ignored. */
+        {
+            OSSL_PARAM params[2];
+            char digest_name[] = "SHA256";
+
+            params[0] = OSSL_PARAM_construct_utf8_string(
+                OSSL_SIGNATURE_PARAM_DIGEST, digest_name, 0);
+            params[1] = OSSL_PARAM_construct_end();
+
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            D00_CHECK(pctx != NULL
+                    && d00_sign_message_init(libctx, pctx, NULL)
+                    && EVP_PKEY_CTX_set_params(pctx, params) != 1,
+                "digest set_params rejected for signing");
+            ERR_clear_error();
+            EVP_PKEY_CTX_free(pctx);
+
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            D00_CHECK(pctx != NULL
+                    && d00_verify_message_init(libctx, pctx, NULL)
+                    && EVP_PKEY_CTX_set_params(pctx, params) != 1,
+                "digest set_params rejected for verification");
+            ERR_clear_error();
+            EVP_PKEY_CTX_free(pctx);
+        }
 
         /* A successfully loaded provider publishes stable reason strings. */
         {
@@ -788,20 +985,46 @@ int main(void)
             EVP_PKEY_CTX_free(pctx);
         }
 
-        /* Prehash instance parameter is rejected. */
+        /*
+         * S7 -- Draft/provider pure-only contract.  OpenSSL 4.0
+         * providers/implementations/signature/eddsa_sig.c
+         * eddsa_set_ctx_params_internal() names the ph/ctx instance classes;
+         * neither class is an Ed301-draft-00 mode.
+         */
         {
-            OSSL_PARAM params[2];
+            static const char *const instance_names[] = {
+                "Ed25519ph", "Ed25519ctx", "Ed448ph"
+            };
+            size_t instance_index;
 
-            params[0] = OSSL_PARAM_construct_utf8_string(
-                OSSL_SIGNATURE_PARAM_INSTANCE, "prehash", 0);
-            params[1] = OSSL_PARAM_construct_end();
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, NULL)
-                    && EVP_PKEY_CTX_set_params(pctx, params) != 1,
-                "prehash instance rejected");
-            ERR_clear_error();
-            EVP_PKEY_CTX_free(pctx);
+            for (instance_index = 0;
+                    instance_index < sizeof(instance_names)
+                        / sizeof(instance_names[0]);
+                    instance_index++) {
+                OSSL_PARAM params[2];
+
+                params[0] = OSSL_PARAM_construct_utf8_string(
+                    OSSL_SIGNATURE_PARAM_INSTANCE,
+                    (char *)instance_names[instance_index], 0);
+                params[1] = OSSL_PARAM_construct_end();
+                pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+                D00_CHECK(pctx != NULL
+                        && d00_sign_message_init(libctx, pctx, NULL)
+                        && EVP_PKEY_CTX_set_params(pctx, params) != 1,
+                    "%s instance rejected for signing",
+                    instance_names[instance_index]);
+                ERR_clear_error();
+                EVP_PKEY_CTX_free(pctx);
+
+                pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+                D00_CHECK(pctx != NULL
+                        && d00_verify_message_init(libctx, pctx, NULL)
+                        && EVP_PKEY_CTX_set_params(pctx, params) != 1,
+                    "%s instance rejected for verification",
+                    instance_names[instance_index]);
+                ERR_clear_error();
+                EVP_PKEY_CTX_free(pctx);
+            }
         }
 
         /* Sign with a public-only key fails. */

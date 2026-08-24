@@ -46,6 +46,13 @@ fn edges() -> serde_json::Value {
     .expect("edge vectors parse")
 }
 
+fn blind_oracle_vectors() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../../../provider-tests/oracle/blind-0c482948/blind_oracle_vectors.json"
+    ))
+    .expect("blind differential vectors parse")
+}
+
 fn by_id<'a>(items: &'a [serde_json::Value], id: &str) -> &'a serde_json::Value {
     items
         .iter()
@@ -115,6 +122,66 @@ fn all_positive_vectors_and_intermediates_match() {
                 .expect("deterministic")
                 .to_bytes(),
             expected_signature
+        );
+    }
+}
+
+#[test]
+fn frozen_blind_oracle_matches_rust_keys_signatures_and_decisions() {
+    let document = blind_oracle_vectors();
+    assert_eq!(document["schema"], "ed301-eddsa-blind-differential-v1");
+    assert_eq!(
+        document["blind_source_sha256"],
+        "2364f483696c81dba7b81f0cc37f4037983a2c6795c204586e6c09f6a3669bf3"
+    );
+
+    let cases = document["cases"].as_array().expect("blind cases");
+    assert_eq!(cases.len(), 8);
+    for case in cases {
+        let seed = array::<38>(case["seed_hex"].as_str().expect("seed"));
+        let message = decode_hex(case["message_hex"].as_str().expect("message"));
+        let expected_public = array::<38>(case["public_key_hex"].as_str().expect("public key"));
+        let expected_signature = array::<76>(case["signature_hex"].as_str().expect("signature"));
+        let signing_key = SigningKey::from_seed(&seed).expect("valid blind seed");
+
+        assert_eq!(
+            signing_key
+                .verifying_key()
+                .expect("blind public key")
+                .to_bytes(),
+            expected_public,
+            "{} public key",
+            case["id"]
+        );
+        assert_eq!(
+            signing_key
+                .sign(&message)
+                .expect("blind signature")
+                .to_bytes(),
+            expected_signature,
+            "{} signature",
+            case["id"]
+        );
+        assert!(
+            verify(&expected_public, &message, &expected_signature),
+            "{} verification",
+            case["id"]
+        );
+    }
+
+    let verification_cases = document["verification_cases"]
+        .as_array()
+        .expect("blind verification cases");
+    assert_eq!(verification_cases.len(), 16);
+    for case in verification_cases {
+        let public_key = decode_hex(case["public_key_hex"].as_str().expect("public key"));
+        let message = decode_hex(case["message_hex"].as_str().expect("message"));
+        let signature = decode_hex(case["signature_hex"].as_str().expect("signature"));
+        assert_eq!(
+            verify(&public_key, &message, &signature),
+            case["expected"].as_bool().expect("expected decision"),
+            "{} decision",
+            case["id"]
         );
     }
 }

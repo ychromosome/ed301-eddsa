@@ -88,6 +88,115 @@ static EVP_PKEY *decode(
     return NULL;
 }
 
+static int der_pem_der_is_identical(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *pkey,
+    int selection,
+    const char *structure)
+{
+    unsigned char *first_der = NULL;
+    unsigned char *pem = NULL;
+    unsigned char *second_der = NULL;
+    EVP_PKEY *from_der = NULL;
+    EVP_PKEY *from_pem = NULL;
+    size_t first_der_length = 0;
+    size_t pem_length = 0;
+    size_t second_der_length = 0;
+    int ok = 0;
+
+    first_der = encode(
+        pkey, selection, "DER", structure, &first_der_length);
+    from_der = first_der == NULL ? NULL
+        : decode(libctx, first_der, first_der_length, "DER", structure,
+            selection);
+    pem = from_der == NULL ? NULL
+        : encode(from_der, selection, "PEM", structure, &pem_length);
+    from_pem = pem == NULL ? NULL
+        : decode(libctx, pem, pem_length, "PEM", structure, selection);
+    second_der = from_pem == NULL ? NULL
+        : encode(from_pem, selection, "DER", structure,
+            &second_der_length);
+    ok = first_der != NULL && from_der != NULL && pem != NULL
+        && from_pem != NULL && second_der != NULL
+        && second_der_length == first_der_length
+        && CRYPTO_memcmp(
+            first_der, second_der, first_der_length) == 0;
+
+    OPENSSL_clear_free(first_der, first_der_length);
+    OPENSSL_clear_free(pem, pem_length);
+    OPENSSL_clear_free(second_der, second_der_length);
+    EVP_PKEY_free(from_der);
+    EVP_PKEY_free(from_pem);
+    ERR_clear_error();
+    return ok;
+}
+
+static int all_truncations_rejected(
+    OSSL_LIB_CTX *libctx,
+    const unsigned char *der,
+    size_t der_length,
+    const char *structure,
+    int selection,
+    const size_t *lengths,
+    size_t lengths_count)
+{
+    size_t index;
+
+    if (der == NULL || lengths == NULL)
+        return 0;
+    for (index = 0; index < lengths_count; index++) {
+        EVP_PKEY *key;
+
+        if (lengths[index] >= der_length)
+            return 0;
+        key = decode(libctx, der, lengths[index], "DER", structure,
+            selection);
+        if (key != NULL) {
+            EVP_PKEY_free(key);
+            return 0;
+        }
+        ERR_clear_error();
+    }
+    return 1;
+}
+
+/*
+ * Construct the small draft-00 PrivateKeyInfo grammar from semantic fields.
+ * Deriving every enclosing length from seed_length ensures D7 exercises a
+ * well-formed alternative value, not an accidentally inconsistent object.
+ */
+static size_t make_pkcs8_with_seed_length(
+    unsigned char *output,
+    size_t output_capacity,
+    const unsigned char *seed,
+    size_t seed_length)
+{
+    size_t index = 0;
+    const size_t content_length = 22 + seed_length;
+    const size_t encoded_length = 2 + content_length;
+
+    if (output == NULL || seed == NULL || seed_length > 125
+            || content_length > 127 || output_capacity < encoded_length)
+        return 0;
+
+    output[index++] = 0x30;
+    output[index++] = (unsigned char)content_length;
+    output[index++] = 0x02;
+    output[index++] = 0x01;
+    output[index++] = 0x00;
+    output[index++] = 0x30;
+    output[index++] = 0x0d;
+    memcpy(output + index, D00_PKCS8_PREFIX + 7, D00_OID_TLV_BYTES);
+    index += D00_OID_TLV_BYTES;
+    output[index++] = 0x04;
+    output[index++] = (unsigned char)(seed_length + 2);
+    output[index++] = 0x04;
+    output[index++] = (unsigned char)seed_length;
+    memcpy(output + index, seed, seed_length);
+    index += seed_length;
+    return index;
+}
+
 int main(void)
 {
     D00_REQUIRE_RUNTIME_BINDING();
@@ -101,6 +210,19 @@ int main(void)
     draft = d00_load_named(libctx, &deflt, D00_PKI_PROVIDER);
     pkey = d00_key_from_seed(libctx, base->seed);
     D00_CHECK(draft != NULL && pkey != NULL, "provider and key");
+
+    /*
+     * D1 (provider serialization contract; OpenSSL endecode_test.c pattern):
+     * DER -> PEM -> DER is byte-identical for both supported structures.
+     */
+    D00_CHECK(pkey != NULL && der_pem_der_is_identical(libctx, pkey,
+            OSSL_KEYMGMT_SELECT_PRIVATE_KEY
+                | OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
+            "PrivateKeyInfo"),
+        "D1 PKCS#8 DER-to-PEM-to-DER is byte-identical");
+    D00_CHECK(pkey != NULL && der_pem_der_is_identical(libctx, pkey,
+            OSSL_KEYMGMT_SELECT_PUBLIC_KEY, "SubjectPublicKeyInfo"),
+        "D1 SPKI DER-to-PEM-to-DER is byte-identical");
 
     /* PKCS#8 DER is byte-exact and round-trips. */
     {
@@ -118,6 +240,16 @@ int main(void)
                     38) == 0,
             "PKCS#8 DER is the exact 62-byte profile encoding");
 
+        /*
+         * D4/D5 (provider byte contract; OpenSSL ecx encoder pattern):
+         * AlgorithmIdentifier parameters are absent and the assigned OID
+         * bytes are exact before the private-key OCTET STRING.
+         */
+        D00_CHECK(der != NULL && der_len == D00_PKCS8_DER_BYTES
+                && der[5] == 0x30 && der[6] == 0x0d
+                && der[7] == 0x06 && der[20] == 0x04,
+            "D4/D5 PKCS#8 has exact OID and absent parameters");
+
         decoded = der == NULL ? NULL
             : decode(libctx, der, der_len, "DER", "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY
@@ -127,17 +259,27 @@ int main(void)
         EVP_PKEY_free(decoded);
 
         /* Negative shapes derived from the valid DER. */
-        if (der != NULL) {
+        if (der != NULL && der_len == D00_PKCS8_DER_BYTES) {
             unsigned char mutated[80];
+            unsigned char nonminimal[80];
+            unsigned char indefinite[80];
+            static const size_t truncation_boundaries[] = {
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+                20, 21, 22, 23, 24, D00_PKCS8_DER_BYTES - 1
+            };
 
-            /* Truncation. */
-            D00_CHECK(decode(libctx, der, der_len - 1, "DER",
-                    "PrivateKeyInfo",
-                    OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
-                "truncated PKCS#8 is rejected");
-            ERR_clear_error();
+            /*
+             * D3 (provider complete-buffer contract; endecode_test.c):
+             * every ASN.1 structural boundary and a short value reject.
+             */
+            D00_CHECK(all_truncations_rejected(libctx, der, der_len,
+                    "PrivateKeyInfo", OSSL_KEYMGMT_SELECT_PRIVATE_KEY,
+                    truncation_boundaries,
+                    sizeof(truncation_boundaries)
+                        / sizeof(truncation_boundaries[0])),
+                "D3 PKCS#8 truncations at all structural boundaries reject");
 
-            /* Trailing data. */
+            /* D2 (provider complete-buffer contract): trailing data rejects. */
             memcpy(mutated, der, der_len);
             mutated[der_len] = 0x00;
             D00_CHECK(decode(libctx, mutated, der_len + 1, "DER",
@@ -146,7 +288,29 @@ int main(void)
                 "trailing data after PKCS#8 is rejected");
             ERR_clear_error();
 
-            /* Wrong OID arc byte. */
+            /* BER/non-canonical length forms are outside the exact profile. */
+            nonminimal[0] = 0x30;
+            nonminimal[1] = 0x81;
+            nonminimal[2] = der[1];
+            memcpy(nonminimal + 3, der + 2, der_len - 2);
+            D00_CHECK(decode(libctx, nonminimal, der_len + 1, "DER",
+                    "PrivateKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+                "PKCS#8 with non-minimal outer length is rejected");
+            ERR_clear_error();
+
+            indefinite[0] = 0x30;
+            indefinite[1] = 0x80;
+            memcpy(indefinite + 2, der + 2, der_len - 2);
+            indefinite[der_len] = 0x00;
+            indefinite[der_len + 1] = 0x00;
+            D00_CHECK(decode(libctx, indefinite, der_len + 2, "DER",
+                    "PrivateKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+                "PKCS#8 with indefinite outer length is rejected");
+            ERR_clear_error();
+
+            /* D5 (project OID registry): a foreign OID never aliases Ed301. */
             memcpy(mutated, der, der_len);
             mutated[10] ^= 1;
             D00_CHECK(decode(libctx, mutated, der_len, "DER",
@@ -155,11 +319,58 @@ int main(void)
                 "wrong OID is rejected");
             ERR_clear_error();
 
-            OPENSSL_free(der);
+            /*
+             * D7 (draft 38-byte seed contract; OpenSSL ECX nested-octet
+             * pattern): the inner seed must be exactly 38 bytes.
+             */
+            memcpy(mutated, der, der_len);
+            mutated[22] = 0x03;
+            D00_CHECK(decode(libctx, mutated, der_len, "DER",
+                    "PrivateKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+                "PKCS#8 with a BIT STRING in place of the nested OCTET "
+                "STRING is rejected");
+            ERR_clear_error();
+
+            {
+                unsigned char seed39[D00_SEED_BYTES + 1];
+                unsigned char short_seed_der[80];
+                unsigned char long_seed_der[80];
+                size_t short_seed_der_length;
+                size_t long_seed_der_length;
+
+                memcpy(seed39, base->seed, D00_SEED_BYTES);
+                seed39[D00_SEED_BYTES] = 0x00;
+                short_seed_der_length = make_pkcs8_with_seed_length(
+                    short_seed_der, sizeof(short_seed_der), base->seed,
+                    D00_SEED_BYTES - 1);
+                long_seed_der_length = make_pkcs8_with_seed_length(
+                    long_seed_der, sizeof(long_seed_der), seed39,
+                    D00_SEED_BYTES + 1);
+
+                D00_CHECK(short_seed_der_length
+                        == D00_PKCS8_DER_BYTES - 1
+                        && decode(libctx, short_seed_der,
+                            short_seed_der_length, "DER", "PrivateKeyInfo",
+                            OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+                    "D7 well-formed PKCS#8 with a 37-byte seed is rejected");
+                ERR_clear_error();
+                D00_CHECK(long_seed_der_length
+                        == D00_PKCS8_DER_BYTES + 1
+                        && decode(libctx, long_seed_der,
+                            long_seed_der_length, "DER", "PrivateKeyInfo",
+                            OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+                    "D7 well-formed PKCS#8 with a 39-byte seed is rejected");
+                ERR_clear_error();
+            }
         }
+        OPENSSL_free(der);
     }
 
-    /* ASN.1 NULL parameters variant of our AlgorithmIdentifier. */
+    /*
+     * D4 (provider parameterless AlgorithmIdentifier contract; OpenSSL ECX
+     * encoding pattern): decoder rejects NULL and all explicit parameters.
+     */
     {
         unsigned char with_null[D00_PKCS8_DER_BYTES + 2];
         size_t index = 0;
@@ -188,6 +399,61 @@ int main(void)
                 "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
             "AlgorithmIdentifier with ASN.1 NULL parameters is rejected");
+        ERR_clear_error();
+
+        /* No other explicit parameter type is permitted either. */
+        with_null[20] = 0x04; /* empty OCTET STRING instead of NULL */
+        D00_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
+                "PrivateKeyInfo",
+                OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+            "AlgorithmIdentifier with explicit non-NULL parameters is "
+            "rejected");
+        ERR_clear_error();
+    }
+
+    /*
+     * D6 (provider PKCS#8 policy; OpenSSL ecx OneAsymmetricKey comparison):
+     * only PrivateKeyInfo v1 (version INTEGER 0) is part of
+     * the test profile.  RFC 5958 OneAsymmetricKey v2 (INTEGER 1 with the
+     * optional publicKey field) is deliberately rejected: the 38-byte seed
+     * already derives, and KEYMGMT validates, the unique public key.
+    */
+    {
+        unsigned char version_one[D00_PKCS8_DER_BYTES] = {0};
+        unsigned char one_asymmetric_key[128] = {0};
+        size_t private_key_info_length;
+        size_t index = 0;
+
+        private_key_info_length = make_pkcs8_with_seed_length(
+            version_one, sizeof(version_one), base->seed, D00_SEED_BYTES);
+        D00_CHECK(private_key_info_length == sizeof(version_one),
+            "D6 canonical PrivateKeyInfo source layout");
+        version_one[4] = 0x01;
+        D00_CHECK(private_key_info_length == sizeof(version_one)
+                && decode(libctx, version_one, sizeof(version_one), "DER",
+                "PrivateKeyInfo",
+                OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+            "PKCS#8 version INTEGER 1 without publicKey is rejected");
+        ERR_clear_error();
+
+        one_asymmetric_key[index++] = 0x30;
+        one_asymmetric_key[index++] = 0x65;
+        /* Copy from the complete canonical object, never the prefix array. */
+        memcpy(one_asymmetric_key + index, version_one + 2,
+            D00_PKCS8_DER_BYTES - 2);
+        index += D00_PKCS8_DER_BYTES - 2;
+        one_asymmetric_key[4] = 0x01;
+        one_asymmetric_key[index++] = 0x81; /* [1] IMPLICIT BIT STRING */
+        one_asymmetric_key[index++] = 0x27;
+        one_asymmetric_key[index++] = 0x00;
+        memcpy(one_asymmetric_key + index,
+            base->public_key, D00_PUB_BYTES);
+        index += D00_PUB_BYTES;
+        D00_CHECK(index == 103, "OneAsymmetricKey v2 layout");
+        D00_CHECK(decode(libctx, one_asymmetric_key, index, "DER",
+                "PrivateKeyInfo",
+                OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+            "OneAsymmetricKey v2 with embedded publicKey is rejected");
         ERR_clear_error();
     }
 
@@ -254,6 +520,12 @@ int main(void)
                     38) == 0,
             "SPKI DER is the exact 58-byte profile encoding");
 
+        /* D4/D5: exact project OID, absent parameters, then BIT STRING. */
+        D00_CHECK(der != NULL && der_len == D00_SPKI_DER_BYTES
+                && der[2] == 0x30 && der[3] == 0x0d
+                && der[4] == 0x06 && der[17] == 0x03,
+            "D4/D5 SPKI has exact OID and absent parameters");
+
         decoded = der == NULL ? NULL
             : decode(libctx, der, der_len, "DER", "SubjectPublicKeyInfo",
                 OSSL_KEYMGMT_SELECT_PUBLIC_KEY);
@@ -262,19 +534,125 @@ int main(void)
         EVP_PKEY_free(decoded);
 
         /* Malformed embedded public key: identity point. */
-        if (der != NULL) {
-            unsigned char malformed[D00_SPKI_DER_BYTES];
+        if (der != NULL && der_len == D00_SPKI_DER_BYTES) {
+            unsigned char malformed[80];
+            unsigned char nonminimal[80];
+            unsigned char indefinite[80];
+            static const size_t truncation_boundaries[] = {
+                0, 1, 2, 3, 4, 5, 6, 17, 18, 19, 20,
+                D00_SPKI_DER_BYTES - 1
+            };
 
             memcpy(malformed, der, der_len);
             memcpy(malformed + sizeof(D00_SPKI_PREFIX),
                 POINT_CASES[2].encoding, 38); /* identity */
-            D00_CHECK(decode(libctx, malformed, sizeof(malformed), "DER",
+            D00_CHECK(decode(libctx, malformed, der_len, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "SPKI with an identity public key is rejected");
             ERR_clear_error();
-            OPENSSL_free(der);
+
+            /* D3 (complete-buffer/endecode pattern): all boundaries reject. */
+            D00_CHECK(all_truncations_rejected(libctx, der, der_len,
+                    "SubjectPublicKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
+                    truncation_boundaries,
+                    sizeof(truncation_boundaries)
+                        / sizeof(truncation_boundaries[0])),
+                "D3 SPKI truncations at all structural boundaries reject");
+
+            /* D2: SPKI also rejects one trailing octet. */
+            memcpy(malformed, der, der_len);
+            malformed[der_len] = 0x00;
+            D00_CHECK(decode(libctx, malformed, der_len + 1, "DER",
+                    "SubjectPublicKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+                "trailing data after SPKI is rejected");
+            ERR_clear_error();
+
+            nonminimal[0] = 0x30;
+            nonminimal[1] = 0x81;
+            nonminimal[2] = der[1];
+            memcpy(nonminimal + 3, der + 2, der_len - 2);
+            D00_CHECK(decode(libctx, nonminimal, der_len + 1, "DER",
+                    "SubjectPublicKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+                "SPKI with non-minimal outer length is rejected");
+            ERR_clear_error();
+
+            indefinite[0] = 0x30;
+            indefinite[1] = 0x80;
+            memcpy(indefinite + 2, der + 2, der_len - 2);
+            indefinite[der_len] = 0x00;
+            indefinite[der_len + 1] = 0x00;
+            D00_CHECK(decode(libctx, indefinite, der_len + 2, "DER",
+                    "SubjectPublicKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+                "SPKI with indefinite outer length is rejected");
+            ERR_clear_error();
+
+            memcpy(malformed, der, der_len);
+            malformed[17] = 0x04;
+            D00_CHECK(decode(libctx, malformed, der_len, "DER",
+                    "SubjectPublicKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+                "SPKI with an OCTET STRING in place of the BIT STRING is "
+                "rejected");
+            ERR_clear_error();
+
+            memcpy(malformed, der, der_len);
+            malformed[18] = 0x26;
+            D00_CHECK(decode(libctx, malformed, der_len, "DER",
+                    "SubjectPublicKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+                "SPKI with a 37-byte public-key BIT STRING is rejected");
+            ERR_clear_error();
+
+            memcpy(malformed, der, der_len);
+            malformed[19] = 0x01;
+            D00_CHECK(decode(libctx, malformed, der_len, "DER",
+                    "SubjectPublicKeyInfo",
+                    OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+                "SPKI with nonzero unused BIT STRING bits is rejected");
+            ERR_clear_error();
         }
+        OPENSSL_free(der);
+    }
+
+    /* D4: SPKI decoder rejects NULL and all explicit parameters. */
+    {
+        unsigned char with_null[D00_SPKI_DER_BYTES + 2];
+        size_t index = 0;
+
+        with_null[index++] = 0x30;
+        with_null[index++] = 0x3a;
+        with_null[index++] = 0x30;
+        with_null[index++] = 0x0f;
+        memcpy(with_null + index, D00_SPKI_PREFIX + 4,
+            D00_OID_TLV_BYTES);
+        index += D00_OID_TLV_BYTES;
+        with_null[index++] = 0x05;
+        with_null[index++] = 0x00;
+        with_null[index++] = 0x03;
+        with_null[index++] = 0x27;
+        with_null[index++] = 0x00;
+        memcpy(with_null + index, base->public_key, D00_PUB_BYTES);
+        index += D00_PUB_BYTES;
+        D00_CHECK(index == sizeof(with_null), "SPKI NULL-variant layout");
+        D00_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
+                "SubjectPublicKeyInfo",
+                OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+            "SPKI AlgorithmIdentifier with ASN.1 NULL parameters is "
+            "rejected");
+        ERR_clear_error();
+
+        with_null[17] = 0x04; /* empty OCTET STRING instead of NULL */
+        D00_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
+                "SubjectPublicKeyInfo",
+                OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+            "SPKI AlgorithmIdentifier with explicit non-NULL parameters is "
+            "rejected");
+        ERR_clear_error();
     }
 
     /* PEM round trips. */
@@ -286,7 +664,7 @@ int main(void)
             "PEM", "PrivateKeyInfo", &pem_len);
         EVP_PKEY *decoded;
 
-        D00_CHECK(pem != NULL
+        D00_CHECK(pem != NULL && pem_len >= 27
                 && memcmp(pem, "-----BEGIN PRIVATE KEY-----", 27) == 0,
             "PKCS#8 PEM armor");
         decoded = pem == NULL ? NULL
@@ -300,7 +678,7 @@ int main(void)
 
         pem = encode(pkey, OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
             "PEM", "SubjectPublicKeyInfo", &pem_len);
-        D00_CHECK(pem != NULL
+        D00_CHECK(pem != NULL && pem_len >= 26
                 && memcmp(pem, "-----BEGIN PUBLIC KEY-----", 26) == 0,
             "SPKI PEM armor");
         decoded = pem == NULL ? NULL

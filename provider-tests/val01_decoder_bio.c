@@ -104,10 +104,28 @@ static int record_construct(
     return 1;
 }
 
-static OSSL_DECODER_CTX *single_tls_decoder_context(
+static int reject_construct(
+    OSSL_DECODER_INSTANCE *decoder_instance,
+    const OSSL_PARAM *parameters,
+    void *construct_argument)
+{
+    int *called = construct_argument;
+    const OSSL_PARAM *data_type = OSSL_PARAM_locate_const(
+        parameters, OSSL_OBJECT_PARAM_DATA_TYPE);
+
+    (void)decoder_instance;
+    if (called == NULL || data_type == NULL || data_type->data == NULL
+            || strcmp(data_type->data, D00_ALG) != 0)
+        return 0;
+    *called = 1;
+    return 0;
+}
+
+static OSSL_DECODER_CTX *single_tls_decoder_context_with_construct(
     OSSL_LIB_CTX *libctx,
     int is_public,
-    int *constructed,
+    OSSL_DECODER_CONSTRUCT *construct,
+    void *construct_data,
     OSSL_DECODER **decoder_out)
 {
     OSSL_DECODER_CTX *context = OSSL_DECODER_CTX_new();
@@ -118,8 +136,7 @@ static OSSL_DECODER_CTX *single_tls_decoder_context(
                   : D00_TLS_PKCS8_DECODER_PROP);
 
     *decoder_out = decoder;
-    *constructed = 0;
-    if (context == NULL || decoder == NULL
+    if (context == NULL || decoder == NULL || construct == NULL
             || OSSL_DECODER_CTX_add_decoder(context, decoder) != 1
             || OSSL_DECODER_CTX_set_selection(
                 context,
@@ -129,14 +146,24 @@ static OSSL_DECODER_CTX *single_tls_decoder_context(
                 context,
                 is_public ? "SubjectPublicKeyInfo"
                           : "PrivateKeyInfo") != 1
-            || OSSL_DECODER_CTX_set_construct(
-                context, record_construct) != 1
+            || OSSL_DECODER_CTX_set_construct(context, construct) != 1
             || OSSL_DECODER_CTX_set_construct_data(
-                context, constructed) != 1) {
+                context, construct_data) != 1) {
         OSSL_DECODER_CTX_free(context);
         context = NULL;
     }
     return context;
+}
+
+static OSSL_DECODER_CTX *single_tls_decoder_context(
+    OSSL_LIB_CTX *libctx,
+    int is_public,
+    int *constructed,
+    OSSL_DECODER **decoder_out)
+{
+    *constructed = 0;
+    return single_tls_decoder_context_with_construct(
+        libctx, is_public, record_construct, constructed, decoder_out);
 }
 
 static int rejected_input_is_unconsumed(
@@ -149,18 +176,88 @@ static int rejected_input_is_unconsumed(
     int constructed = 0;
     OSSL_DECODER_CTX *decoder = single_tls_decoder_context(
         libctx, is_public, &constructed, &implementation);
-    const unsigned char *cursor = data;
-    size_t remaining = data_length;
+    BIO *input = BIO_new_mem_buf(data, (int)data_length);
     int result;
+    long remaining;
 
-    if (decoder == NULL)
+    if (decoder == NULL || input == NULL) {
+        OSSL_DECODER_CTX_free(decoder);
+        OSSL_DECODER_free(implementation);
+        BIO_free(input);
         return 0;
-    result = OSSL_DECODER_from_data(decoder, &cursor, &remaining);
+    }
+    ERR_clear_error();
+    result = OSSL_DECODER_from_bio(decoder, input);
+    remaining = BIO_ctrl_pending(input);
     OSSL_DECODER_CTX_free(decoder);
     OSSL_DECODER_free(implementation);
+    BIO_free(input);
     ERR_clear_error();
     return result != 1 && !constructed
-        && cursor == data && remaining == data_length;
+        && remaining == (long)data_length;
+}
+
+static int hard_failure_is_consumed_and_reported(
+    OSSL_LIB_CTX *libctx,
+    const unsigned char *data,
+    size_t data_length)
+{
+    OSSL_DECODER *implementation = NULL;
+    int constructed = 0;
+    OSSL_DECODER_CTX *decoder = single_tls_decoder_context(
+        libctx, 1, &constructed, &implementation);
+    BIO *input = BIO_new_mem_buf(data, (int)data_length);
+    int result;
+    long remaining;
+    unsigned long error;
+
+    if (decoder == NULL || input == NULL) {
+        OSSL_DECODER_CTX_free(decoder);
+        OSSL_DECODER_free(implementation);
+        BIO_free(input);
+        return 0;
+    }
+    ERR_clear_error();
+    result = OSSL_DECODER_from_bio(decoder, input);
+    remaining = BIO_ctrl_pending(input);
+    error = ERR_peek_error();
+    OSSL_DECODER_CTX_free(decoder);
+    OSSL_DECODER_free(implementation);
+    BIO_free(input);
+    ERR_clear_error();
+    return result != 1 && !constructed && remaining == 0 && error != 0;
+}
+
+static int callback_rejection_consumes_reference(
+    OSSL_LIB_CTX *libctx,
+    const unsigned char *data,
+    size_t data_length)
+{
+    OSSL_DECODER *implementation = NULL;
+    int called = 0;
+    OSSL_DECODER_CTX *decoder =
+        single_tls_decoder_context_with_construct(
+            libctx, 1, reject_construct, &called, &implementation);
+    BIO *input = BIO_new_mem_buf(data, (int)data_length);
+    int result;
+    long remaining;
+
+    if (decoder == NULL || input == NULL) {
+        OSSL_DECODER_CTX_free(decoder);
+        OSSL_DECODER_free(implementation);
+        BIO_free(input);
+        return 0;
+    }
+    ERR_clear_error();
+    result = OSSL_DECODER_from_bio(decoder, input);
+    remaining = BIO_ctrl_pending(input);
+    OSSL_DECODER_CTX_free(decoder);
+    OSSL_DECODER_free(implementation);
+    BIO_free(input);
+    ERR_clear_error();
+
+    /* The existing focused Valgrind lane checks the rejected reference. */
+    return result != 1 && called == 1 && remaining == 0;
 }
 
 static int retry_every_split(
@@ -393,18 +490,29 @@ int main(void)
         foreign[8] ^= 1;
         D00_CHECK(rejected_input_is_unconsumed(
                 libctx, foreign, spki_length, 1),
-            "same-size foreign SPKI OID is declined without consumption");
+            "foreign SPKI OID is a soft non-match without consumption");
         D00_CHECK(rejected_input_is_unconsumed(
                 libctx, spki, spki_length - 1, 1),
-            "partial SPKI is declined before consuming its prefix");
+            "partial SPKI is a soft non-match before consuming its prefix");
 
         memcpy(foreign, spki, spki_length);
         foreign[2] ^= 1;
-        key = tls_decode_data(libctx, foreign, spki_length, 1);
-        D00_CHECK(key == NULL,
-            "malformed confirmed-OID SPKI remains fail-closed");
-        EVP_PKEY_free(key);
-        key = NULL;
+        D00_CHECK(hard_failure_is_consumed_and_reported(
+                libctx, foreign, spki_length),
+            "malformed confirmed-OID SPKI is a consuming hard failure");
+
+        memcpy(foreign, spki, spki_length);
+        memcpy(foreign + sizeof(D00_SPKI_PREFIX),
+            POINT_CASES[2].encoding, D00_PUB_BYTES); /* identity */
+        D00_CHECK(hard_failure_is_consumed_and_reported(
+                libctx, foreign, spki_length),
+            "confirmed-OID SPKI with invalid key material is a consuming "
+            "hard failure");
+
+        D00_CHECK(callback_rejection_consumes_reference(
+                libctx, spki, spki_length),
+            "construct-callback rejection consumes the matched object; "
+            "Valgrind checks reference release");
     }
 
     rsa = make_foreign_key(libctx, "RSA");
