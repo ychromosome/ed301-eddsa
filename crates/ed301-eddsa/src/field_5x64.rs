@@ -65,7 +65,7 @@ impl Fe301 {
         let mut top = [0_u8; 8];
         top[..FIELD_BYTES - 32].copy_from_slice(&bytes[32..]);
         limbs[4] = u64::from_le_bytes(top);
-        let (_, borrow) = subtract_limbs(limbs, MODULUS);
+        let (_, borrow) = subtract_limbs_runtime(limbs, MODULUS);
         CtOption::new(Self(limbs), Choice::from_u8_lsb(borrow as u8))
     }
 
@@ -96,7 +96,7 @@ impl Fe301 {
 
     #[inline(always)]
     pub(crate) fn sub(self, rhs: Self) -> Self {
-        let (difference, borrow) = subtract_limbs(self.0, rhs.0);
+        let (difference, borrow) = subtract_limbs_runtime(self.0, rhs.0);
         let (corrected, _) = add_limbs(difference, MODULUS);
         let mut output = difference;
         output.ct_assign(&corrected, Choice::from_u8_lsb(borrow as u8));
@@ -150,12 +150,12 @@ impl Fe301 {
 
         // Subtract high * 947 and add p back if that underflowed.
         let penalty = high as u128 * FOLD_SUBTRAHEND as u128;
-        let (word, first_borrow) = sub_with_borrow(reduced[0], penalty as u64, 0);
+        let (word, first_borrow) = sub_with_borrow_runtime(reduced[0], penalty as u64, 0);
         reduced[0] = word;
         let mut borrow = first_borrow;
         index = 1;
         while index < LIMBS {
-            let (word, next_borrow) = sub_with_borrow(reduced[index], 0, borrow);
+            let (word, next_borrow) = sub_with_borrow_runtime(reduced[index], 0, borrow);
             reduced[index] = word;
             borrow = next_borrow;
             index += 1;
@@ -363,7 +363,9 @@ const fn subtract_limbs(left: [u64; LIMBS], right: [u64; LIMBS]) -> ([u64; LIMBS
 ///
 /// This is the unsigned less-than identity from Hacker's Delight, section
 /// 2-12.  It avoids the compiler-dependent lowering of `overflowing_sub`
-/// which produced secret-tainted control flow under the pinned Rust codegen.
+/// which produced secret-tainted control flow under a previously tested Rust
+/// code generator. Runtime arithmetic uses the separately checked standard
+/// borrowing operation below; this identity remains for constant evaluation.
 #[inline(always)]
 const fn sub_with_borrow(left: u64, right: u64, borrow: u64) -> (u64, u64) {
     let first = left.wrapping_sub(right);
@@ -387,10 +389,37 @@ const fn conditional_subtract_modulus_const(input: [u64; LIMBS]) -> [u64; LIMBS]
 
 #[inline(always)]
 fn conditional_subtract_modulus_ct(input: [u64; LIMBS]) -> [u64; LIMBS] {
-    let (reduced, borrow) = subtract_limbs(input, MODULUS);
+    let (reduced, borrow) = subtract_limbs_runtime(input, MODULUS);
     let mut output = input;
     output.ct_assign(&reduced, Choice::from_u8_lsb((borrow as u8) ^ 1));
     output
+}
+
+/// Runtime-only multi-limb subtraction using the standard safe borrow API.
+///
+/// `u64::borrowing_sub` is not yet usable in the compile-time table builder,
+/// so the const path above retains the explicit bitwise identity. The current
+/// Fedora Rust code generator lowers this runtime chain to `sub`/`sbb`
+/// instructions without data-dependent control flow; the final binary is
+/// still bound by the disassembly and secret-taint gates.
+#[inline(always)]
+fn subtract_limbs_runtime(left: [u64; LIMBS], right: [u64; LIMBS]) -> ([u64; LIMBS], u64) {
+    let mut output = [0_u64; LIMBS];
+    let mut borrow = 0_u64;
+    let mut index = 0;
+    while index < LIMBS {
+        let (difference, next_borrow) = sub_with_borrow_runtime(left[index], right[index], borrow);
+        output[index] = difference;
+        borrow = next_borrow;
+        index += 1;
+    }
+    (output, borrow)
+}
+
+#[inline(always)]
+fn sub_with_borrow_runtime(left: u64, right: u64, borrow: u64) -> (u64, u64) {
+    let (difference, next_borrow) = left.borrowing_sub(right, borrow != 0);
+    (difference, next_borrow as u64)
 }
 
 const fn multiply_wide(left: [u64; LIMBS], right: [u64; LIMBS]) -> [u64; LIMBS * 2] {

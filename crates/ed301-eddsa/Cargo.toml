@@ -2,7 +2,6 @@
 name = "ed301-eddsa"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 publish = false
 description = "Review candidate for the Ed301-EdDSA-draft-00 byte contract"

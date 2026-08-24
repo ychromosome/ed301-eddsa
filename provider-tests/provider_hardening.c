@@ -424,12 +424,14 @@ int main(void)
                     POSITIVE_CASES[0].seed);
                 setenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT",
                     cases[index].failpoint, 1);
+                ERR_clear_error();
                 verify_result = pkey == NULL ? 0
                     : d00_digest_verify_result(libctx, pkey,
                         POSITIVE_CASES[0].message,
                         POSITIVE_CASES[0].message_len,
                         POSITIVE_CASES[0].signature, D00_SIG_BYTES);
-                failed_closed = pkey != NULL && verify_result < 0;
+                failed_closed = pkey != NULL && verify_result < 0
+                    && ERR_peek_error() != 0;
                 EVP_PKEY_free(pkey);
             }
             unsetenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT");

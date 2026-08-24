@@ -28,10 +28,11 @@
   representable by its `i8` digits and made that width limit a release-build
   invariant; wider experimental tables were rejected by the algebra and
   torsion regression matrix.
-- Kept the declared Rust 1.85 MSRV honest by replacing five provider-only
-  post-1.85 `let`-chain expressions with equivalent stable control flow; the
-  current core and ordinary provider are covered by an offline Rust 1.85.1
-  compatibility gate.
+- Recorded the successful offline Rust-1.85.1 run as historical compatibility
+  evidence rather than an MSRV or continuing support promise. Regular gates
+  use the current Fedora Rust toolchain and record its exact identity; newer
+  language, library or dependency features are accepted only for a concrete
+  security, performance or maintenance benefit.
 - Applied the performance review's four low-risk repairs: internally derived
   public points bypass hostile-input decoding and subgroup multiplication;
   external public keys gained a fixed sparse `[L]P` reference schedule that is
@@ -58,3 +59,35 @@
   architecture intrinsic or new arithmetic unsafe boundary was added. The
   provider continues to confine native pointers and its shared-state owner to
   the existing FFI unsafe boundary.
+- Restored OpenSSL's documented NULL-key DigestSign/DigestVerify reinit
+  contract without adding another key owner, and made the provider verify
+  boundary explicitly return `1` for acceptance, `0` only for signature
+  invalidity, and a negative value for operational failures. Regression tests
+  cover the Rust FFI, registered provider dispatch, both EVP lanes and the
+  built-in Ed25519 lifecycle control. A rejected NULL-key mode request leaves
+  the matching immutable operation untouched, while a callback failure or a
+  rejected reinitialization carrying a new key now clears the old operation
+  fail-closed; direct sign and verify shim tests bind both sides of that rule.
+- Replaced the scalar reducer's five- and ten-word base-`2^64` Horner loops
+  with one direct 304-bit Montgomery conversion for pruned scalars and a
+  natural 304+304-bit split for 608-bit hash outputs. The production path uses
+  no wide division or new unsafe code; an independently reproduced
+  `2^304 mod L` literal, split-boundary cases, all 608 one-hot inputs and the
+  wide-division test oracle bind the shorter schedule.
+- Replaced the runtime field backend's custom bitwise borrow expansion with
+  the safe standard `u64::borrowing_sub` chain available to the current Fedora
+  compiler and stabilized in Rust 1.91. Compile-time table construction
+  retains the explicit constant-evaluable identity. This deliberately newer
+  API removes work rather than adding an architecture backend, preserves
+  `#![forbid(unsafe_code)]`, and is accepted only with fresh codegen,
+  secret-taint and end-to-end evidence. Rust 1.91 is an API provenance point,
+  not a separately validated support promise.
+- Made that compiler-sensitive replacement a permanent gate on both final
+  Thin-LTO provider modules: named field, point, scalar-reduction and
+  basepoint-selection symbols must retain the reviewed branchless SBB/CMOV
+  shape and the reviewed helper-call closure, the checker has a same-binary
+  conditional-branch negative control, and a separate instrumented module
+  first verifies the seed's Valgrind V-bits before exercising undefined seed
+  material through the complete EVP-to-Rust signing path. Added a concise
+  arithmetic implementation register so the historical reason and mandatory
+  compiler-retest duty are not lost.

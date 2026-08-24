@@ -1037,8 +1037,28 @@ static int ed301d00_signature_sign_init(
             || signature->provider->rust == NULL
             || signature->inner == NULL)
         return 0;
+
+    /*
+     * OpenSSL reinitializes DigestSign with key_data == NULL to retain the
+     * previously bound key.  Validate new parameters before touching that
+     * operation, then let the Rust context accept only a matching Sign state.
+     */
+    if (key == NULL) {
+        if (!ed301d00_signature_reject_params(signature, params))
+            return 0;
+        if (signature->provider->rust->signature_sign_init(
+                signature->inner, NULL) != 1) {
+            /* A failed FFI call may have left the retained operation live. */
+            ed301d00_signature_reset(signature);
+            ed301d00_raise(signature->provider, ED301D00_R_INVALID_STATE,
+                "draft-00 signing reinitialization has no bound signing key");
+            return 0;
+        }
+        return 1;
+    }
+
     ed301d00_signature_reset(signature);
-    if (key == NULL || signature->provider != key->provider
+    if (signature->provider != key->provider
             || key->inner == NULL)
         return 0;
     if (!ed301d00_signature_reject_params(signature, params))
@@ -1065,8 +1085,24 @@ static int ed301d00_signature_verify_init(
             || signature->provider->rust == NULL
             || signature->inner == NULL)
         return 0;
+
+    /* Same NULL-key reinitialization contract as the signing path. */
+    if (key == NULL) {
+        if (!ed301d00_signature_reject_params(signature, params))
+            return 0;
+        if (signature->provider->rust->signature_verify_init(
+                signature->inner, NULL) != 1) {
+            /* A failed FFI call may have left the retained operation live. */
+            ed301d00_signature_reset(signature);
+            ed301d00_raise(signature->provider, ED301D00_R_INVALID_STATE,
+                "draft-00 verification reinitialization has no bound key");
+            return 0;
+        }
+        return 1;
+    }
+
     ed301d00_signature_reset(signature);
-    if (key == NULL || signature->provider != key->provider
+    if (signature->provider != key->provider
             || key->inner == NULL)
         return 0;
     if (!ed301d00_signature_reject_params(signature, params))
@@ -1133,9 +1169,21 @@ static int ed301d00_signature_verify(
 
     if (signature == NULL || signature->provider == NULL
             || signature->provider->rust == NULL
-            || signature->inner == NULL || signature_value == NULL
-            || signature_length != ED301D00_SIGNATURE_BYTES)
+            || signature->inner == NULL)
+        return -1;
+    if ((message == NULL && message_length != 0)
+            || message_length > (size_t)INTPTR_MAX) {
+        ed301d00_raise(signature->provider, ED301D00_R_INVALID_PARAMETER,
+            "draft-00 verification received an invalid input buffer");
+        return -1;
+    }
+    if (signature_length != ED301D00_SIGNATURE_BYTES)
         return 0;
+    if (signature_value == NULL) {
+        ed301d00_raise(signature->provider, ED301D00_R_INVALID_PARAMETER,
+            "draft-00 verification received an invalid signature buffer");
+        return -1;
+    }
     result = signature->provider->rust->signature_verify(
         signature->inner,
         message,
@@ -1161,11 +1209,14 @@ static int ed301d00_signature_digest_sign_init(
 {
     ED301D00_SIGNATURE_CONTEXT *signature = signature_context;
 
-    ed301d00_signature_reset(signature);
     if (!ed301d00_digest_name_is_pure(digest_name)) {
-        if (signature != NULL)
+        if (signature != NULL) {
+            /* A new key starts a new operation and must fail closed. */
+            if (key_data != NULL)
+                ed301d00_signature_reset(signature);
             ed301d00_raise(signature->provider, ED301D00_R_UNSUPPORTED_MODE,
                 "Ed301-EdDSA-draft-00 does not accept an external digest");
+        }
         return 0;
     }
     return ed301d00_signature_sign_init(signature_context, key_data, params);
@@ -1179,11 +1230,14 @@ static int ed301d00_signature_digest_verify_init(
 {
     ED301D00_SIGNATURE_CONTEXT *signature = signature_context;
 
-    ed301d00_signature_reset(signature);
     if (!ed301d00_digest_name_is_pure(digest_name)) {
-        if (signature != NULL)
+        if (signature != NULL) {
+            /* A new key starts a new operation and must fail closed. */
+            if (key_data != NULL)
+                ed301d00_signature_reset(signature);
             ed301d00_raise(signature->provider, ED301D00_R_UNSUPPORTED_MODE,
                 "Ed301-EdDSA-draft-00 does not accept an external digest");
+        }
         return 0;
     }
     return ed301d00_signature_verify_init(signature_context, key_data, params);

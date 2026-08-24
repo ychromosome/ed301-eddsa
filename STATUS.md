@@ -7,16 +7,27 @@
 - Review state: the 2026-08-23 mixed-revision scan found two build-assurance
   defects at current HEAD. Both have focused repairs and local regression
   evidence; a fresh exact-revision, full-scope deep scan is the next gate.
-- Toolchain policy: regular builds use the newest stable Rust supplied by the
-  host OS when it is at least 1.85; exact tool versions are recorded with
-  results.
+- Toolchain policy: regular gates use the current stable Rust supplied by the
+  host Fedora release. Older compilers may work, but are not a supported
+  target and no MSRV is promised. New Rust APIs or dependency versions are
+  adopted only for a concrete security, performance or maintenance benefit;
+  every resulting minimum and its reason are documented. Every evidence run
+  records the exact compiler and tool identities.
 - Recorded local regression toolchain: rustc 1.97.1 (8bab26f4f; Fedora
   1.97.1-1.fc43), cargo 1.97.1 (c980f4866), rustfmt 1.9.0, clippy 0.1.97.
-- MSRV: manifests declare Rust 1.85 as a minimum. The current Safe-Rust A+B
-  core and ordinary provider pass an offline Rust-1.85.1 compatibility gate,
-  including format/lint, core tests, provider units and loaded OpenSSL
-  key-management/signature harnesses. This single-host lane is not a
-  multi-platform MSRV guarantee.
+- Historical compatibility evidence: a pre-`borrowing_sub` revision passed an
+  offline Rust-1.85.1 gate. That result is neither a support promise nor a
+  future release gate. The current runtime field subtraction deliberately uses
+  `u64::borrowing_sub`, available since Rust 1.91, because it removes a large
+  custom bitwise borrow expansion and provides a measured performance benefit
+  under the recorded Fedora toolchain. Rust 1.91 itself has not been made a
+  separate validation lane or support commitment.
+- The standard borrow path is a known compiler-sensitive boundary. Both final
+  OpenSSL-lane provider modules must pass
+  `scripts/check-final-provider-codegen.sh`, and an instrumented provider must
+  pass the full EVP secret-taint lane. The historical reason, accepted
+  lowering and compulsory compiler-bump review are recorded in
+  `docs/ARITHMETIC_IMPLEMENTATION_REGISTER.md`.
 - Round-2 review surface: unwind-safe named secret owners, a compile-time
   `panic=unwind` requirement, isolated Cargo-home checks, a closed-world and
   externally anchored source inventory, effective release-profile enforcement,

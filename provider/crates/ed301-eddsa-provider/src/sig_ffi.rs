@@ -23,7 +23,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crypto_bigint::CtEq;
 use ed301_eddsa::{
-    ExpandedSigningKey, Signature, SigningKey, VerifyingKey,
+    ExpandedSigningKey, Signature, SignatureError, SigningKey, VerifyingKey,
     parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
 };
 use zeroize::Zeroize;
@@ -386,12 +386,12 @@ pub(crate) unsafe extern "C" fn key_import(
             },
             None => None,
         };
-        if let Some(public) = supplied_public.as_ref() {
-            if private.as_ref().is_some_and(|private| {
+        if let Some(public) = supplied_public.as_ref()
+            && private.as_ref().is_some_and(|private| {
                 !bytes_equal(private.expanded.verifying_key_bytes(), public.as_bytes())
-            }) {
-                return 0;
-            }
+            })
+        {
+            return 0;
         }
 
         let public = match (private.as_ref(), supplied_public) {
@@ -441,10 +441,10 @@ pub(crate) unsafe extern "C" fn key_set_encoded_public(
         {
             return 0;
         }
-        if let Some(private) = key.private.as_ref() {
-            if !bytes_equal(private.expanded.verifying_key_bytes(), public.as_bytes()) {
-                return 0;
-            }
+        if let Some(private) = key.private.as_ref()
+            && !bytes_equal(private.expanded.verifying_key_bytes(), public.as_bytes())
+        {
+            return 0;
         }
 
         let Some(public) = Shared::try_new_at("key_set_encoded_public", public) else {
@@ -721,6 +721,22 @@ pub(crate) unsafe extern "C" fn signature_sign_init(
         let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_mut() }) else {
             return 0;
         };
+        /*
+         * EVP_DigestSignInit_ex() reuses the previously bound key when its
+         * pkey argument is NULL.  The one-shot Ed301 context has no buffered
+         * message state, so retaining the matching immutable operation is the
+         * complete reinitialization.  A NULL key in any other state remains a
+         * fail-closed error.
+         */
+        if key.is_null() {
+            hit_panic_failpoint("signature_sign_init");
+            if matches!(context.operation, SignatureOperation::Sign(_)) {
+                return 1;
+            }
+            context.operation = SignatureOperation::Uninitialized;
+            return 0;
+        }
+
         context.operation = SignatureOperation::Uninitialized;
         hit_panic_failpoint("signature_sign_init");
         // SAFETY: Same contract as for context.
@@ -751,6 +767,16 @@ pub(crate) unsafe extern "C" fn signature_verify_init(
         let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_mut() }) else {
             return 0;
         };
+        /* See signature_sign_init(): NULL retains only a matching operation. */
+        if key.is_null() {
+            hit_panic_failpoint("signature_verify_init");
+            if matches!(context.operation, SignatureOperation::Verify(_)) {
+                return 1;
+            }
+            context.operation = SignatureOperation::Uninitialized;
+            return 0;
+        }
+
         context.operation = SignatureOperation::Uninitialized;
         hit_panic_failpoint("signature_verify_init");
         // SAFETY: Same contract as for context.
@@ -814,22 +840,31 @@ pub(crate) unsafe extern "C" fn signature_verify(
         hit_panic_failpoint("signature_verify");
         // SAFETY: The shim passes a live Rust-owned signature context.
         let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_ref() }) else {
-            return 0;
+            return -1;
         };
         let SignatureOperation::Verify(public) = &context.operation else {
-            return 0;
-        };
-        // SAFETY: The shim keeps both input buffers readable for this call.
-        let Some(message) = (unsafe { read_bytes(message, message_len) }) else {
-            return 0;
-        };
-        // SAFETY: Same contract as for message.
-        let Some(signature_value) = (unsafe { read_bytes(signature_value, signature_len) }) else {
-            return 0;
+            return -1;
         };
 
-        let Ok(signature) = Signature::from_bytes(signature_value) else {
+        // SAFETY: The shim keeps the message buffer readable for this call.
+        let Some(message) = (unsafe { read_bytes(message, message_len) }) else {
+            return -1;
+        };
+
+        /* A malformed signature is a normal verification non-match. */
+        if signature_len != SIGNATURE_BYTES {
             return 0;
+        }
+
+        // SAFETY: Same contract as for message.
+        let Some(signature_value) = (unsafe { read_bytes(signature_value, signature_len) }) else {
+            return -1;
+        };
+
+        let signature = match Signature::from_bytes(signature_value) {
+            Ok(signature) => signature,
+            Err(SignatureError::InvalidSignature) => return 0,
+            Err(_) => return -1,
         };
         i32::from(public.verify(message, &signature))
     })
@@ -1037,21 +1072,21 @@ mod tests {
     }
 
     #[test]
-    fn failed_reinitialization_invalidates_old_operation() {
+    fn null_key_reinitialization_preserves_only_the_matching_operation() {
+        let expanded = shared(expanded_key(0xA5));
         let mut context = Box::new(DraftSignatureContext {
-            operation: SignatureOperation::Sign(shared(expanded_key(0xA5))),
+            operation: SignatureOperation::Sign(expanded.clone()),
         });
         let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
+        assert_eq!(expanded.reference_count(), 2);
         assert_eq!(
             unsafe { signature_sign_init(context_pointer, core::ptr::null()) },
-            0
+            1
         );
-        assert!(matches!(
-            context.operation,
-            SignatureOperation::Uninitialized
-        ));
+        assert!(matches!(context.operation, SignatureOperation::Sign(_)));
+        assert_eq!(expanded.reference_count(), 2);
 
-        context.operation = SignatureOperation::Verify(shared(expanded_key(0x5A).verifying_key()));
+        /* A NULL key never changes an existing operation into another kind. */
         assert_eq!(
             unsafe { signature_verify_init(context_pointer, core::ptr::null()) },
             0
@@ -1060,6 +1095,168 @@ mod tests {
             context.operation,
             SignatureOperation::Uninitialized
         ));
+        assert_eq!(expanded.reference_count(), 1);
+
+        let public = shared(expanded_key(0x5A).verifying_key());
+        context.operation = SignatureOperation::Verify(public.clone());
+        assert_eq!(public.reference_count(), 2);
+        assert_eq!(
+            unsafe { signature_verify_init(context_pointer, core::ptr::null()) },
+            1
+        );
+        assert!(matches!(context.operation, SignatureOperation::Verify(_)));
+        assert_eq!(public.reference_count(), 2);
+
+        assert_eq!(
+            unsafe { signature_sign_init(context_pointer, core::ptr::null()) },
+            0
+        );
+        assert!(matches!(
+            context.operation,
+            SignatureOperation::Uninitialized
+        ));
+        assert_eq!(public.reference_count(), 1);
+    }
+
+    #[test]
+    fn signature_verify_preserves_the_provider_tristate() {
+        let expanded = expanded_key(0x42);
+        let message = b"provider verify tri-state";
+        let signature = expanded
+            .sign(message)
+            .expect("fixed test signing operation")
+            .to_bytes();
+        let mut context = DraftSignatureContext {
+            operation: SignatureOperation::Verify(shared(expanded.verifying_key())),
+        };
+        let context_pointer = (&mut context as *mut DraftSignatureContext).cast();
+
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    message.as_ptr(),
+                    message.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            1
+        );
+
+        let changed_message = b"provider verify tri-statf";
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    changed_message.as_ptr(),
+                    changed_message.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            0
+        );
+
+        let malformed = [0xff_u8; SIGNATURE_BYTES];
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    message.as_ptr(),
+                    message.len(),
+                    malformed.as_ptr(),
+                    malformed.len(),
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    message.as_ptr(),
+                    message.len(),
+                    signature.as_ptr(),
+                    SIGNATURE_BYTES - 1,
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    message.as_ptr(),
+                    message.len(),
+                    core::ptr::null(),
+                    SIGNATURE_BYTES,
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    core::ptr::null(),
+                    1,
+                    signature.as_ptr(),
+                    SIGNATURE_BYTES - 1,
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    core::ptr::null(),
+                    1,
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    context_pointer,
+                    message.as_ptr(),
+                    (isize::MAX as usize) + 1,
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            -1
+        );
+
+        let uninitialized = DraftSignatureContext::default();
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    (&uninitialized as *const DraftSignatureContext).cast(),
+                    message.as_ptr(),
+                    message.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                signature_verify(
+                    core::ptr::null(),
+                    message.as_ptr(),
+                    message.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            -1
+        );
     }
 
     #[test]

@@ -7,6 +7,255 @@ static void unit_dummy(void)
 {
 }
 
+static int unit_verify_result;
+static unsigned int unit_verify_calls;
+static unsigned int unit_error_calls;
+static uint32_t unit_error_reason;
+static unsigned int unit_signature_reset_calls;
+static unsigned int unit_sign_init_calls;
+static unsigned int unit_verify_init_calls;
+static int unit_sign_key_bound;
+static int unit_verify_key_bound;
+static int unit_sign_init_result = 1;
+static int unit_verify_init_result = 1;
+
+static int unit_signature_verify(
+    const void *signature,
+    const unsigned char *message,
+    size_t message_length,
+    const unsigned char *signature_value,
+    size_t signature_length)
+{
+    (void)signature;
+    (void)message;
+    (void)message_length;
+    (void)signature_value;
+    (void)signature_length;
+    unit_verify_calls++;
+    return unit_verify_result;
+}
+
+static void unit_signature_reset(void *signature)
+{
+    (void)signature;
+    unit_signature_reset_calls++;
+    unit_sign_key_bound = 0;
+    unit_verify_key_bound = 0;
+}
+
+static int unit_signature_sign_init(void *signature, const void *key)
+{
+    (void)signature;
+    unit_sign_init_calls++;
+    if (unit_sign_init_result != 1)
+        return unit_sign_init_result;
+    if (key == NULL)
+        return unit_sign_key_bound;
+    unit_sign_key_bound = 1;
+    unit_verify_key_bound = 0;
+    return 1;
+}
+
+static int unit_signature_verify_init(void *signature, const void *key)
+{
+    (void)signature;
+    unit_verify_init_calls++;
+    if (unit_verify_init_result != 1)
+        return unit_verify_init_result;
+    if (key == NULL)
+        return unit_verify_key_bound;
+    unit_sign_key_bound = 0;
+    unit_verify_key_bound = 1;
+    return 1;
+}
+
+static void unit_core_new_error(const OSSL_CORE_HANDLE *handle)
+{
+    (void)handle;
+    unit_error_calls++;
+}
+
+static void unit_core_set_error_debug(
+    const OSSL_CORE_HANDLE *handle,
+    const char *file,
+    int line,
+    const char *function)
+{
+    (void)handle;
+    (void)file;
+    (void)line;
+    (void)function;
+}
+
+static void unit_core_vset_error(
+    const OSSL_CORE_HANDLE *handle,
+    uint32_t reason,
+    const char *format,
+    va_list arguments)
+{
+    (void)handle;
+    (void)format;
+    (void)arguments;
+    unit_error_reason = reason;
+}
+
+static OSSL_FUNC_signature_verify_fn *unit_verify_dispatch(void)
+{
+    const OSSL_DISPATCH *dispatch = ED301D00_SIGNATURE_DISPATCH;
+
+    for (; dispatch->function_id != 0; dispatch++) {
+        if (dispatch->function_id == OSSL_FUNC_SIGNATURE_VERIFY)
+            return OSSL_FUNC_signature_verify(dispatch);
+    }
+    return NULL;
+}
+
+static void unit_reset_verify_observation(int result)
+{
+    unit_verify_result = result;
+    unit_verify_calls = 0;
+    unit_error_calls = 0;
+    unit_error_reason = 0;
+}
+
+typedef int (*unit_digest_init_fn)(
+    void *, const char *, void *, const OSSL_PARAM []);
+
+static void unit_test_digest_reinit_contract(
+    ED301D00_SIGNATURE_RUST_API *api,
+    int verification)
+{
+    ED301D00_PROVIDER_CONTEXT provider = { 0 };
+    ED301D00_SIGNATURE_CONTEXT signature = { 0 };
+    ED301D00_KEY key = { 0 };
+    OSSL_PARAM bad_params[2];
+    static unsigned char context_value[] = "ctx";
+    int signature_inner = 1;
+    int key_inner = 2;
+    unit_digest_init_fn init = verification
+        ? ed301d00_signature_digest_verify_init
+        : ed301d00_signature_digest_sign_init;
+    const char *operation = verification ? "verify" : "sign";
+
+    api->signature_reset = unit_signature_reset;
+    api->signature_sign_init = unit_signature_sign_init;
+    api->signature_verify_init = unit_signature_verify_init;
+    provider.handle = (const OSSL_CORE_HANDLE *)&provider;
+    provider.new_error = unit_core_new_error;
+    provider.set_error_debug = unit_core_set_error_debug;
+    provider.vset_error = unit_core_vset_error;
+    provider.rust = api;
+    signature.provider = &provider;
+    signature.inner = &signature_inner;
+    key.provider = &provider;
+    key.inner = &key_inner;
+
+    bad_params[0] = OSSL_PARAM_construct_octet_string(
+        OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+        context_value, sizeof(context_value) - 1);
+    bad_params[1] = OSSL_PARAM_construct_end();
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    unit_sign_init_result = 1;
+    unit_verify_init_result = 1;
+    unit_sign_key_bound = !verification;
+    unit_verify_key_bound = verification;
+    D00_CHECK(init(&signature, "SHA256", NULL, NULL) == 0
+            && unit_signature_reset_calls == 0
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 0
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1,
+        "rejected digest preserves a bound NULL-key %s operation",
+        operation);
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    D00_CHECK(init(&signature, NULL, NULL, bad_params) == 0
+            && unit_signature_reset_calls == 0
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 0
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1,
+        "rejected params preserve a bound NULL-key %s operation",
+        operation);
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    D00_CHECK(init(&signature, NULL, NULL, NULL) == 1
+            && unit_signature_reset_calls == 0
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 1
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1,
+        "valid NULL-key %s reinit retains the matching operation",
+        operation);
+
+    /* Model a caught Rust panic: the callback returns failure unchanged. */
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    if (verification)
+        unit_verify_init_result = 0;
+    else
+        unit_sign_init_result = 0;
+    D00_CHECK(init(&signature, NULL, NULL, NULL) == 0
+            && unit_signature_reset_calls == 1
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 1
+            && unit_sign_key_bound == 0
+            && unit_verify_key_bound == 0,
+        "failed NULL-key %s callback resets the retained operation",
+        operation);
+    unit_sign_init_result = 1;
+    unit_verify_init_result = 1;
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    unit_sign_key_bound = !verification;
+    unit_verify_key_bound = verification;
+    D00_CHECK(init(&signature, "SHA256", &key, NULL) == 0
+            && unit_signature_reset_calls == 1
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 0
+            && unit_sign_key_bound == 0
+            && unit_verify_key_bound == 0,
+        "rejected digest with a new key resets the old %s operation",
+        operation);
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    unit_sign_key_bound = !verification;
+    unit_verify_key_bound = verification;
+    D00_CHECK(init(&signature, NULL, &key, bad_params) == 0
+            && unit_signature_reset_calls == 1
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 0
+            && unit_sign_key_bound == 0
+            && unit_verify_key_bound == 0,
+        "rejected params with a new key reset the old %s operation",
+        operation);
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    unit_sign_key_bound = !verification;
+    unit_verify_key_bound = verification;
+    D00_CHECK(init(&signature, NULL, &key, NULL) == 1
+            && unit_signature_reset_calls == 1
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 1
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1,
+        "valid new-key %s reinit remains supported", operation);
+}
+
 static void unit_fill_api(ED301D00_SIGNATURE_RUST_API *api)
 {
     memset(api, 0, sizeof(*api));
@@ -79,6 +328,96 @@ int main(void)
     EXPECT_MISSING_CALLBACK(&api, signature_sign);
     EXPECT_MISSING_CALLBACK(&api, signature_verify);
     EXPECT_MISSING_CALLBACK(&api, cleanse);
+
+    /*
+     * Exercise the function registered in the SIGNATURE dispatch table, not
+     * a test-only copy, and preserve OpenSSL's 1 / 0 / negative verification
+     * result contract across the C/Rust boundary.
+     */
+    {
+        ED301D00_PROVIDER_CONTEXT provider = { 0 };
+        ED301D00_SIGNATURE_CONTEXT signature = { 0 };
+        OSSL_FUNC_signature_verify_fn *verify = unit_verify_dispatch();
+        unsigned char message = 0x42;
+        unsigned char signature_value[ED301D00_SIGNATURE_BYTES] = { 0 };
+        int inner = 1;
+
+        api.signature_verify = unit_signature_verify;
+        provider.handle = (const OSSL_CORE_HANDLE *)&provider;
+        provider.new_error = unit_core_new_error;
+        provider.set_error_debug = unit_core_set_error_debug;
+        provider.vset_error = unit_core_vset_error;
+        provider.rust = &api;
+        signature.provider = &provider;
+        signature.inner = &inner;
+
+        D00_CHECK(verify != NULL,
+            "SIGNATURE verify dispatch is present");
+
+        unit_reset_verify_observation(1);
+        D00_CHECK(verify != NULL
+                && verify(&signature, signature_value,
+                    sizeof(signature_value), &message, sizeof(message)) == 1
+                && unit_verify_calls == 1 && unit_error_calls == 0,
+            "verify dispatch preserves acceptance result");
+
+        unit_reset_verify_observation(0);
+        D00_CHECK(verify != NULL
+                && verify(&signature, signature_value,
+                    sizeof(signature_value), &message, sizeof(message)) == 0
+                && unit_verify_calls == 1 && unit_error_calls == 0,
+            "verify dispatch preserves cryptographic non-match");
+
+        unit_reset_verify_observation(-1);
+        D00_CHECK(verify != NULL
+                && verify(&signature, signature_value,
+                    sizeof(signature_value), &message, sizeof(message)) < 0
+                && unit_verify_calls == 1 && unit_error_calls == 1
+                && unit_error_reason == ED301D00_R_INVALID_STATE,
+            "verify dispatch preserves operational failure and raises error");
+
+        unit_reset_verify_observation(1);
+        D00_CHECK(verify != NULL
+                && verify(&signature, signature_value,
+                    sizeof(signature_value) - 1,
+                    &message, sizeof(message)) == 0
+                && unit_verify_calls == 0 && unit_error_calls == 0,
+            "wrong signature length is a normal non-match");
+
+        unit_reset_verify_observation(1);
+        D00_CHECK(verify != NULL
+                && verify(&signature, NULL, sizeof(signature_value),
+                    &message, sizeof(message)) < 0
+                && unit_verify_calls == 0 && unit_error_calls == 1
+                && unit_error_reason == ED301D00_R_INVALID_PARAMETER,
+            "NULL signature buffer is an operational error");
+
+        unit_reset_verify_observation(1);
+        D00_CHECK(verify != NULL
+                && verify(&signature, signature_value,
+                    sizeof(signature_value), NULL, 1) < 0
+                && unit_verify_calls == 0 && unit_error_calls == 1
+                && unit_error_reason == ED301D00_R_INVALID_PARAMETER,
+            "NULL message with nonzero length is an operational error");
+
+        unit_reset_verify_observation(1);
+        D00_CHECK(verify != NULL
+                && verify(&signature, signature_value,
+                    sizeof(signature_value) - 1, NULL, 1) < 0
+                && unit_verify_calls == 0 && unit_error_calls == 1
+                && unit_error_reason == ED301D00_R_INVALID_PARAMETER,
+            "invalid message takes precedence over malformed signature");
+
+        unit_reset_verify_observation(1);
+        D00_CHECK(verify != NULL
+                && verify(NULL, signature_value, sizeof(signature_value),
+                    &message, sizeof(message)) < 0
+                && unit_verify_calls == 0,
+            "invalid signature context is an operational error");
+    }
+
+    unit_test_digest_reinit_contract(&api, 0);
+    unit_test_digest_reinit_contract(&api, 1);
 
 #if OPENSSL_VERSION_MAJOR == 3
     D00_CHECK(ed301d00_core_version_text_is_supported("3.5.0"),

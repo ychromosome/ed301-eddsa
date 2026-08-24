@@ -64,7 +64,7 @@ exec > >(tee "$LOG") 2>&1
 
 for tool in /usr/bin/cargo /usr/bin/rustc /usr/bin/rustfmt \
         /usr/bin/cargo-clippy /usr/bin/rustdoc /usr/bin/python3 \
-        /usr/bin/gcc /usr/bin/clang /usr/bin/nm /usr/bin/strings \
+        /usr/bin/gcc /usr/bin/clang /usr/bin/nm /usr/bin/objdump /usr/bin/strings \
         /usr/bin/readelf /usr/bin/ldd /usr/bin/sha256sum \
         /usr/bin/timeout /usr/bin/valgrind /usr/bin/scan-build \
         /usr/bin/jq; do
@@ -100,8 +100,9 @@ provider_env "$BUILD/targets/identity" /usr/bin/cargo-clippy --version
 (cd "$ROOT/inputs/round4" && sha256sum --strict --quiet -c SHA256SUMS)
 
 # Isolated Python cannot import user startup state.  It writes only to the
-# private result tree.  The generated Rust module is formatted by the pinned
-# tool and must equal the committed, manifest-bound module byte for byte.
+# private result tree.  The generated Rust module is formatted by the
+# canonical Fedora tool whose exact version is recorded, and must equal the
+# committed, manifest-bound module byte for byte.
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -I -B \
     "$ROOT/provider-tests/gen_vectors.py" "$ROOT" \
@@ -218,12 +219,40 @@ build_variant() {
 }
 
 build_variant normal '' ed301_eddsa_draft00.so
+sh "$ROOT/scripts/check-final-provider-codegen.sh" \
+    "$BUILD/modules/ed301_eddsa_draft00.so" \
+    "$BUILD/profile-markers/normal/toolchain.txt" \
+    "$BUILD/evidence/final-provider-codegen"
 build_variant failpoint test-failpoint ed301_eddsa_draft00_failpoint.so
 build_variant pki pki-experiment ed301_eddsa_draft00_pki_test.so
 build_variant tls tls-experiment ed301_eddsa_draft00_tls_test.so
 build_variant collider tls-collider ed301_eddsa_draft00_tls_collider.so
 cp "$BUILD/modules/ed301_eddsa_draft00_pki_test.so" \
     "$BUILD/fresh-modules/ed301_eddsa_draft00_pki_test.so"
+
+# The full EVP taint lane uses a separately named directory containing an
+# instrumented ordinary provider. It is test-only and never mixed with the
+# normal provider artifacts.
+TAINT_TARGET=$BUILD/targets/secret-taint
+TAINT_MARKERS=$BUILD/profile-markers/secret-taint
+mkdir -m 700 "$TAINT_TARGET" "$TAINT_MARKERS" "$BUILD/modules-taint"
+provider_env "$TAINT_TARGET" /usr/bin/rustc --version --verbose \
+    >"$TAINT_MARKERS/toolchain.txt"
+(cd / && provider_env "$TAINT_TARGET" env \
+    ED301_HERMETIC_NATIVE_BUILD=1 \
+    ED301_PROFILE_MARKER_DIR="$TAINT_MARKERS" \
+    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+    RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+    /usr/bin/cargo build \
+        --manifest-path "$ROOT/provider/Cargo.toml" \
+        --release --locked --offline \
+        --features secret-taint-instrumentation)
+sh "$ROOT/scripts/check-profile-markers.sh" "$TAINT_MARKERS" \
+    crypto_bigint=off ed301_eddsa=on ed301_valgrind_client=on \
+    ed301_eddsa_draft00=on
+cp "$TAINT_TARGET/release/libed301_eddsa_draft00.so" \
+    "$BUILD/modules-taint/ed301_eddsa_draft00.so"
+rm -rf -- "$TAINT_TARGET"
 
 if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
         | grep -E 'ED301_EDDSA_DRAFT00_(PANIC|ALLOC)_FAILPOINT|TLS-SIGALG|BEGIN PRIVATE KEY|1\.3\.6\.1\.4\.1\.66282\.301\.3'; then
@@ -263,6 +292,12 @@ for harness in "${HARNESSES[@]}"; do
 done
 /usr/bin/gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
     -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
+    -I"$ROOT/provider-tests" -o "$BUILD/bin/provider_secret_taint" \
+    "$ROOT/provider-tests/provider_secret_taint.c" \
+    -L"$OPENSSL_LIB" -Wl,-rpath,"$OPENSSL_LIB" \
+    -lcrypto -lssl -lpthread -ldl
+/usr/bin/gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
+    -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
     -I"$ROOT/provider-tests" -o "$BUILD/bin/provider_load_no_rpath" \
     "$ROOT/provider-tests/provider_load.c" \
     -L"$OPENSSL_LIB" -lcrypto -lssl -lpthread -ldl
@@ -295,7 +330,10 @@ done
 (
     cd "$BUILD"
     sha256sum cargo-home/config.toml
-    find modules fresh-modules bin generated -type f -print0 \
+    sha256sum profile-markers/normal/toolchain.txt \
+        profile-markers/secret-taint/toolchain.txt
+    find modules modules-taint fresh-modules bin generated \
+        evidence/final-provider-codegen -type f -print0 \
         | sort -z | xargs -0 sha256sum
 ) >"$BUILD/evidence/pre-execution-artifacts.sha256"
 sha256sum "$BUILD/evidence/pre-execution-artifacts.sha256" \
@@ -417,6 +455,17 @@ for harness in provider_signature provider_serialization val01_decoder_bio \
         /usr/bin/valgrind --error-exitcode=99 \
         --errors-for-leak-kinds=definite --leak-check=full --quiet \
         "$BUILD/bin/$harness"
+done
+for mode in defined tainted; do
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        OPENSSL_MODULES="$BUILD/modules-taint" OPENSSL_CONF=/dev/null \
+        LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        /usr/bin/valgrind --tool=memcheck --vgdb=no \
+        --error-exitcode=99 --track-origins=yes \
+        --undef-value-errors=yes --leak-check=full \
+        --errors-for-leak-kinds=definite,indirect,possible --quiet \
+        "$BUILD/bin/provider_secret_taint" "$mode"
 done
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \

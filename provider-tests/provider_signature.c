@@ -47,6 +47,44 @@ static int d00_message_sign_init_rejects(OSSL_LIB_CTX *libctx, EVP_PKEY *pkey,
     return rejected;
 }
 
+/* OpenSSL's built-in Ed25519 provider is the lifecycle control. */
+static int d00_ed25519_null_key_reinit_control(OSSL_LIB_CTX *libctx)
+{
+    static const unsigned char message[] = { 0x00, 0x7f, 0x80, 0xff };
+    EVP_PKEY *pkey = EVP_PKEY_Q_keygen(libctx, NULL, "ED25519");
+    EVP_MD_CTX *sign_context = EVP_MD_CTX_new();
+    EVP_MD_CTX *verify_context = EVP_MD_CTX_new();
+    unsigned char signature[64];
+    size_t signature_length = sizeof(signature);
+    int ok = pkey != NULL && sign_context != NULL && verify_context != NULL
+        && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
+            NULL, pkey, NULL) == 1
+        && EVP_DigestSign(sign_context, signature, &signature_length,
+            message, sizeof(message)) == 1
+        && signature_length == sizeof(signature)
+        && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
+            NULL, NULL, NULL) == 1;
+
+    signature_length = sizeof(signature);
+    ok = ok
+        && EVP_DigestSign(sign_context, signature, &signature_length,
+            message, sizeof(message)) == 1
+        && signature_length == sizeof(signature)
+        && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL, libctx,
+            NULL, pkey, NULL) == 1
+        && EVP_DigestVerify(verify_context, signature, signature_length,
+            message, sizeof(message)) == 1
+        && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL, libctx,
+            NULL, NULL, NULL) == 1
+        && EVP_DigestVerify(verify_context, signature, signature_length,
+            message, sizeof(message)) == 1;
+
+    EVP_MD_CTX_free(verify_context);
+    EVP_MD_CTX_free(sign_context);
+    EVP_PKEY_free(pkey);
+    return ok;
+}
+
 int main(void)
 {
     D00_REQUIRE_RUNTIME_BINDING();
@@ -154,6 +192,58 @@ int main(void)
     }
 
     /*
+     * EVP DigestSign/DigestVerify contexts retain their bound key when a
+     * repeated init supplies pkey == NULL.  Run the same lifecycle against
+     * Ed301 and OpenSSL's built-in Ed25519 implementation.
+     */
+    {
+        const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
+        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_MD_CTX *sign_context = EVP_MD_CTX_new();
+        EVP_MD_CTX *verify_context = EVP_MD_CTX_new();
+        unsigned char signature[D00_SIG_BYTES] = { 0 };
+        size_t signature_length = sizeof(signature);
+
+        D00_CHECK(pkey != NULL && sign_context != NULL
+                && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
+                    D00_PROP, pkey, NULL) == 1
+                && EVP_DigestSign(sign_context, signature,
+                    &signature_length, tc->message, tc->message_len) == 1
+                && signature_length == D00_SIG_BYTES
+                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0
+                && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
+                    D00_PROP, NULL, NULL) == 1,
+            "DigestSign NULL-key reinit retains the Ed301 signing key");
+
+        memset(signature, 0, sizeof(signature));
+        signature_length = sizeof(signature);
+        D00_CHECK(sign_context != NULL
+                && EVP_DigestSign(sign_context, signature,
+                    &signature_length, tc->message, tc->message_len) == 1
+                && signature_length == D00_SIG_BYTES
+                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+            "DigestSign succeeds byte-exactly after NULL-key reinit");
+
+        D00_CHECK(pkey != NULL && verify_context != NULL
+                && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
+                    libctx, D00_PROP, pkey, NULL) == 1
+                && EVP_DigestVerify(verify_context, tc->signature,
+                    D00_SIG_BYTES, tc->message, tc->message_len) == 1
+                && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
+                    libctx, D00_PROP, NULL, NULL) == 1
+                && EVP_DigestVerify(verify_context, tc->signature,
+                    D00_SIG_BYTES, tc->message, tc->message_len) == 1,
+            "DigestVerify succeeds after NULL-key reinit");
+
+        EVP_MD_CTX_free(verify_context);
+        EVP_MD_CTX_free(sign_context);
+        EVP_PKEY_free(pkey);
+
+        D00_CHECK(d00_ed25519_null_key_reinit_control(libctx),
+            "built-in Ed25519 accepts the same NULL-key reinit lifecycle");
+    }
+
+    /*
      * Verification preserves OpenSSL's 1 / 0 / negative distinction: a
      * well-formed signature over a different message is a normal non-match,
      * not an internal provider failure.
@@ -162,6 +252,7 @@ int main(void)
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
         EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
         unsigned char changed_message[1] = { 0x01 };
+        unsigned char malformed[D00_SIG_BYTES];
         int result;
 
         ERR_clear_error();
@@ -171,6 +262,39 @@ int main(void)
                 tc->signature, D00_SIG_BYTES);
         D00_CHECK(result == 0,
             "cryptographic non-match returns exactly zero");
+
+        memset(malformed, 0xff, sizeof(malformed));
+        ERR_clear_error();
+        result = pkey == NULL ? -1
+            : d00_digest_verify_result(libctx, pkey,
+                tc->message, tc->message_len,
+                malformed, sizeof(malformed));
+        D00_CHECK(result == 0,
+            "noncanonical signature returns exactly zero");
+
+        ERR_clear_error();
+        result = pkey == NULL ? -1
+            : d00_digest_verify_result(libctx, pkey,
+                tc->message, tc->message_len,
+                tc->signature, D00_SIG_BYTES - 1);
+        D00_CHECK(result == 0,
+            "wrong signature length returns exactly zero");
+
+        ERR_clear_error();
+        result = pkey == NULL ? 0
+            : d00_digest_verify_result(libctx, pkey,
+                tc->message, tc->message_len,
+                NULL, D00_SIG_BYTES);
+        D00_CHECK(result < 0 && ERR_peek_error() != 0,
+            "NULL signature buffer returns negative with provider error");
+        ERR_clear_error();
+
+        result = pkey == NULL ? 0
+            : d00_digest_verify_result(libctx, pkey,
+                NULL, 1, tc->signature, D00_SIG_BYTES);
+        D00_CHECK(result < 0 && ERR_peek_error() != 0,
+            "NULL message buffer returns negative with provider error");
+        ERR_clear_error();
         EVP_PKEY_free(pkey);
     }
 
@@ -206,9 +330,9 @@ int main(void)
             : EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
         if (pctx != NULL && d00_verify_message_init(libctx, pctx, NULL))
             verify_failed = EVP_PKEY_verify(pctx, tc->signature,
-                D00_SIG_BYTES, &one_byte, oversized) != 1;
+                D00_SIG_BYTES, &one_byte, oversized) < 0;
         D00_CHECK(verify_failed,
-            "oversized-message: EVP_PKEY_verify fails closed above isize::MAX");
+            "oversized-message: EVP_PKEY_verify returns an operational error");
         EVP_PKEY_CTX_free(pctx);
 
         memset(output, 0, sizeof(output));

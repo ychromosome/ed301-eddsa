@@ -37,6 +37,13 @@ The repaired integration boundary is:
   against its own `libcrypto` registry before loading the test artifact;
 - one module is compiled per OpenSSL ABI major. Major 3 requires 3.5 or later;
   major 4 requires 4.0 or later. Patch equality is not required;
+- repeated DigestSign/DigestVerify initialization with a NULL key retains the
+  already bound immutable key snapshot, matching OpenSSL's Ed25519 lifecycle;
+  invalid modes are rejected before touching that retained snapshot, whereas
+  an invoked callback failure or a rejected reinitialization carrying a new
+  key clears the old operation fail-closed;
+  malformed signatures remain ordinary zero-valued non-matches while invalid
+  state and pointer/length contracts return a negative operational error;
 - the ordinary and PKI artifacts expose no decoder. Supported private-key
   imports use the exact, complete-buffer host parser. The TLS-only artifact
   has one fixed-size SPKI decoder for peer certificates: it refuses partial
@@ -75,6 +82,47 @@ a differential reference. Both changes preserve the curve, transcript, byte
 contract, canonicality and factor-4 verification language. The public core
 continues to forbid unsafe code. The experimental BMI2 backend was
 deliberately not integrated.
+
+The scalar-reduction follow-up removes the generic base-`2^64` Horner loop.
+Pruned 304-bit scalars now use one existing Montgomery conversion; each
+608-bit hash output is split into its natural two 304-bit halves and combined
+with the fixed public radix `2^304 mod L`. Wide division remains test-only.
+The radix literal was reproduced independently with Python integers and Perl
+Math::BigInt, while the division oracle covers named `L`/`2L`/maximum-half
+boundaries, byte 37/38, all 608 one-hot inputs and 10,000 deterministic full-
+width values. A CPU-4-pinned core ABBA comparison observed the isolated
+reducer at about 158 instead of 803 nanoseconds, with prepared signing about
+3.4% and prepared verification about 1.2% faster. The final 304+304 secret
+path also passed all four defined/tainted public/sign Valgrind lanes; its
+release disassembly contains fixed-loop control only in the Montgomery kernel
+and no conditional branch in the reducer's secret recombination. These are
+local development measurements and checks, not a portable performance or
+constant-time proof.
+
+The current Fedora Rust toolchain also makes its safe runtime
+`u64::borrowing_sub` operation a useful replacement for the field backend's
+larger Hacker's-Delight borrow expansion. The explicit bitwise helper remains
+only in the compile-time table path because the standard operation is not yet
+stable in const evaluation. The runtime path remains Safe Rust and retains the
+final `CtAssign` selection boundary. This change is accepted for its concrete
+code-size and measured end-to-end benefit, not merely because a newer API is
+available; its compiler-specific branchlessness is rechecked in the final
+provider modules and secret-taint lane. The API was stabilized in Rust 1.91;
+that version is recorded as provenance for the feature, not claimed as a
+separately tested MSRV.
+
+This compiler-sensitive choice is enforced at the final artifact rather than
+only in an isolated Rust probe. Each OpenSSL-lane run disassembles its actual
+Thin-LTO ordinary provider, checks the named reducer, point-operation,
+scalar-reduction and table-selection symbols for the reviewed SBB/CMOV shape
+and absence of conditional jumps, and applies a same-binary negative control
+to the checker. A separately built instrumented ordinary module then taints
+the seed before `EVP_PKEY_fromdata` and exercises public-key derivation and
+deterministic signing through EVP, the C shim, Rust FFI and core under
+Valgrind. These results remain specific to the recorded compiler, profile,
+architecture and exercised paths;
+`docs/ARITHMETIC_IMPLEMENTATION_REGISTER.md` records the mandatory re-review
+on every toolchain change.
 
 Five CPU-2-pinned local runs on this development host observed the following
 medians after the first low-risk performance repairs and before the subsequent
@@ -124,13 +172,14 @@ arithmetic unsafe boundary is part of this revision. The provider's manual
 shared-state owner remains inside the existing native FFI unsafe boundary.
 
 Local pre-push gates completed on 2026-08-24 include the complete provider
-matrix against OpenSSL 3.5.7 and 4.0.1 under Rust 1.97.1, the secret-taint
-lane, and a current-code Rust 1.85.1 compatibility lane. The latter covers
-formatting, Clippy, 42 core tests in debug/release and `sign-self-verify`, 11
-provider unit tests, and loaded OpenSSL 3.5.7 load/key-management/signature
-harnesses with 20/36/226 checks. These remain local evidence and do not replace
-independent reproduction. Open gates include the fresh full-scope Deep
-Security Scan, independent external security and performance review, AArch64,
-coverage-guided fuzzing, QEMU/container lanes, final disassembly, timing and
-zeroization review, and an external TLS SignatureScheme allocation. No
-production, standardization or release claim is made.
+matrix against OpenSSL 3.5.7 and 4.0.1 under Rust 1.97.1 and the secret-taint
+lane. A pre-`borrowing_sub` revision also passed an offline Rust-1.85.1 lane
+with format/lint, core tests, provider units and loaded OpenSSL 3.5.7
+load/key-management/signature harnesses. That one-time result remains useful
+historical compatibility evidence, but is not an MSRV, support promise or
+future release gate. These local results do not replace independent
+reproduction. Open gates include the fresh full-scope Deep Security Scan,
+independent external security and performance review, AArch64,
+coverage-guided fuzzing, QEMU/container lanes, final timing and zeroization
+review, and an external TLS SignatureScheme allocation. No production,
+standardization or release claim is made.
