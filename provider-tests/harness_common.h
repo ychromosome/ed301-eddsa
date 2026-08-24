@@ -28,7 +28,7 @@
 #include <openssl/provider.h>
 
 #define D00_ALG "Ed301-EdDSA-draft-00"
-#define D00_OID_TEXT "2.25.195456677253783758411179833219689607856"
+#define D00_OID_TEXT "1.3.6.1.4.1.66282.301.3"
 #define D00_PROVIDER "ed301_eddsa_draft00"
 #define D00_PROP "provider=ed301_eddsa_draft00"
 #define D00_FAILPOINT_PROVIDER "ed301_eddsa_draft00_failpoint"
@@ -539,6 +539,39 @@ static inline EVP_PKEY *d00_keygen(OSSL_LIB_CTX *libctx)
     return pkey;
 }
 
+/*
+ * Initialize OpenSSL's complete-message signature operations.  The explicit
+ * fetch is required by EVP_PKEY_{sign,verify}_message_init(); the EVP context
+ * retains its own reference after a successful initialization.
+ */
+static inline int d00_sign_message_init(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY_CTX *pctx,
+    const OSSL_PARAM *params)
+{
+    EVP_SIGNATURE *algorithm =
+        EVP_SIGNATURE_fetch(libctx, D00_ALG, d00_property);
+    int ok = algorithm != NULL
+        && EVP_PKEY_sign_message_init(pctx, algorithm, params) == 1;
+
+    EVP_SIGNATURE_free(algorithm);
+    return ok;
+}
+
+static inline int d00_verify_message_init(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY_CTX *pctx,
+    const OSSL_PARAM *params)
+{
+    EVP_SIGNATURE *algorithm =
+        EVP_SIGNATURE_fetch(libctx, D00_ALG, d00_property);
+    int ok = algorithm != NULL
+        && EVP_PKEY_verify_message_init(pctx, algorithm, params) == 1;
+
+    EVP_SIGNATURE_free(algorithm);
+    return ok;
+}
+
 /* One-shot EVP_DigestSign; returns 1 and fills sig[76] on success. */
 static inline int d00_digest_sign(
     OSSL_LIB_CTX *libctx,
@@ -561,6 +594,28 @@ static inline int d00_digest_sign(
     return ok;
 }
 
+/* One-shot EVP_DigestVerify with the complete OpenSSL tri-state result. */
+static inline int d00_digest_verify_result(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *pkey,
+    const unsigned char *message,
+    size_t message_len,
+    const unsigned char *sig,
+    size_t sig_len)
+{
+    EVP_MD_CTX *mctx = EVP_MD_CTX_new();
+    int result = -1;
+
+    if (mctx == NULL)
+        return -1;
+    if (EVP_DigestVerifyInit_ex(
+            mctx, NULL, NULL, libctx, d00_property, pkey, NULL) == 1)
+        result = EVP_DigestVerify(
+            mctx, sig, sig_len, message, message_len);
+    EVP_MD_CTX_free(mctx);
+    return result;
+}
+
 /* One-shot EVP_DigestVerify; returns 1 only on acceptance. */
 static inline int d00_digest_verify(
     OSSL_LIB_CTX *libctx,
@@ -570,16 +625,8 @@ static inline int d00_digest_verify(
     const unsigned char *sig,
     size_t sig_len)
 {
-    EVP_MD_CTX *mctx = EVP_MD_CTX_new();
-    int ok = 0;
-
-    if (mctx == NULL)
-        return 0;
-    ok = EVP_DigestVerifyInit_ex(
-             mctx, NULL, NULL, libctx, d00_property, pkey, NULL) == 1
-        && EVP_DigestVerify(mctx, sig, sig_len, message, message_len) == 1;
-    EVP_MD_CTX_free(mctx);
-    return ok;
+    return d00_digest_verify_result(
+        libctx, pkey, message, message_len, sig, sig_len) == 1;
 }
 
 /*

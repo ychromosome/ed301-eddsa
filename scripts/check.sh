@@ -55,8 +55,14 @@ cargo_clean metadata --manifest-path "$ROOT/Cargo.toml" \
 cargo_clean fmt --manifest-path "$ROOT/Cargo.toml" --all -- --check
 cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets -- -D warnings
+cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --workspace --all-targets \
+    --features sign-self-verify -- -D warnings
 cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets
+cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --workspace --all-targets \
+    --features sign-self-verify
 
 clean_env /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
 (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
@@ -68,6 +74,16 @@ clean_env /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
     /usr/bin/cargo test \
         --manifest-path "$ROOT/Cargo.toml" --locked --offline \
         --release --workspace --all-targets)
+(cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$TARGET_DIR" \
+    CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+    ED301_PROFILE_MARKER_DIR="$MARKERS" \
+    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+    RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+    /usr/bin/cargo test \
+        --manifest-path "$ROOT/Cargo.toml" --locked --offline \
+        --release --workspace --all-targets \
+        --features sign-self-verify)
 sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
     crypto_bigint=off ed301_eddsa=on
 

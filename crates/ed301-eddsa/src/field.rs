@@ -4,6 +4,11 @@
 //! backend may exploit the sparse shape of the modulus, but it must remain
 //! differentially equivalent to this implementation.
 
+#![allow(
+    dead_code,
+    reason = "retained Montgomery oracle also supplies optimized-backend inversion"
+)]
+
 use crypto_bigint::{
     Choice, CtAssign, CtEq, CtLt, CtOption, U320, const_monty_form, const_monty_params,
     modular::ConstMontyParams,
@@ -20,6 +25,13 @@ use crate::parameters::FIELD_BYTES;
 const SQRT_EXPONENT_BITS: u32 = 301;
 const SQRT_EXPONENT: U320 = U320::from_be_hex(
     "000007fffffffffffffffffffffffffffffffffffffffffffffffffe0000000000000000000000ed",
+);
+
+// (p - 3) / 4.  For p = 3 (mod 4), a square root of u / v can be
+// computed as u * (u * v)^((p - 3) / 4).  This combines the inversion and
+// square-root exponentiations needed by compressed Edwards-point decoding.
+const SQRT_RATIO_EXPONENT: U320 = U320::from_be_hex(
+    "000007fffffffffffffffffffffffffffffffffffffffffffffffffe0000000000000000000000ec",
 );
 
 const_monty_params!(
@@ -128,6 +140,27 @@ impl FieldElement {
     pub(crate) fn sqrt(self) -> CtOption<Self> {
         let candidate = Self(self.0.pow_bounded_exp(&SQRT_EXPONENT, SQRT_EXPONENT_BITS));
         CtOption::new(candidate, candidate.square().ct_eq(&self))
+    }
+
+    /// Return a square root of `numerator / denominator` when it exists.
+    ///
+    /// The result is computed with one fixed-exponent operation and verified
+    /// without first inverting `denominator`.  A zero denominator is always
+    /// rejected, including the otherwise ambiguous `0 / 0` case.
+    pub(crate) fn sqrt_ratio(numerator: Self, denominator: Self) -> CtOption<Self> {
+        let product = numerator.mul(denominator);
+        let factor = Self(
+            product
+                .0
+                .pow_bounded_exp(&SQRT_RATIO_EXPONENT, SQRT_EXPONENT_BITS),
+        );
+        let candidate = numerator.mul(factor);
+        let is_root = candidate
+            .square()
+            .mul(denominator)
+            .ct_eq(&numerator)
+            .and(denominator.is_zero().not());
+        CtOption::new(candidate, is_root)
     }
 
     /// Return whether the canonical representative is odd.

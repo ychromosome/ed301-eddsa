@@ -144,6 +144,45 @@ impl Scalar {
         debug_assert!(index < FIELD_BITS);
         self.0.bit(index as u32)
     }
+
+    /// Recode a public scalar as width-`w` non-adjacent form.
+    ///
+    /// This routine is deliberately variable-time and may only be used by
+    /// public verification paths.  Widths used by the point core are fixed
+    /// at compile-time call sites and keep every digit within `i8`.
+    pub(crate) fn vartime_wnaf(&self, width: u32) -> [i8; FIELD_BITS + 1] {
+        assert!(
+            (2..=8).contains(&width),
+            "wNAF width must keep every digit representable as i8"
+        );
+        let radix = 1_u64 << width;
+        let half = radix >> 1;
+        let mask = radix - 1;
+        let mut value = self.0;
+        let mut digits = [0_i8; FIELD_BITS + 1];
+        let mut index = 0;
+
+        while index < digits.len() {
+            if value.bit(0).to_bool_vartime() {
+                let low = value.to_words()[0] & mask;
+                let digit = if low >= half {
+                    low as i16 - radix as i16
+                } else {
+                    low as i16
+                };
+                digits[index] = digit as i8;
+                if digit < 0 {
+                    value = value.wrapping_add(&U320::from_u64((-digit) as u64));
+                } else {
+                    value = value.wrapping_sub(&U320::from_u64(digit as u64));
+                }
+            }
+            value = value.shr_vartime(1);
+            index += 1;
+        }
+        debug_assert!(value.is_zero().to_bool_vartime());
+        digits
+    }
 }
 
 impl Default for Scalar {
@@ -275,5 +314,11 @@ mod tests {
             bytes[bit >> 3] = 1_u8 << (bit & 7);
             assert_reduction(&bytes);
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "wNAF width must keep every digit representable as i8")]
+    fn wnaf_rejects_unrepresentable_width_in_release_builds() {
+        let _ = Scalar::ZERO.vartime_wnaf(9);
     }
 }

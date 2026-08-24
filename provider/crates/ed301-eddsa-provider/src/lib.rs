@@ -3,8 +3,8 @@
 //!
 //! The provider is signature-only.  It exposes raw EVP key management and
 //! deterministic one-shot 76-byte signatures for the manifest-bound Rust
-//! input crate `ed301-eddsa` and, for an isolated proof only, an explicitly
-//! ephemeral, host-audited, nonregistrable test identifier profile.
+//! input crate `ed301-eddsa`.  Optional test artifacts exercise the
+//! project-assigned Ed301-EdDSA OID and a separate private-use TLS identifier.
 //! It makes no production, constant-time, standards or release claim, and it
 //! deliberately does not reuse the historical `Ed301-Sig-v1` identity or
 //! semantics.

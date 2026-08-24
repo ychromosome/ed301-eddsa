@@ -18,8 +18,9 @@
 - Round-2 review surface: unwind-safe named secret owners, a compile-time
   `panic=unwind` requirement, isolated Cargo-home checks, a closed-world and
   externally anchored source inventory, effective release-profile enforcement,
-  a downstream profile fixture, and library-backed bounded square-root
-  exponentiation.
+  a downstream profile fixture, a differentially checked specialized field
+  backend, fixed-exponent square-root-ratio decoding, fixed-base secret
+  multiplication, and explicitly public variable-time verification tables.
 - Current scan boundary: scan `0b7ec637-7435-486b-b36c-c01502374d58`
   formally targeted an older revision and excluded the provider, although its
   two retained findings were validated against then-current HEAD
@@ -30,7 +31,8 @@
 - Secret cleanup: named logical owners are RAII-cleared on ordinary return and
   panic unwinding; compiler-generated and by-value arithmetic copies do not
   carry a forensic erasure guarantee.
-- Outside this round: permanent identifiers, G301 wiring, production use and
-  standards claims. The experimental provider, ASN.1/OID, PKI and test-only
-  TLS surfaces are included in the next full scan.
+- Outside this round: an external TLS SignatureScheme allocation, G301 wiring,
+  production use and standards claims. The project-assigned ASN.1 OID,
+  experimental provider, PKI and test-only TLS surfaces are included in the
+  next full scan.
 - No production, constant-time-completion, standards or release claim is made.

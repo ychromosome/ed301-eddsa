@@ -1,8 +1,8 @@
 /*
  * Acceptance section 4 (PKI): CSR generation and verification, self-signed
  * certificate, CA-signed leaf chain, corrupted-signature rejection, all
- * through public OpenSSL interfaces with the explicitly ephemeral,
- * parameterless test AlgorithmIdentifier.  The providers are loaded into
+ * through public OpenSSL interfaces with the project-assigned,
+ * parameterless AlgorithmIdentifier.  The providers are loaded into
  * the default library context because the X509 convenience signers fetch
  * from it.
  */
@@ -140,12 +140,12 @@ int main(void)
     if (ca_key == NULL || leaf_key == NULL)
         return d00_summary("provider_pki");
 
-    /* The ephemeral test OID resolves to a usable NID with a sigid. */
+    /* The project-assigned OID resolves to a usable NID with a sigid. */
     {
         int nid = OBJ_txt2nid(D00_OID_TEXT);
         int signature_nid = NID_undef;
 
-        D00_CHECK(nid != NID_undef, "ephemeral OID registered");
+        D00_CHECK(nid != NID_undef, "project OID registered");
         D00_CHECK(OBJ_find_sigid_by_algs(&signature_nid, NID_undef,
                 nid) == 1 && signature_nid == nid,
             "sigid maps the algorithm to itself with no digest");

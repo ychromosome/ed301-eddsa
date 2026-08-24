@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [features]
 secret-taint-instrumentation = ["dep:ed301-valgrind-client"]
+sign-self-verify = []
 
 [dependencies]
 crypto-bigint = { version = "=0.7.5", default-features = false, features = ["zeroize"] }

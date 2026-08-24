@@ -17,9 +17,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crypto_bigint::CtEq;
 use ed301_eddsa::{
-    SigningKey, VerifyingKey,
+    ExpandedSigningKey, Signature, SigningKey, VerifyingKey,
     parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
-    validate_public_key, verify,
 };
 use zeroize::Zeroize;
 
@@ -100,18 +99,24 @@ impl Drop for SecretSeed {
     }
 }
 
+#[derive(Clone)]
+struct PrivateKeyMaterial {
+    seed: SecretSeed,
+    expanded: ExpandedSigningKey,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct DraftKey {
-    private: Option<SecretSeed>,
-    public: Option<[u8; PUBLIC_KEY_BYTES]>,
+    private: Option<PrivateKeyMaterial>,
+    public: Option<VerifyingKey>,
 }
 
 #[derive(Clone, Default)]
 enum SignatureOperation {
     #[default]
     Uninitialized,
-    Sign(SecretSeed),
-    Verify([u8; PUBLIC_KEY_BYTES]),
+    Sign(ExpandedSigningKey),
+    Verify(VerifyingKey),
 }
 
 #[derive(Clone, Default)]
@@ -127,10 +132,9 @@ pub(crate) struct DraftSignatureContext {
 /// this feature and contains neither the hook nor the variable-name string.
 #[cfg(feature = "test-failpoint")]
 fn hit_panic_failpoint(name: &str) {
-    if let Ok(value) = std::env::var("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT")
-        && value == name
-    {
-        panic!("injected test panic in {name}");
+    match std::env::var("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT") {
+        Ok(value) if value == name => panic!("injected test panic in {name}"),
+        _ => {}
     }
 }
 
@@ -206,6 +210,14 @@ fn ffi_int(operation: impl FnOnce() -> c_int) -> c_int {
     catch_unwind(AssertUnwindSafe(operation)).unwrap_or(0)
 }
 
+/// Catch a verification panic without collapsing an internal failure into a
+/// cryptographic non-match.  OpenSSL's provider contract reserves zero for a
+/// validly executed verification whose equation does not match, while a
+/// negative return reports an operational error.
+fn ffi_verify_int(operation: impl FnOnce() -> c_int) -> c_int {
+    catch_unwind(AssertUnwindSafe(operation)).unwrap_or(-1)
+}
+
 fn ffi_pointer(operation: impl FnOnce() -> *mut c_void) -> *mut c_void {
     catch_unwind(AssertUnwindSafe(operation)).unwrap_or(core::ptr::null_mut())
 }
@@ -261,30 +273,35 @@ pub(crate) unsafe extern "C" fn key_import(
             return 0;
         }
 
-        let derived_public = match raw_private.as_ref() {
-            Some(seed) => match derive_public(&seed.0) {
-                Some(derived) => Some(derived),
+        let private = match raw_private {
+            Some(seed) => match prepare_private(seed) {
+                Some(private) => Some(private),
                 None => return 0,
             },
             None => None,
         };
+        let derived_public = private
+            .as_ref()
+            .map(|private| private.expanded.verifying_key());
 
-        if let Some(public) = raw_public.as_ref() {
-            if !validate_public_key(public) {
-                return 0;
-            }
-            if let Some(derived) = derived_public.as_ref()
-                && !bytes_equal(derived, public)
+        let supplied_public = match raw_public {
+            Some(public) => match VerifyingKey::from_bytes(&public) {
+                Ok(public) => Some(public),
+                Err(_) => return 0,
+            },
+            None => None,
+        };
+        if let Some(public) = supplied_public.as_ref() {
+            if derived_public
+                .as_ref()
+                .is_some_and(|derived| !bytes_equal(&derived.to_bytes(), &public.to_bytes()))
             {
                 return 0;
             }
         }
 
-        let public = derived_public.or(raw_public);
-        *key = DraftKey {
-            private: raw_private,
-            public,
-        };
+        let public = derived_public.or(supplied_public);
+        *key = DraftKey { private, public };
         1
     })
 }
@@ -301,24 +318,26 @@ pub(crate) unsafe extern "C" fn key_set_encoded_public(
             return 0;
         };
         // SAFETY: Parameter storage is readable for this call.
-        let Some(Some(public)) =
+        let Some(Some(encoded)) =
             (unsafe { read_optional_exact::<PUBLIC_KEY_BYTES>(public, public_len) })
         else {
             return 0;
         };
-        if !validate_public_key(&public) {
+        let Ok(public) = VerifyingKey::from_bytes(&encoded) else {
             return 0;
-        }
-        if let Some(existing) = key.public.as_ref()
-            && !bytes_equal(existing, &public)
+        };
+        if key
+            .public
+            .as_ref()
+            .is_some_and(|existing| !bytes_equal(&existing.to_bytes(), &public.to_bytes()))
         {
             return 0;
         }
         if let Some(private) = key.private.as_ref() {
-            let Some(derived) = derive_public(&private.0) else {
-                return 0;
-            };
-            if !bytes_equal(&derived, &public) {
+            if !bytes_equal(
+                &private.expanded.verifying_key().to_bytes(),
+                &public.to_bytes(),
+            ) {
                 return 0;
             }
         }
@@ -338,12 +357,13 @@ pub(crate) unsafe extern "C" fn key_from_seed(seed: *const u8, seed_len: usize) 
         let Some(Some(seed)) = (unsafe { read_optional_secret_seed(seed, seed_len) }) else {
             return core::ptr::null_mut();
         };
-        let Some(public) = derive_public(&seed.0) else {
+        let Some(private) = prepare_private(seed) else {
             return core::ptr::null_mut();
         };
+        let public = private.expanded.verifying_key();
 
         let key = DraftKey {
-            private: Some(seed),
+            private: Some(private),
             public: Some(public),
         };
         match try_box_at("key_generate", key) {
@@ -368,7 +388,9 @@ pub(crate) unsafe extern "C" fn key_duplicate(
         let private = (include_private != 0)
             .then(|| source.private.clone())
             .flatten();
-        let public = (include_public != 0).then_some(source.public).flatten();
+        let public = (include_public != 0)
+            .then(|| source.public.clone())
+            .flatten();
 
         match try_box_at("key_duplicate", DraftKey { private, public }) {
             Some(key) => Box::into_raw(key).cast(),
@@ -414,9 +436,17 @@ pub(crate) unsafe extern "C" fn key_validate(
             let Some(private) = key.private.as_ref() else {
                 return 0;
             };
-            match derive_public(&private.0) {
-                Some(public) => Some(public),
-                None => return 0,
+            match SigningKey::from_seed(&private.seed.0).and_then(|signing| signing.expand()) {
+                Ok(expanded) => {
+                    if !bytes_equal(
+                        &expanded.verifying_key().to_bytes(),
+                        &private.expanded.verifying_key().to_bytes(),
+                    ) {
+                        return 0;
+                    }
+                    Some(expanded.verifying_key())
+                }
+                Err(_) => return 0,
             }
         } else {
             None
@@ -426,11 +456,9 @@ pub(crate) unsafe extern "C" fn key_validate(
             let Some(public) = key.public.as_ref() else {
                 return 0;
             };
-            if !validate_public_key(public) {
-                return 0;
-            }
-            if let Some(derived) = derived.as_ref()
-                && !bytes_equal(derived, public)
+            if derived
+                .as_ref()
+                .is_some_and(|derived| !bytes_equal(&derived.to_bytes(), &public.to_bytes()))
             {
                 return 0;
             }
@@ -462,7 +490,7 @@ pub(crate) unsafe extern "C" fn key_match(
             else {
                 return 0;
             };
-            if !bytes_equal(first, second) {
+            if !bytes_equal(&first.to_bytes(), &second.to_bytes()) {
                 return 0;
             }
         }
@@ -471,7 +499,7 @@ pub(crate) unsafe extern "C" fn key_match(
             else {
                 return 0;
             };
-            if !bytes_equal(&first.0, &second.0) {
+            if !bytes_equal(&first.seed.0, &second.seed.0) {
                 return 0;
             }
         }
@@ -495,7 +523,7 @@ pub(crate) unsafe extern "C" fn key_get_private(
             return 0;
         };
         // SAFETY: The shim supplies output_len writable bytes.
-        if unsafe { write_exact(output, output_len, &private.0) } {
+        if unsafe { write_exact(output, output_len, &private.seed.0) } {
             1
         } else {
             0
@@ -518,7 +546,7 @@ pub(crate) unsafe extern "C" fn key_get_public(
             return 0;
         };
         // SAFETY: The shim supplies output_len writable bytes.
-        if unsafe { write_exact(output, output_len, public) } {
+        if unsafe { write_exact(output, output_len, &public.to_bytes()) } {
             1
         } else {
             0
@@ -588,19 +616,19 @@ pub(crate) unsafe extern "C" fn signature_sign_init(
         let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
             return 0;
         };
-        let Some(seed) = key.private.as_ref() else {
+        let Some(private) = key.private.as_ref() else {
             return 0;
         };
-        let Some(derived) = derive_public(&seed.0) else {
-            return 0;
-        };
-        if let Some(public) = key.public.as_ref()
-            && !bytes_equal(&derived, public)
-        {
+        if key.public.as_ref().is_some_and(|public| {
+            !bytes_equal(
+                &private.expanded.verifying_key().to_bytes(),
+                &public.to_bytes(),
+            )
+        }) {
             return 0;
         }
 
-        context.operation = SignatureOperation::Sign(seed.clone());
+        context.operation = SignatureOperation::Sign(private.expanded.clone());
         1
     })
 }
@@ -621,14 +649,11 @@ pub(crate) unsafe extern "C" fn signature_verify_init(
         let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
             return 0;
         };
-        let Some(public) = key.public else {
+        let Some(public) = key.public.as_ref() else {
             return 0;
         };
-        if !validate_public_key(&public) {
-            return 0;
-        }
 
-        context.operation = SignatureOperation::Verify(public);
+        context.operation = SignatureOperation::Verify(public.clone());
         1
     })
 }
@@ -647,7 +672,7 @@ pub(crate) unsafe extern "C" fn signature_sign(
         let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_ref() }) else {
             return 0;
         };
-        let SignatureOperation::Sign(seed) = &context.operation else {
+        let SignatureOperation::Sign(signing_key) = &context.operation else {
             return 0;
         };
         if output.is_null() || output_len < SIGNATURE_BYTES {
@@ -655,9 +680,6 @@ pub(crate) unsafe extern "C" fn signature_sign(
         }
         // SAFETY: The shim keeps message_len bytes readable for this call.
         let Some(message) = (unsafe { read_bytes(message, message_len) }) else {
-            return 0;
-        };
-        let Ok(signing_key) = SigningKey::from_seed(&seed.0) else {
             return 0;
         };
         let Ok(signature) = signing_key.sign(message) else {
@@ -680,7 +702,7 @@ pub(crate) unsafe extern "C" fn signature_verify(
     signature_value: *const u8,
     signature_len: usize,
 ) -> c_int {
-    ffi_int(|| {
+    ffi_verify_int(|| {
         hit_panic_failpoint("signature_verify");
         // SAFETY: The shim passes a live Rust-owned signature context.
         let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_ref() }) else {
@@ -698,11 +720,10 @@ pub(crate) unsafe extern "C" fn signature_verify(
             return 0;
         };
 
-        if verify(public, message, signature_value) {
-            1
-        } else {
-            0
-        }
+        let Ok(signature) = Signature::from_bytes(signature_value) else {
+            return 0;
+        };
+        i32::from(public.verify(message, &signature))
     })
 }
 
@@ -716,10 +737,10 @@ pub(crate) unsafe extern "C" fn cleanse(buffer: *mut u8, length: usize) {
     }));
 }
 
-fn derive_public(seed: &[u8; SEED_BYTES]) -> Option<[u8; PUBLIC_KEY_BYTES]> {
-    let signing_key = SigningKey::from_seed(seed).ok()?;
-    let verifying_key: VerifyingKey = signing_key.verifying_key().ok()?;
-    Some(verifying_key.to_bytes())
+fn prepare_private(seed: SecretSeed) -> Option<PrivateKeyMaterial> {
+    let signing_key = SigningKey::from_seed(&seed.0).ok()?;
+    let expanded = signing_key.expand().ok()?;
+    Some(PrivateKeyMaterial { seed, expanded })
 }
 
 unsafe fn read_optional_exact<const N: usize>(
@@ -800,6 +821,13 @@ mod tests {
         }
     }
 
+    fn expanded_key(fill: u8) -> ExpandedSigningKey {
+        SigningKey::from_seed(&[fill; SEED_BYTES])
+            .expect("fixed-size test seed")
+            .expand()
+            .expect("test seed expansion")
+    }
+
     #[test]
     fn try_box_zero_sized_allocates_and_drops_once() {
         let before = ZST_DROPS.load(Ordering::SeqCst);
@@ -847,9 +875,13 @@ mod tests {
 
     #[test]
     fn key_duplicate_honors_component_selection_exactly() {
+        let expanded = expanded_key(0x11);
         let source = DraftKey {
-            private: Some(SecretSeed([0x11; SEED_BYTES])),
-            public: Some([0x22; PUBLIC_KEY_BYTES]),
+            public: Some(expanded.verifying_key()),
+            private: Some(PrivateKeyMaterial {
+                seed: SecretSeed([0x11; SEED_BYTES]),
+                expanded,
+            }),
         };
 
         for (include_private, include_public) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
@@ -871,7 +903,7 @@ mod tests {
     #[test]
     fn failed_reinitialization_invalidates_old_operation() {
         let mut context = Box::new(DraftSignatureContext {
-            operation: SignatureOperation::Sign(SecretSeed([0xA5; SEED_BYTES])),
+            operation: SignatureOperation::Sign(expanded_key(0xA5)),
         });
         let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
         assert_eq!(
@@ -883,7 +915,7 @@ mod tests {
             SignatureOperation::Uninitialized
         ));
 
-        context.operation = SignatureOperation::Verify([0x5A; PUBLIC_KEY_BYTES]);
+        context.operation = SignatureOperation::Verify(expanded_key(0x5A).verifying_key());
         assert_eq!(
             unsafe { signature_verify_init(context_pointer, core::ptr::null()) },
             0
@@ -897,7 +929,7 @@ mod tests {
     #[test]
     fn signature_reset_invalidates_initialized_secret() {
         let mut context = Box::new(DraftSignatureContext {
-            operation: SignatureOperation::Sign(SecretSeed([0x3C; SEED_BYTES])),
+            operation: SignatureOperation::Sign(expanded_key(0x3C)),
         });
         let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
         unsafe { signature_reset(context_pointer) };

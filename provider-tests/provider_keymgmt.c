@@ -202,12 +202,38 @@ int main(void)
             "39-byte public key length is rejected");
         ERR_clear_error();
 
-        /* Keypair selection without the seed must fail. */
+        /*
+         * OpenSSL's raw-public constructor imports a public-only value under
+         * KEYPAIR selection.  Match the built-in Ed25519/Ed448 KEYMGMT
+         * contract without inventing a private component.
+         */
         bad = d00_key_from_params(libctx, EVP_PKEY_KEYPAIR,
             NULL, 0, base->public_key, D00_PUB_BYTES);
-        D00_CHECK(bad == NULL,
-            "keypair selection without a seed is rejected");
-        ERR_clear_error();
+        D00_CHECK(bad != NULL,
+            "keypair selection accepts a public-only raw key");
+        if (bad != NULL) {
+            unsigned char seed_out[38];
+            size_t out_len = 0;
+
+            D00_CHECK(EVP_PKEY_get_octet_string_param(bad,
+                    OSSL_PKEY_PARAM_PRIV_KEY, seed_out,
+                    sizeof(seed_out), &out_len) != 1,
+                "public-only raw key does not acquire a private seed");
+            ERR_clear_error();
+        }
+        EVP_PKEY_free(bad);
+
+        bad = EVP_PKEY_new_raw_public_key_ex(libctx, D00_ALG,
+            D00_PROP, base->public_key, D00_PUB_BYTES);
+        D00_CHECK(bad != NULL,
+            "EVP_PKEY_new_raw_public_key_ex imports the public key");
+        EVP_PKEY_free(bad);
+
+        bad = EVP_PKEY_new_raw_private_key_ex(libctx, D00_ALG,
+            D00_PROP, base->seed, D00_SEED_BYTES);
+        D00_CHECK(bad != NULL,
+            "EVP_PKEY_new_raw_private_key_ex imports the seed");
+        EVP_PKEY_free(bad);
 
         /* Missing selection material: empty parameter list. */
         bad = d00_key_from_params(libctx, EVP_PKEY_KEYPAIR,

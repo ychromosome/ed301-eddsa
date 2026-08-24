@@ -46,6 +46,12 @@ capability. PKI encoders and the private-use TLS proof are separately named,
 disabled-by-default test artifacts whose registry setup belongs to the host
 harness.
 
+The optional PKI integration uses the internally assigned Adiumentum OID
+`1.3.6.1.4.1.66282.301.3` for this exact Ed301-EdDSA key/signature profile.
+This private-enterprise allocation is not a standards or IANA TLS
+registration. See `docs/OID_REGISTRY.md` for the allocation and immutability
+rules.
+
 The provider is an integration candidate, not a release.  See
 `PROVIDER_STATUS.md`.
 

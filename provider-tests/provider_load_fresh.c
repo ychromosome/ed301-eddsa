@@ -1,8 +1,8 @@
 /*
  * Fresh-process parallel first-use races for the host-owned PKI registry.
  *
- * The earlier parallel-load harness had already registered the ephemeral
- * OID serially before its threads started, so the initial
+ * The earlier parallel-load harness had already registered the project OID
+ * serially before its threads started, so the initial
  * FREE -> OBJ_create -> OBJ_add_sigid transition was never raced.  This
  * harness re-executes itself so that EVERY raced load happens in a fresh
  * process whose object registry has never seen the identifier: the child
@@ -15,7 +15,7 @@
  *                  separate byte-identical copy in per-thread lib contexts;
  *                  there is deliberately no provider-local registry lock
  *   conflict       the child pre-registers a conflicting binding for the
- *                  ephemeral OID, then races first loads: every load must
+ *                  project OID, then races first loads: every load must
  *                  be blocked by the host preflight
  *
  * The child prints the exact registry state (NID and sigid mapping) before

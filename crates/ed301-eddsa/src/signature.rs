@@ -4,7 +4,7 @@
 extern crate std;
 
 use crate::{
-    edwards::EdwardsPoint,
+    edwards::{EdwardsPoint, VartimePointTable},
     parameters::{FIELD_BYTES, PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
     scalar::Scalar,
     secret::{Secret, secret},
@@ -46,22 +46,28 @@ impl SigningKey {
 
     /// Derive the public verification key.
     pub fn verifying_key(&self) -> Result<VerifyingKey, SignatureError> {
-        let expanded = ExpandedSecret::derive(&self.seed)?;
-        VerifyingKey::from_bytes(&expanded.public_key).map_err(|_| SignatureError::InternalFailure)
+        Ok(self.expand()?.verifying_key())
+    }
+
+    /// Expand this seed into a reusable, zeroizing signing key.
+    ///
+    /// Reuse this object when signing more than once.  Expansion hashes the
+    /// seed, derives the public point and validates the resulting key once.
+    pub fn expand(&self) -> Result<ExpandedSigningKey, SignatureError> {
+        ExpandedSigningKey::derive(&self.seed)
     }
 
     /// Sign one opaque message with the exact context-free draft transcript.
     pub fn sign(&self, message: &[u8]) -> Result<Signature, SignatureError> {
-        let expanded = ExpandedSecret::derive(&self.seed)?;
-        sign_expanded(&expanded, message)
+        self.expand()?.sign(message)
     }
 }
 
 /// Fully validated public verification key.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct VerifyingKey {
     encoded: [u8; PUBLIC_KEY_BYTES],
-    point: EdwardsPoint,
+    odd_multiples: VartimePointTable,
 }
 
 impl VerifyingKey {
@@ -72,15 +78,12 @@ impl VerifyingKey {
             .map_err(|_| SignatureError::InvalidPublicKey)?;
         let point = EdwardsPoint::decode_strict_subgroup(encoded)
             .map_err(|_| SignatureError::InvalidPublicKey)?;
-        Ok(Self {
-            encoded: *encoded,
-            point,
-        })
+        Ok(Self::from_validated_point(*encoded, point))
     }
 
     /// Return the canonical public-key bytes.
     #[must_use]
-    pub const fn to_bytes(self) -> [u8; PUBLIC_KEY_BYTES] {
+    pub const fn to_bytes(&self) -> [u8; PUBLIC_KEY_BYTES] {
         self.encoded
     }
 
@@ -89,14 +92,21 @@ impl VerifyingKey {
     pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
         let digest = challenge_hash(&signature.commitment_encoding, &self.encoded, message);
         let challenge = hash_to_scalar(digest);
-        let left = EdwardsPoint::BASEPOINT
-            .scalar_mul(&signature.response)
-            .multiply_by_cofactor();
-        let right = signature
-            .commitment
-            .add(self.point.scalar_mul(&challenge))
-            .multiply_by_cofactor();
-        left.ct_eq(&right).to_bool()
+        let equation = EdwardsPoint::vartime_double_scalar_mul_basepoint(
+            &signature.response,
+            &challenge,
+            &self.odd_multiples,
+        )
+        .add(signature.commitment.negate())
+        .multiply_by_cofactor();
+        equation.is_identity().to_bool()
+    }
+
+    fn from_validated_point(encoded: [u8; PUBLIC_KEY_BYTES], point: EdwardsPoint) -> Self {
+        Self {
+            encoded,
+            odd_multiples: point.prepare_vartime_table(),
+        }
     }
 }
 
@@ -171,16 +181,13 @@ pub fn verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
     public_key.verify(message, &signature)
 }
 
-fn sign_expanded(expanded: &ExpandedSecret, message: &[u8]) -> Result<Signature, SignatureError> {
+fn sign_expanded(
+    expanded: &ExpandedSigningKey,
+    message: &[u8],
+) -> Result<Signature, SignatureError> {
     let nonce_digest = nonce_hash(&expanded.prefix, message);
     let nonce = hash_to_scalar(nonce_digest);
-    let commitment_point = EdwardsPoint::BASEPOINT.scalar_mul(&nonce);
-
-    let mut commitment_is_subgroup = commitment_point.is_prime_subgroup();
-    declassify(&mut commitment_is_subgroup);
-    if !commitment_is_subgroup.to_bool() {
-        return Err(SignatureError::InternalFailure);
-    }
+    let commitment_point = EdwardsPoint::scalar_mul_base(&nonce);
 
     let mut commitment = match commitment_point.encode_public_artifact() {
         Ok(commitment) => commitment,
@@ -188,7 +195,7 @@ fn sign_expanded(expanded: &ExpandedSecret, message: &[u8]) -> Result<Signature,
     };
     declassify(&mut commitment);
 
-    let challenge_digest = challenge_hash(&commitment, &expanded.public_key, message);
+    let challenge_digest = challenge_hash(&commitment, &expanded.verifying_key.encoded, message);
     let challenge = hash_to_scalar(challenge_digest);
     let secret_response_term = challenge.mul(&expanded.reduced_scalar);
     let response = nonce.add(&secret_response_term);
@@ -202,28 +209,61 @@ fn sign_expanded(expanded: &ExpandedSecret, message: &[u8]) -> Result<Signature,
     hit_secret_failpoint(SecretFailpoint::SignIntermediates);
     declassify(&mut encoded);
 
-    let signature =
-        Signature::from_bytes(&encoded[..]).map_err(|_| SignatureError::InternalFailure)?;
-    let mut serialized_commitment_is_subgroup = signature.commitment.is_prime_subgroup();
-    declassify(&mut serialized_commitment_is_subgroup);
-    if !serialized_commitment_is_subgroup.to_bool() {
-        return Err(SignatureError::InternalFailure);
-    }
-    let verifying_key = VerifyingKey::from_bytes(&expanded.public_key)
-        .map_err(|_| SignatureError::InternalFailure)?;
-    if !verifying_key.verify(message, &signature) {
+    /*
+     * R was produced by the fixed-base group operation, encoded canonically,
+     * and S is already a canonical Scalar.  Re-decoding our own public output
+     * would repeat a square root and discard the point we need immediately
+     * below.  Builds enabling `sign-self-verify` reuse this retained point for
+     * the optional full group-equation fault check.  The ordinary provider
+     * follows the standard EdDSA path and returns the canonical construction
+     * directly.
+     */
+    let signature = Signature {
+        encoded: *encoded,
+        commitment_encoding: commitment,
+        commitment: commitment_point,
+        response: *response,
+    };
+    #[cfg(feature = "sign-self-verify")]
+    if !expanded.verifying_key.verify(message, &signature) {
         return Err(SignatureError::InternalFailure);
     }
     Ok(signature)
 }
 
-struct ExpandedSecret {
+/// Reusable signing state derived from one seed.
+///
+/// The reduced secret scalar and nonce prefix remain in zeroizing owners.
+/// Cloning deliberately creates another zeroizing owner; callers should
+/// prefer borrowing unless an API lifecycle requires an immutable snapshot.
+pub struct ExpandedSigningKey {
     reduced_scalar: Secret<Scalar>,
     prefix: Secret<[u8; FIELD_BYTES]>,
-    public_key: [u8; PUBLIC_KEY_BYTES],
+    verifying_key: VerifyingKey,
 }
 
-impl ExpandedSecret {
+impl Clone for ExpandedSigningKey {
+    fn clone(&self) -> Self {
+        Self {
+            reduced_scalar: secret(*self.reduced_scalar),
+            prefix: secret(*self.prefix),
+            verifying_key: self.verifying_key.clone(),
+        }
+    }
+}
+
+impl ExpandedSigningKey {
+    /// Return the already validated public verification key.
+    #[must_use]
+    pub fn verifying_key(&self) -> VerifyingKey {
+        self.verifying_key.clone()
+    }
+
+    /// Sign one opaque message without re-expanding the seed.
+    pub fn sign(&self, message: &[u8]) -> Result<Signature, SignatureError> {
+        sign_expanded(self, message)
+    }
+
     fn derive(seed: &[u8; SEED_BYTES]) -> Result<Self, SignatureError> {
         let expanded_hash = expand_seed(seed);
         let mut pruned_scalar = secret([0_u8; FIELD_BYTES]);
@@ -236,7 +276,7 @@ impl ExpandedSecret {
         let reduced_scalar = Scalar::reduce_pruned_le(&pruned_scalar);
         #[cfg(test)]
         hit_secret_failpoint(SecretFailpoint::ExpandedSecret);
-        let public_point = EdwardsPoint::BASEPOINT.scalar_mul_pruned(&pruned_scalar);
+        let public_point = EdwardsPoint::scalar_mul_base_pruned(&pruned_scalar);
         let mut public_is_valid = public_point.is_prime_subgroup_nonidentity();
         declassify(&mut public_is_valid);
         if !public_is_valid.to_bool() {
@@ -249,10 +289,18 @@ impl ExpandedSecret {
         };
         declassify(&mut public_key);
 
+        // Reconstruct the cached verification point from the now-public wire
+        // artifact.  The scalar multiplier's projective Z coordinate is not
+        // itself part of the public API and therefore remains secret-tainted;
+        // treating that internal representation as public would hide possible
+        // post-derivation leakage during affine-table construction.
+        let public_point =
+            EdwardsPoint::decode(&public_key).map_err(|_| SignatureError::InternalFailure)?;
+
         Ok(Self {
             reduced_scalar,
             prefix,
-            public_key,
+            verifying_key: VerifyingKey::from_validated_point(public_key, public_point),
         })
     }
 }
@@ -374,6 +422,6 @@ pub(crate) mod test_support {
             );
         }
 
-        assert!(core::mem::needs_drop::<ExpandedSecret>());
+        assert!(core::mem::needs_drop::<ExpandedSigningKey>());
     }
 }

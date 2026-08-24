@@ -316,7 +316,7 @@ int main(void)
     EVP_PKEY *key = NULL;
     EVP_PKEY *rsa = NULL;
     EVP_PKEY *ec = NULL;
-    unsigned char foreign[72] = { 0 };
+    unsigned char foreign[D00_PKCS8_DER_BYTES + 1] = { 0 };
 
     d00_property = D00_PKI_PROP;
     draft = d00_load_named(libctx, &deflt, D00_PKI_PROVIDER);
@@ -331,9 +331,9 @@ int main(void)
 
     pkcs8 = make_der(libctx, 0, &pkcs8_length);
     spki = make_der(libctx, 1, &spki_length);
-    D00_CHECK(pkcs8 != NULL && pkcs8_length == 71,
+    D00_CHECK(pkcs8 != NULL && pkcs8_length == D00_PKCS8_DER_BYTES,
         "exact PKCS#8 test object produced");
-    D00_CHECK(spki != NULL && spki_length == 67,
+    D00_CHECK(spki != NULL && spki_length == D00_SPKI_DER_BYTES,
         "exact SPKI test object produced");
 
     key = d00_strict_der_import(libctx, pkcs8, pkcs8_length, 0);

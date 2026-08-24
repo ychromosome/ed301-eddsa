@@ -33,6 +33,7 @@ ROOT=$(readlink -f -- "$ROOT_ARG")
 PREFIX=$ROOT/inst/$VERSION
 LOGS=$ROOT/logs/$VERSION
 MANIFEST=$LOGS/evidence_manifest.sha256
+SOURCE=$ROOT/src/openssl-$VERSION
 
 test -d "$PREFIX" && test ! -L "$PREFIX" \
     && test -d "$LOGS" && test ! -L "$LOGS" || {
@@ -51,6 +52,18 @@ ACTUAL=$(sha256sum "$MANIFEST" | awk '{print $1}')
 }
 (cd "$ROOT" && sha256sum --strict --quiet -c \
     "logs/$VERSION/evidence_manifest.sha256")
+
+# The provider acceptance lane also reuses OpenSSL's native evp_test binary.
+# Bind that executable to the already externally sealed post-build source
+# manifest instead of trusting an arbitrary file under the lane directory.
+sha256sum --strict --quiet -c "$LOGS/source_manifest_post.sha256.seal"
+test -d "$SOURCE" && test ! -L "$SOURCE"
+test -x "$SOURCE/test/evp_test" && test ! -L "$SOURCE/test/evp_test"
+EVP_TEST_EXPECTED=$(awk '$2 == "./test/evp_test" { print $1 }' \
+    "$LOGS/source_manifest_post.sha256")
+test -n "$EVP_TEST_EXPECTED"
+test "$(sha256sum "$SOURCE/test/evp_test" | awk '{ print $1 }')" \
+    = "$EVP_TEST_EXPECTED"
 
 grep -Fqx "lane=$VERSION" "$LOGS/lane_identity.seal"
 grep -Fqx "prefix_rel=inst/$VERSION" "$LOGS/lane_identity.seal"

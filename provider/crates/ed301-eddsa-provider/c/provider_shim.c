@@ -4,13 +4,16 @@
  * Adapted from the historical ed301-openssl-provider shim (dispatch shapes,
  * selection logic, buffer contracts and serialization structure).  See the
  * result provenance map.  The historical
- * Ed301-Sig-v1 identity, context support, transcript, OID 1.3.6.1.4.1.66282.*
- * and TLS codepoint 0xFE2D are intentionally not reused.
+ * Ed301-Sig-v1 identity, context support, transcript, OID
+ * 1.3.6.1.4.1.66282.301.1 and TLS codepoint 0xFE2D are intentionally not
+ * reused.
  *
- * Identifier boundary: every identifier below marked TEST-ONLY is an
- * explicitly ephemeral, host-audited, NONREGISTRABLE working identifier for
- * this isolated experiment.  Nothing here is a permanent OID or IANA
- * assignment, a production claim, a constant-time claim or a release claim.
+ * Identifier boundary: 1.3.6.1.4.1.66282.301.3 is assigned by the project
+ * owner beneath the Adiumentum GmbH private-enterprise arc to this exact
+ * Ed301-EdDSA profile.  That private assignment is not an IANA TLS
+ * SignatureScheme registration or a standards, production, constant-time or
+ * release claim.  Every TLS identifier below marked TEST-ONLY remains an
+ * explicitly private-use, NONREGISTRABLE working identifier.
  */
 
 #include <stdarg.h>
@@ -57,15 +60,14 @@
 #define ED301D00_TLS_VERSION_1_3 0x0304
 
 /*
- * TEST-ONLY, NONREGISTRABLE ephemeral identifier profile for this isolated
- * experiment.  The OID is UUID-derived under the 2.25 arc and was collision
- * checked at generation.  Exact collision checks run in the host integration
- * harness, against the loading libcrypto registry.  The TLS SignatureScheme
- * codepoint is from the private-use range and deliberately differs from the
- * historical 0xFE2D; it exists only in separately named TLS test artifacts.
+ * Project-assigned OID for this exact profile.  Exact collision checks run in
+ * the host integration harness against the loading libcrypto registry.  The
+ * TLS SignatureScheme codepoint is a separate TEST-ONLY value from the
+ * private-use range and deliberately differs from the historical 0xFE2D; it
+ * exists only in separately named TLS test artifacts.
  */
 #define ED301D00_OID_TEXT \
-    "2.25.195456677253783758411179833219689607856"
+    "1.3.6.1.4.1.66282.301.3"
 #define ED301D00_TLS_SIGALG_CODE_POINT ((unsigned int)0xfe84)
 
 /*
@@ -103,8 +105,8 @@ static const char ED301D00_PROVIDER_NAME[] =
     "Ed301-EdDSA-draft-00 Experimental Provider (test-only)";
 static const char ED301D00_PROVIDER_VERSION[] = "0.0.1";
 static const char ED301D00_PROVIDER_BUILDINFO[] =
-    "ed301_eddsa_draft00 provider-experiment-1 (test-only, nonregistrable "
-    "identifiers); headers: " OPENSSL_VERSION_TEXT;
+    "ed301_eddsa_draft00 provider-experiment-1 (project-assigned OID; "
+    "private-use TLS test identifier); headers: " OPENSSL_VERSION_TEXT;
 static const char ED301D00_ALGORITHM_NAME[] = "Ed301-EdDSA-draft-00";
 static const char ED301D00_ALGORITHM_NAMES[] = "Ed301-EdDSA-draft-00";
 static const char ED301D00_PROPERTY[] =
@@ -117,41 +119,39 @@ static const char ED301D00_TLS_SIGALG_IANA_NAME[] =
 #endif
 
 /*
- * DER SEQUENCE { OBJECT IDENTIFIER 2.25.195456677253783758411179833219689607856 };
- * parameterless by profile.  TEST-ONLY, NONREGISTRABLE.
+ * DER SEQUENCE { OBJECT IDENTIFIER 1.3.6.1.4.1.66282.301.3 };
+ * parameterless by profile.
  */
 static const unsigned char ED301D00_ALGORITHM_ID_DER[] = {
-    0x30, 0x16, 0x06, 0x14, 0x69, 0x82, 0xa6, 0x8b,
-    0xcb, 0x8d, 0xb3, 0x93, 0xe2, 0x9f, 0x8b, 0x8a,
-    0x9e, 0xf1, 0xc4, 0xf2, 0xe5, 0xd7, 0xe5, 0x30
+    0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06, 0x01, 0x04,
+    0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d, 0x03
 };
 
 static const unsigned char ED301D00_SPKI_PREFIX[] = {
-    0x30, 0x41, 0x30, 0x16, 0x06, 0x14, 0x69, 0x82,
-    0xa6, 0x8b, 0xcb, 0x8d, 0xb3, 0x93, 0xe2, 0x9f,
-    0x8b, 0x8a, 0x9e, 0xf1, 0xc4, 0xf2, 0xe5, 0xd7,
-    0xe5, 0x30, 0x03, 0x27, 0x00
+    0x30, 0x38, 0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06,
+    0x01, 0x04, 0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d,
+    0x03, 0x03, 0x27, 0x00
 };
 
 static const unsigned char ED301D00_PKCS8_PREFIX[] = {
-    0x30, 0x45, 0x02, 0x01, 0x00, 0x30, 0x16, 0x06,
-    0x14, 0x69, 0x82, 0xa6, 0x8b, 0xcb, 0x8d, 0xb3,
-    0x93, 0xe2, 0x9f, 0x8b, 0x8a, 0x9e, 0xf1, 0xc4,
-    0xf2, 0xe5, 0xd7, 0xe5, 0x30, 0x04, 0x28, 0x04,
-    0x26
+    0x30, 0x3c, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06,
+    0x0b, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x84, 0x85,
+    0x6a, 0x82, 0x2d, 0x03, 0x04, 0x28, 0x04, 0x26
 };
 
-#define ED301D00_OID_TLV_BYTES ((size_t)22)
+#define ED301D00_OID_TLV_BYTES ((size_t)13)
+#define ED301D00_MAX_ENCODED_KEY_BYTES 62
 
 _Static_assert(
-    sizeof(ED301D00_ALGORITHM_ID_DER) == 24,
-    "draft-00 AlgorithmIdentifier must be exactly 24 bytes");
+    sizeof(ED301D00_ALGORITHM_ID_DER) == 15,
+    "draft-00 AlgorithmIdentifier must be exactly 15 bytes");
 _Static_assert(
-    sizeof(ED301D00_SPKI_PREFIX) + ED301D00_PUBLIC_KEY_BYTES == 67,
-    "draft-00 SPKI must be exactly 67 bytes");
+    sizeof(ED301D00_SPKI_PREFIX) + ED301D00_PUBLIC_KEY_BYTES == 58,
+    "draft-00 SPKI must be exactly 58 bytes");
 _Static_assert(
-    sizeof(ED301D00_PKCS8_PREFIX) + ED301D00_SEED_BYTES == 71,
-    "draft-00 PKCS#8 must be exactly 71 bytes");
+    sizeof(ED301D00_PKCS8_PREFIX) + ED301D00_SEED_BYTES
+        == ED301D00_MAX_ENCODED_KEY_BYTES,
+    "draft-00 PKCS#8 must be exactly 62 bytes");
 
 typedef struct ed301d00_key_st {
     ED301D00_PROVIDER_CONTEXT *provider;
@@ -434,14 +434,16 @@ static int ed301d00_key_import(
     /*
      * Selection contract (see the disclosed historical import-selection
      * correction, independently re-reviewed for this experiment): a
-     * private-only selection requires a seed, a public-only selection
-     * requires a public key, and a keypair selection requires at least the
-     * seed, whose derived public key must match any supplied encoding.
+     * private-only selection requires a seed and a public-only selection
+     * requires a public key.  A keypair selection accepts either component:
+     * OpenSSL's EVP_PKEY_new_raw_public_key_ex() deliberately imports a
+     * public-only raw key with OSSL_KEYMGMT_SELECT_KEYPAIR, as do the built-in
+     * Ed25519/Ed448 key managers.  Whenever a seed is present its derived
+     * public key must still match any supplied encoding.
      */
     if ((private_key == NULL && public_key == NULL)
             || (wants_private && !wants_public && private_key == NULL)
-            || (wants_public && !wants_private && public_key == NULL)
-            || (wants_private && wants_public && private_key == NULL))
+            || (wants_public && !wants_private && public_key == NULL))
         goto invalid;
 
     if (key->provider->rust->key_import(
@@ -1127,18 +1129,23 @@ static int ed301d00_signature_verify(
     size_t message_length)
 {
     ED301D00_SIGNATURE_CONTEXT *signature = signature_context;
+    int result;
 
     if (signature == NULL || signature->provider == NULL
             || signature->provider->rust == NULL
             || signature->inner == NULL || signature_value == NULL
             || signature_length != ED301D00_SIGNATURE_BYTES)
         return 0;
-    return signature->provider->rust->signature_verify(
+    result = signature->provider->rust->signature_verify(
         signature->inner,
         message,
         message_length,
         signature_value,
         signature_length);
+    if (result < 0)
+        ed301d00_raise(signature->provider, ED301D00_R_INVALID_STATE,
+            "draft-00 verification failed internally");
+    return result;
 }
 
 static int ed301d00_digest_name_is_pure(const char *digest_name)
@@ -1614,7 +1621,7 @@ static int ed301d00_codec_encode(
     void *passphrase_argument)
 {
     ED301D00_CODEC_CONTEXT *codec = codec_context;
-    unsigned char encoded[71] = { 0 };
+    unsigned char encoded[ED301D00_MAX_ENCODED_KEY_BYTES] = { 0 };
     unsigned char key_bytes[ED301D00_SEED_BYTES] = { 0 };
     const unsigned char *prefix;
     size_t prefix_length = 0;
@@ -1690,7 +1697,7 @@ static int ed301d00_codec_decode(
     void *passphrase_argument)
 {
     ED301D00_CODEC_CONTEXT *codec = codec_context;
-    unsigned char encoded[71] = { 0 };
+    unsigned char encoded[ED301D00_MAX_ENCODED_KEY_BYTES] = { 0 };
     const unsigned char *prefix;
     void *key = NULL;
     void *reference;
@@ -1945,12 +1952,12 @@ static const OSSL_DISPATCH ED301D00_SIGNATURE_DISPATCH[] = {
         (void (*)(void))ed301d00_signature_new_context
     },
     {
-        OSSL_FUNC_SIGNATURE_SIGN_INIT,
+        OSSL_FUNC_SIGNATURE_SIGN_MESSAGE_INIT,
         (void (*)(void))ed301d00_signature_sign_init
     },
     { OSSL_FUNC_SIGNATURE_SIGN, (void (*)(void))ed301d00_signature_sign },
     {
-        OSSL_FUNC_SIGNATURE_VERIFY_INIT,
+        OSSL_FUNC_SIGNATURE_VERIFY_MESSAGE_INIT,
         (void (*)(void))ed301d00_signature_verify_init
     },
     { OSSL_FUNC_SIGNATURE_VERIFY, (void (*)(void))ed301d00_signature_verify },

@@ -33,6 +33,26 @@ key derivation and signing through explicit public-output boundaries. It is a
 preliminary control-flow and memory check for one local build, not a proof of
 constant-time execution, complete zeroization or fault resistance.
 
+Secret fixed-base multiplication uses signed radix 16 with a fixed number of
+digits. Every digit scans all eight entries in its table and selects with
+constant-time masks. The specialized five-limb field backend uses fixed-size
+loops, and each runtime conditional correction crosses the `CtAssign`/`cmov`
+barrier. Separate `const` helpers exist only to construct immutable public
+tables during compilation; runtime secret arithmetic cannot call them. Public
+verification uses explicitly named variable-time wNAF/Straus recoding and
+table indexing; its response, challenge, commitment and verification key are
+public. Point decoding uses a public fixed-exponent square-root-ratio
+calculation and always verifies the candidate before accepting it. These
+source properties still require the fresh final-code disassembly, taint and
+timing gates listed below.
+
+The ordinary provider follows the standard EdDSA signing path and does not
+perform a second complete verification of each signature. The optional
+`sign-self-verify` feature retains that extra fault-detection check for a
+separately selected build. This choice does not alter secret arithmetic,
+transcript bytes or the verification language; it does change the additional
+fault-detection boundary and must remain explicit in downstream build records.
+
 Provider key generation requests 149 bits from the application-linked private
 RAND path in a child `OSSL_LIB_CTX`. A thread that uses that RAND path calls
 `OPENSSL_thread_stop_ex()` for the child context before provider teardown;

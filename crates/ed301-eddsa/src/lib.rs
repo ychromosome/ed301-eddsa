@@ -13,6 +13,7 @@ compile_error!("ed301-eddsa requires panic=unwind so named secret owners are dro
 
 mod edwards;
 mod field;
+mod field_5x64;
 pub mod parameters;
 mod scalar;
 mod secret;
@@ -21,7 +22,8 @@ pub mod signature;
 mod signature_hash;
 
 pub use signature::{
-    Signature, SignatureError, SigningKey, VerifyingKey, sign, validate_public_key, verify,
+    ExpandedSigningKey, Signature, SignatureError, SigningKey, VerifyingKey, sign,
+    validate_public_key, verify,
 };
 
 #[cfg(test)]

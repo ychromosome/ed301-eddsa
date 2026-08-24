@@ -2,8 +2,8 @@
  * Acceptance section 4 (serialization): PKCS#8 and SPKI round trips in DER
  * and PEM through provider encoders plus the mandatory project-owned,
  * complete-buffer import boundary, deliberate
- * absence of private text output, and rejection of the historical OID,
- * ASN.1 NULL parameters, wrong OIDs
+ * absence of private text output, and rejection of the historical and X301
+ * OIDs, ASN.1 NULL parameters, wrong OIDs
  * and sizes, truncation, trailing data and malformed public keys.
  * Encrypted PKCS#8 (and its wrong-password rejection) is exercised through
  * the openssl CLI in run_matrix.sh, mirroring the historical route.
@@ -30,6 +30,19 @@ static const unsigned char HISTORICAL_SPKI_PREFIX[20] = {
     0x30, 0x38, 0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06,
     0x01, 0x04, 0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d,
     0x01, 0x03, 0x27, 0x00
+};
+
+/* X301 remains assigned to .301.2 and must not alias Ed301-EdDSA. */
+static const unsigned char X301_PKCS8_PREFIX[24] = {
+    0x30, 0x3c, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06,
+    0x0b, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x84, 0x85,
+    0x6a, 0x82, 0x2d, 0x02, 0x04, 0x28, 0x04, 0x26
+};
+
+static const unsigned char X301_SPKI_PREFIX[20] = {
+    0x30, 0x38, 0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06,
+    0x01, 0x04, 0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d,
+    0x02, 0x03, 0x27, 0x00
 };
 
 static unsigned char *encode(
@@ -98,12 +111,12 @@ int main(void)
             "DER", "PrivateKeyInfo", &der_len);
         EVP_PKEY *decoded;
 
-        D00_CHECK(der != NULL && der_len == 71
+        D00_CHECK(der != NULL && der_len == D00_PKCS8_DER_BYTES
                 && memcmp(der, D00_PKCS8_PREFIX,
                     sizeof(D00_PKCS8_PREFIX)) == 0
                 && memcmp(der + sizeof(D00_PKCS8_PREFIX), base->seed,
                     38) == 0,
-            "PKCS#8 DER is the exact 71-byte profile encoding");
+            "PKCS#8 DER is the exact 62-byte profile encoding");
 
         decoded = der == NULL ? NULL
             : decode(libctx, der, der_len, "DER", "PrivateKeyInfo",
@@ -148,19 +161,20 @@ int main(void)
 
     /* ASN.1 NULL parameters variant of our AlgorithmIdentifier. */
     {
-        unsigned char with_null[73];
+        unsigned char with_null[D00_PKCS8_DER_BYTES + 2];
         size_t index = 0;
 
-        /* SEQ(71+2) { INTEGER 0, SEQ { OID, NULL }, OCTET... } */
+        /* SEQ(62+2) { INTEGER 0, SEQ { OID, NULL }, OCTET... } */
         with_null[index++] = 0x30;
-        with_null[index++] = 0x47;
+        with_null[index++] = 0x3e;
         with_null[index++] = 0x02;
         with_null[index++] = 0x01;
         with_null[index++] = 0x00;
         with_null[index++] = 0x30;
-        with_null[index++] = 0x18;
-        memcpy(with_null + index, D00_PKCS8_PREFIX + 7, 22); /* OID TLV */
-        index += 22;
+        with_null[index++] = 0x0f;
+        memcpy(with_null + index, D00_PKCS8_PREFIX + 7,
+            D00_OID_TLV_BYTES);
+        index += D00_OID_TLV_BYTES;
         with_null[index++] = 0x05; /* NULL */
         with_null[index++] = 0x00;
         with_null[index++] = 0x04;
@@ -179,8 +193,8 @@ int main(void)
 
     /* Historical OID encodings are rejected. */
     {
-        unsigned char historical_p8[62];
-        unsigned char historical_spki[58];
+        unsigned char historical_p8[D00_PKCS8_DER_BYTES];
+        unsigned char historical_spki[D00_SPKI_DER_BYTES];
 
         memcpy(historical_p8, HISTORICAL_PKCS8_PREFIX,
             sizeof(HISTORICAL_PKCS8_PREFIX));
@@ -203,6 +217,28 @@ int main(void)
         ERR_clear_error();
     }
 
+    /* The adjacent X301 assignment is not accepted as Ed301-EdDSA. */
+    {
+        unsigned char x301_p8[D00_PKCS8_DER_BYTES];
+        unsigned char x301_spki[D00_SPKI_DER_BYTES];
+
+        memcpy(x301_p8, X301_PKCS8_PREFIX, sizeof(X301_PKCS8_PREFIX));
+        memcpy(x301_p8 + sizeof(X301_PKCS8_PREFIX), base->seed, 38);
+        D00_CHECK(decode(libctx, x301_p8, sizeof(x301_p8), "DER",
+                "PrivateKeyInfo", OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
+            "X301 PKCS#8 OID is rejected by Ed301-EdDSA import");
+        ERR_clear_error();
+
+        memcpy(x301_spki, X301_SPKI_PREFIX, sizeof(X301_SPKI_PREFIX));
+        memcpy(x301_spki + sizeof(X301_SPKI_PREFIX),
+            base->public_key, 38);
+        D00_CHECK(decode(libctx, x301_spki, sizeof(x301_spki), "DER",
+                "SubjectPublicKeyInfo",
+                OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
+            "X301 SPKI OID is rejected by Ed301-EdDSA import");
+        ERR_clear_error();
+    }
+
     /* SPKI DER is byte-exact and round-trips. */
     {
         size_t der_len = 0;
@@ -211,12 +247,12 @@ int main(void)
             "DER", "SubjectPublicKeyInfo", &der_len);
         EVP_PKEY *decoded;
 
-        D00_CHECK(der != NULL && der_len == 67
+        D00_CHECK(der != NULL && der_len == D00_SPKI_DER_BYTES
                 && memcmp(der, D00_SPKI_PREFIX,
                     sizeof(D00_SPKI_PREFIX)) == 0
                 && memcmp(der + sizeof(D00_SPKI_PREFIX), base->public_key,
                     38) == 0,
-            "SPKI DER is the exact 67-byte profile encoding");
+            "SPKI DER is the exact 58-byte profile encoding");
 
         decoded = der == NULL ? NULL
             : decode(libctx, der, der_len, "DER", "SubjectPublicKeyInfo",
@@ -227,7 +263,7 @@ int main(void)
 
         /* Malformed embedded public key: identity point. */
         if (der != NULL) {
-            unsigned char malformed[67];
+            unsigned char malformed[D00_SPKI_DER_BYTES];
 
             memcpy(malformed, der, der_len);
             memcpy(malformed + sizeof(D00_SPKI_PREFIX),

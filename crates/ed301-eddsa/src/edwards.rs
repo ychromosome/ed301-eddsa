@@ -12,15 +12,24 @@
 use crypto_bigint::Choice;
 
 use crate::{
-    field::FieldElement,
+    field_5x64::Fe301 as FieldElement,
     parameters::{FIELD_BITS, FIELD_BYTES},
     scalar::Scalar,
     secret_taint::declassify,
 };
 
-const EDWARDS_A: FieldElement = FieldElement::from_u64(2_086_388_329);
-const EDWARDS_D: FieldElement = FieldElement::from_u64(301);
-const TWO: FieldElement = FieldElement::from_u64(2);
+const EDWARDS_A: u32 = 2_086_388_329;
+const EDWARDS_D: u32 = 301;
+const BASEPOINT_TABLE_ROWS: usize = FIELD_BYTES;
+const BASEPOINT_TABLE_WIDTH: usize = 8;
+const BASEPOINT_TABLE_SIZE: usize = BASEPOINT_TABLE_ROWS * BASEPOINT_TABLE_WIDTH;
+const RADIX16_DIGITS: usize = FIELD_BYTES * 2;
+const BASEPOINT_WNAF_WIDTH: u32 = 8;
+const POINT_WNAF_WIDTH: u32 = 8;
+const BASEPOINT_ODD_MULTIPLES: usize = 1 << (BASEPOINT_WNAF_WIDTH - 2);
+const POINT_ODD_MULTIPLES: usize = 1 << (POINT_WNAF_WIDTH - 2);
+
+pub(crate) type VartimePointTable = [AffineNielsPoint; POINT_ODD_MULTIPLES];
 
 /// Canonical compressed encoding of the ED301-v1 base point.
 pub(crate) const BASEPOINT_ENCODING: [u8; FIELD_BYTES] = [
@@ -46,6 +55,67 @@ pub(crate) struct EdwardsPoint {
     y: FieldElement,
     z: FieldElement,
     t: FieldElement,
+}
+
+/// Affine cached point for the mixed-addition formulas used by fixed-base and
+/// public verification tables.  `xy = x + y` and `dt = d*x*y` remove one
+/// field multiplication and the small-constant multiply from every table add.
+#[derive(Clone, Copy)]
+pub(crate) struct AffineNielsPoint {
+    x: FieldElement,
+    y: FieldElement,
+    xy: FieldElement,
+    dt: FieldElement,
+}
+
+impl AffineNielsPoint {
+    const IDENTITY: Self = Self {
+        x: FieldElement::ZERO,
+        y: FieldElement::ONE,
+        xy: FieldElement::ONE,
+        dt: FieldElement::ZERO,
+    };
+
+    fn from_projective(point: EdwardsPoint, inverse_z: FieldElement) -> Self {
+        let x = point.x.mul(inverse_z);
+        let y = point.y.mul(inverse_z);
+        Self {
+            x,
+            y,
+            xy: x.add(y),
+            dt: x.mul(y).mul_small(EDWARDS_D),
+        }
+    }
+
+    const fn from_projective_const(point: EdwardsPoint, inverse_z: FieldElement) -> Self {
+        let x = point.x.mul_const(inverse_z);
+        let y = point.y.mul_const(inverse_z);
+        Self {
+            x,
+            y,
+            xy: x.add_const(y),
+            dt: x.mul_const(y).mul_small_const(EDWARDS_D),
+        }
+    }
+
+    fn negate(self) -> Self {
+        let x = self.x.neg();
+        Self {
+            x,
+            y: self.y,
+            xy: x.add(self.y),
+            dt: self.dt.neg(),
+        }
+    }
+
+    fn conditional_select(when_false: Self, when_true: Self, choice: Choice) -> Self {
+        Self {
+            x: FieldElement::conditional_select(when_false.x, when_true.x, choice),
+            y: FieldElement::conditional_select(when_false.y, when_true.y, choice),
+            xy: FieldElement::conditional_select(when_false.xy, when_true.xy, choice),
+            dt: FieldElement::conditional_select(when_false.dt, when_true.dt, choice),
+        }
+    }
 }
 
 impl EdwardsPoint {
@@ -96,12 +166,30 @@ impl EdwardsPoint {
     pub(crate) fn add(self, rhs: Self) -> Self {
         let xx = self.x.mul(rhs.x);
         let yy = self.y.mul(rhs.y);
-        let dt = EDWARDS_D.mul(self.t).mul(rhs.t);
+        let dt = self.t.mul_small(EDWARDS_D).mul(rhs.t);
         let zz = self.z.mul(rhs.z);
         let cross = self.x.add(self.y).mul(rhs.x.add(rhs.y)).sub(xx).sub(yy);
         let difference = zz.sub(dt);
         let sum = zz.add(dt);
-        let twisted = yy.sub(EDWARDS_A.mul(xx));
+        let twisted = yy.sub(xx.mul_small(EDWARDS_A));
+
+        Self {
+            x: cross.mul(difference),
+            y: sum.mul(twisted),
+            z: difference.mul(sum),
+            t: cross.mul(twisted),
+        }
+    }
+
+    /// Add an affine precomputed point using the complete mixed formula.
+    pub(crate) fn add_affine(self, rhs: AffineNielsPoint) -> Self {
+        let xx = self.x.mul(rhs.x);
+        let yy = self.y.mul(rhs.y);
+        let dt = self.t.mul(rhs.dt);
+        let cross = self.x.add(self.y).mul(rhs.xy).sub(xx).sub(yy);
+        let difference = self.z.sub(dt);
+        let sum = self.z.add(dt);
+        let twisted = yy.sub(xx.mul_small(EDWARDS_A));
 
         Self {
             x: cross.mul(difference),
@@ -115,8 +203,9 @@ impl EdwardsPoint {
     pub(crate) fn double(self) -> Self {
         let xx = self.x.square();
         let yy = self.y.square();
-        let two_zz = TWO.mul(self.z.square());
-        let twisted_xx = EDWARDS_A.mul(xx);
+        let zz = self.z.square();
+        let two_zz = zz.add(zz);
+        let twisted_xx = xx.mul_small(EDWARDS_A);
         let cross = self.x.add(self.y).square().sub(xx).sub(yy);
         let sum = twisted_xx.add(yy);
         let difference = sum.sub(two_zz);
@@ -127,6 +216,53 @@ impl EdwardsPoint {
             y: sum.mul(twisted_difference),
             z: difference.mul(sum),
             t: cross.mul(twisted_difference),
+        }
+    }
+
+    const fn add_const(self, rhs: Self) -> Self {
+        let xx = self.x.mul_const(rhs.x);
+        let yy = self.y.mul_const(rhs.y);
+        let dt = self.t.mul_small_const(EDWARDS_D).mul_const(rhs.t);
+        let zz = self.z.mul_const(rhs.z);
+        let cross = self
+            .x
+            .add_const(self.y)
+            .mul_const(rhs.x.add_const(rhs.y))
+            .sub_const(xx)
+            .sub_const(yy);
+        let difference = zz.sub_const(dt);
+        let sum = zz.add_const(dt);
+        let twisted = yy.sub_const(xx.mul_small_const(EDWARDS_A));
+
+        Self {
+            x: cross.mul_const(difference),
+            y: sum.mul_const(twisted),
+            z: difference.mul_const(sum),
+            t: cross.mul_const(twisted),
+        }
+    }
+
+    const fn double_const(self) -> Self {
+        let xx = self.x.square_const();
+        let yy = self.y.square_const();
+        let zz = self.z.square_const();
+        let two_zz = zz.add_const(zz);
+        let twisted_xx = xx.mul_small_const(EDWARDS_A);
+        let cross = self
+            .x
+            .add_const(self.y)
+            .square_const()
+            .sub_const(xx)
+            .sub_const(yy);
+        let sum = twisted_xx.add_const(yy);
+        let difference = sum.sub_const(two_zz);
+        let twisted_difference = twisted_xx.sub_const(yy);
+
+        Self {
+            x: cross.mul_const(difference),
+            y: sum.mul_const(twisted_difference),
+            z: difference.mul_const(sum),
+            t: cross.mul_const(twisted_difference),
         }
     }
 
@@ -160,6 +296,42 @@ impl EdwardsPoint {
         self.scalar_mul_encoded(scalar)
     }
 
+    /// Multiply the fixed base point by a canonical secret scalar.
+    ///
+    /// This is the standard EdDSA signed-radix-16 shape: 38 rows contain
+    /// `[1..8] * [256^i]B`; odd digits are accumulated, shifted by four
+    /// doublings, and followed by the even digits.  Every secret digit scans
+    /// all eight entries and uses conditional selection.
+    pub(crate) fn scalar_mul_base(scalar: &Scalar) -> Self {
+        let mut encoded = crate::secret::secret([0_u8; FIELD_BYTES]);
+        scalar.write_canonical_bytes(&mut encoded);
+        Self::scalar_mul_base_encoded(&encoded)
+    }
+
+    /// Multiply the fixed base point by the exact pruned secret encoding.
+    pub(crate) fn scalar_mul_base_pruned(scalar: &[u8; FIELD_BYTES]) -> Self {
+        Self::scalar_mul_base_encoded(scalar)
+    }
+
+    fn scalar_mul_base_encoded(scalar: &[u8; FIELD_BYTES]) -> Self {
+        let digits = signed_radix16(scalar);
+        let mut result = Self::IDENTITY;
+        let mut digit_index = 1;
+
+        while digit_index < RADIX16_DIGITS {
+            result = result.add_affine(select_basepoint(digit_index >> 1, digits[digit_index]));
+            digit_index += 2;
+        }
+
+        result = result.double().double().double().double();
+        digit_index = 0;
+        while digit_index < RADIX16_DIGITS {
+            result = result.add_affine(select_basepoint(digit_index >> 1, digits[digit_index]));
+            digit_index += 2;
+        }
+        result
+    }
+
     fn scalar_mul_with(self, mut scalar_bit: impl FnMut(usize) -> Choice) -> Self {
         let mut accumulator = Self::IDENTITY;
         let mut bit_index = FIELD_BITS;
@@ -173,6 +345,48 @@ impl EdwardsPoint {
         }
 
         accumulator
+    }
+
+    /// Compute `[base_scalar]B - [point_scalar]point` for public verification.
+    ///
+    /// Both scalar recodings, branches and table indices are variable-time.
+    /// Signature responses, challenges and verification keys are public, so
+    /// this follows the same separation used by Ed25519/Ed448 implementations:
+    /// secret signing stays on the constant-time fixed-base path while public
+    /// verification uses a Straus/wNAF multiscalar multiplication.
+    pub(crate) fn vartime_double_scalar_mul_basepoint(
+        base_scalar: &Scalar,
+        point_scalar: &Scalar,
+        point_table: &VartimePointTable,
+    ) -> Self {
+        let base_digits = base_scalar.vartime_wnaf(BASEPOINT_WNAF_WIDTH);
+        let point_digits = point_scalar.vartime_wnaf(POINT_WNAF_WIDTH);
+        let mut top = FIELD_BITS;
+
+        while top != 0 && base_digits[top] == 0 && point_digits[top] == 0 {
+            top -= 1;
+        }
+
+        let mut result = Self::IDENTITY;
+        loop {
+            result = result.double();
+            result = vartime_add_signed(result, base_digits[top], &BASEPOINT_ODD_TABLE, false);
+            result = vartime_add_signed(result, point_digits[top], point_table, true);
+            if top == 0 {
+                break;
+            }
+            top -= 1;
+        }
+        result
+    }
+
+    /// Precompute public odd multiples for repeated verification.
+    ///
+    /// This table contains no secret material and its construction is
+    /// deliberately variable-time.  A validated public key owns it so the
+    /// per-signature path follows OpenSSL's prepared-key pattern.
+    pub(crate) fn prepare_vartime_table(self) -> VartimePointTable {
+        build_vartime_odd_point_table(self)
     }
 
     /// Encode a valid point as the canonical 38-byte compressed representation.
@@ -232,14 +446,9 @@ impl EdwardsPoint {
             .into_option_copied()
             .ok_or(EdwardsPointError)?;
         let yy = y.square();
-        let denominator = EDWARDS_A.sub(EDWARDS_D.mul(yy));
-        let denominator_inverse = denominator
-            .invert()
-            .into_option_copied()
-            .ok_or(EdwardsPointError)?;
-        let x_squared = FieldElement::ONE.sub(yy).mul(denominator_inverse);
-        let root = x_squared
-            .sqrt()
+        let numerator = FieldElement::ONE.sub(yy);
+        let denominator = FieldElement::from_u64(EDWARDS_A as u64).sub(yy.mul_small(EDWARDS_D));
+        let root = FieldElement::sqrt_ratio(numerator, denominator)
             .into_option_copied()
             .ok_or(EdwardsPointError)?;
 
@@ -299,8 +508,8 @@ impl EdwardsPoint {
         let yy = self.y.square();
         let zz = self.z.square();
         let extended_relation = self.x.mul(self.y).ct_eq(&self.z.mul(self.t));
-        let left = EDWARDS_A.mul(xx).mul(zz).add(yy.mul(zz));
-        let right = zz.square().add(EDWARDS_D.mul(xx).mul(yy));
+        let left = xx.mul_small(EDWARDS_A).mul(zz).add(yy.mul(zz));
+        let right = zz.square().add(xx.mul_small(EDWARDS_D).mul(yy));
 
         self.z
             .is_zero()
@@ -317,6 +526,154 @@ impl EdwardsPoint {
             t: FieldElement::conditional_select(when_false.t, when_true.t, choice),
         }
     }
+}
+
+const fn build_basepoint_table() -> [AffineNielsPoint; BASEPOINT_TABLE_SIZE] {
+    let mut projective = [EdwardsPoint::IDENTITY; BASEPOINT_TABLE_SIZE];
+    let mut row_base = EdwardsPoint::BASEPOINT;
+    let mut row = 0;
+
+    while row < BASEPOINT_TABLE_ROWS {
+        projective[row * BASEPOINT_TABLE_WIDTH] = row_base;
+        let mut entry = 1;
+        while entry < BASEPOINT_TABLE_WIDTH {
+            projective[row * BASEPOINT_TABLE_WIDTH + entry] =
+                projective[row * BASEPOINT_TABLE_WIDTH + entry - 1].add_const(row_base);
+            entry += 1;
+        }
+        let mut doubling = 0;
+        while doubling < 8 {
+            row_base = row_base.double_const();
+            doubling += 1;
+        }
+        row += 1;
+    }
+    batch_normalize_const(projective)
+}
+
+static BASEPOINT_TABLE: [AffineNielsPoint; BASEPOINT_TABLE_SIZE] = build_basepoint_table();
+
+const fn build_basepoint_odd_table() -> [AffineNielsPoint; BASEPOINT_ODD_MULTIPLES] {
+    let mut projective = [EdwardsPoint::IDENTITY; BASEPOINT_ODD_MULTIPLES];
+    let step = EdwardsPoint::BASEPOINT.double_const();
+    projective[0] = EdwardsPoint::BASEPOINT;
+    let mut index = 1;
+    while index < BASEPOINT_ODD_MULTIPLES {
+        projective[index] = projective[index - 1].add_const(step);
+        index += 1;
+    }
+    batch_normalize_const(projective)
+}
+
+static BASEPOINT_ODD_TABLE: [AffineNielsPoint; BASEPOINT_ODD_MULTIPLES] =
+    build_basepoint_odd_table();
+
+fn build_vartime_odd_point_table(point: EdwardsPoint) -> VartimePointTable {
+    let mut projective = [EdwardsPoint::IDENTITY; POINT_ODD_MULTIPLES];
+    let step = point.double();
+    projective[0] = point;
+    let mut index = 1;
+    while index < POINT_ODD_MULTIPLES {
+        projective[index] = projective[index - 1].add(step);
+        index += 1;
+    }
+    batch_normalize(projective)
+}
+
+const fn batch_normalize_const<const N: usize>(points: [EdwardsPoint; N]) -> [AffineNielsPoint; N] {
+    let mut prefixes = [FieldElement::ONE; N];
+    let mut product = FieldElement::ONE;
+    let mut index = 0;
+    while index < N {
+        prefixes[index] = product;
+        product = product.mul_const(points[index].z);
+        index += 1;
+    }
+    let mut inverse = product.invert_const_nonzero();
+    let mut output = [AffineNielsPoint::IDENTITY; N];
+    index = N;
+    while index != 0 {
+        index -= 1;
+        let inverse_z = inverse.mul_const(prefixes[index]);
+        inverse = inverse.mul_const(points[index].z);
+        output[index] = AffineNielsPoint::from_projective_const(points[index], inverse_z);
+    }
+    output
+}
+
+fn batch_normalize<const N: usize>(points: [EdwardsPoint; N]) -> [AffineNielsPoint; N] {
+    let mut prefixes = [FieldElement::ONE; N];
+    let mut product = FieldElement::ONE;
+    let mut index = 0;
+    while index < N {
+        prefixes[index] = product;
+        product = product.mul(points[index].z);
+        index += 1;
+    }
+    let mut inverse = product.invert().to_inner_unchecked();
+    let mut output = [AffineNielsPoint::IDENTITY; N];
+    index = N;
+    while index != 0 {
+        index -= 1;
+        let inverse_z = inverse.mul(prefixes[index]);
+        inverse = inverse.mul(points[index].z);
+        output[index] = AffineNielsPoint::from_projective(points[index], inverse_z);
+    }
+    output
+}
+
+fn vartime_add_signed<const N: usize>(
+    accumulator: EdwardsPoint,
+    digit: i8,
+    table: &[AffineNielsPoint; N],
+    negate_scalar: bool,
+) -> EdwardsPoint {
+    if digit == 0 {
+        return accumulator;
+    }
+    let magnitude = digit.unsigned_abs() as usize;
+    let mut addend = table[magnitude >> 1];
+    if (digit < 0) ^ negate_scalar {
+        addend = addend.negate();
+    }
+    accumulator.add_affine(addend)
+}
+
+fn signed_radix16(scalar: &[u8; FIELD_BYTES]) -> crate::secret::Secret<[i8; RADIX16_DIGITS]> {
+    let mut digits = crate::secret::secret([0_i8; RADIX16_DIGITS]);
+    let mut index = 0;
+    while index < RADIX16_DIGITS {
+        digits[index] = ((scalar[index >> 1] >> ((index & 1) << 2)) & 0x0f) as i8;
+        index += 1;
+    }
+
+    index = 0;
+    while index + 1 < RADIX16_DIGITS {
+        let carry = digits[index].wrapping_add(8) >> 4;
+        digits[index] = digits[index].wrapping_sub(carry.wrapping_shl(4));
+        digits[index + 1] = digits[index + 1].wrapping_add(carry);
+        index += 1;
+    }
+    digits
+}
+
+fn select_basepoint(row: usize, digit: i8) -> AffineNielsPoint {
+    let signed = digit as i16;
+    let sign_mask = signed >> 15;
+    let magnitude = (signed ^ sign_mask).wrapping_sub(sign_mask) as u8;
+    let negative = Choice::from_u8_lsb((digit as u8) >> 7);
+    let mut selected = AffineNielsPoint::IDENTITY;
+    let mut entry = 0;
+
+    while entry < BASEPOINT_TABLE_WIDTH {
+        selected = AffineNielsPoint::conditional_select(
+            selected,
+            BASEPOINT_TABLE[row * BASEPOINT_TABLE_WIDTH + entry],
+            Choice::from_u8_eq(magnitude, (entry + 1) as u8),
+        );
+        entry += 1;
+    }
+    AffineNielsPoint::conditional_select(selected, selected.negate(), negative)
 }
 
 #[cfg(test)]
@@ -377,6 +734,69 @@ mod tests {
                 .is_identity()
                 .to_bool()
         );
+    }
+
+    #[test]
+    fn fixed_base_radix16_matches_the_generic_constant_time_ladder() {
+        for scalar_bytes in [[0_u8; FIELD_BYTES], SCALAR_12345, DRAFT00_NONCE_SCALAR] {
+            let scalar = scalar(&scalar_bytes);
+            let expected = EdwardsPoint::BASEPOINT.scalar_mul(&scalar);
+            let actual = EdwardsPoint::scalar_mul_base(&scalar);
+            assert!(actual.ct_eq(&expected).to_bool());
+        }
+
+        let expected = EdwardsPoint::BASEPOINT.scalar_mul_pruned(&DRAFT00_PRUNED_SECRET);
+        let actual = EdwardsPoint::scalar_mul_base_pruned(&DRAFT00_PRUNED_SECRET);
+        assert!(actual.ct_eq(&expected).to_bool());
+        assert_eq!(
+            actual.encode(),
+            Ok(DRAFT00_PUBLIC_ENCODING),
+            "the fixed-base path must retain the draft-00 wire bytes"
+        );
+    }
+
+    #[test]
+    fn public_straus_and_affine_tables_match_complete_group_arithmetic() {
+        let public = EdwardsPoint::decode_strict_subgroup(&DRAFT00_PUBLIC_ENCODING)
+            .expect("the draft public key is a strict subgroup point");
+        let table = public.prepare_vartime_table();
+        let scalars = [
+            Scalar::ZERO,
+            Scalar::ONE,
+            scalar(&SCALAR_12345),
+            scalar(&DRAFT00_NONCE_SCALAR),
+        ];
+
+        for base_scalar in &scalars {
+            for point_scalar in &scalars {
+                let expected = EdwardsPoint::BASEPOINT
+                    .scalar_mul(base_scalar)
+                    .add(public.scalar_mul(point_scalar).negate());
+                let actual = EdwardsPoint::vartime_double_scalar_mul_basepoint(
+                    base_scalar,
+                    point_scalar,
+                    &table,
+                );
+                assert!(
+                    actual.ct_eq(&expected).to_bool(),
+                    "public wNAF/Straus arithmetic must retain the complete-formula result"
+                );
+            }
+        }
+
+        let mut odd_multiple = public;
+        let step = public.double();
+        for affine in table {
+            let accumulator = EdwardsPoint::BASEPOINT.add(odd_multiple);
+            assert!(
+                EdwardsPoint::BASEPOINT
+                    .add_affine(affine)
+                    .ct_eq(&accumulator)
+                    .to_bool(),
+                "batch-normalized affine entries must retain their odd multiple"
+            );
+            odd_multiple = odd_multiple.add(step);
+        }
     }
 
     #[test]

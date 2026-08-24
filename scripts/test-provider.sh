@@ -111,6 +111,16 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     "$BUILD/generated/policy_vectors_data.rs"
 cmp "$BUILD/generated/policy_vectors_data.rs" \
     "$ROOT/provider/crates/ed301-eddsa-provider/src/policy_vectors_data.rs"
+{
+    printf '%s\n' \
+        'openssl_conf = openssl_init' \
+        '' \
+        '[openssl_init]' \
+        'oid_section = ed301_oids' \
+        '' \
+        '[ed301_oids]' \
+        'Ed301-EdDSA-draft-00 = 1.3.6.1.4.1.66282.301.3'
+} >"$BUILD/generated/native-evp-test.cnf"
 (
     cd "$BUILD"
     find generated -type f -print0 | sort -z | xargs -0 sha256sum
@@ -136,6 +146,10 @@ cargo_provider "$QA_ANALYSIS_TARGET" clippy \
 cargo_provider "$QA_ANALYSIS_TARGET" clippy \
     --manifest-path "$ROOT/provider/Cargo.toml" --release \
     --locked --offline --workspace --all-targets -- -D warnings
+cargo_provider "$QA_ANALYSIS_TARGET" clippy \
+    --manifest-path "$ROOT/provider/Cargo.toml" --release \
+    --locked --offline --workspace --all-targets \
+    --features sign-self-verify -- -D warnings
 (cd / && provider_env "$QA_ANALYSIS_TARGET" env \
     RUSTDOCFLAGS='-D warnings' /usr/bin/cargo \
     doc \
@@ -212,7 +226,7 @@ cp "$BUILD/modules/ed301_eddsa_draft00_pki_test.so" \
     "$BUILD/fresh-modules/ed301_eddsa_draft00_pki_test.so"
 
 if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
-        | grep -E 'ED301_EDDSA_DRAFT00_(PANIC|ALLOC)_FAILPOINT|TLS-SIGALG|BEGIN PRIVATE KEY|2\.25\.195456677253783758411179833219689607856'; then
+        | grep -E 'ED301_EDDSA_DRAFT00_(PANIC|ALLOC)_FAILPOINT|TLS-SIGALG|BEGIN PRIVATE KEY|1\.3\.6\.1\.4\.1\.66282\.301\.3'; then
     echo "ordinary module contains a diagnostic, TLS or PKI-only surface" >&2
     exit 1
 fi
@@ -306,6 +320,19 @@ for harness in provider_load provider_keymgmt provider_signature \
         val01_decoder_bio val05_codepoint; do
     run_harness "$harness"
 done
+
+# Reuse OpenSSL's own Ed25519/Ed448-style EVP test driver.  The ordinary
+# provider intentionally does not register an OID, so the native driver's
+# legacy NID-only raw-key parser receives a host-local OID solely through this
+# private config file.  No PKI or TLS surface is added to the ordinary module.
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" \
+    OPENSSL_CONF="$BUILD/generated/native-evp-test.cnf" \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    /usr/bin/timeout 240 "$LANE_ROOT/src/openssl-$LANE/test/evp_test" \
+        -provider ed301_eddsa_draft00 \
+        "$ROOT/provider-tests/openssl_evp_ed301.txt"
 
 for mode in free object-only exact occupied-oid occupied-name sigid-conflict \
         digest-slot public-slot; do
