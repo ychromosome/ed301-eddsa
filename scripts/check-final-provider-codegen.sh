@@ -66,6 +66,43 @@ SUMMARY=$EVIDENCE/summary.txt
 /usr/bin/objdump --version >"$EVIDENCE/objdump-version.txt"
 : >"$SUMMARY"
 
+# Rust's two supported symbol-mangling schemes differ only in the presentation
+# emitted by the demangler for inherent methods: v0 prints `<Type>::method`,
+# while legacy mangling prints `Type::method`.  Canonicalize that outer pair of
+# brackets before comparing symbol identities.  Generic brackets inside the
+# type and method remain untouched.  This is naming normalization only; every
+# instruction-shape, count and exact-call-graph policy below remains unchanged.
+canonicalize_symbol_stream() {
+    /usr/bin/awk '
+        function canonical_symbol(value, marker) {
+            if (substr(value, 1, 1) == "<" &&
+                    (marker = index(value, ">::")) != 0)
+                value = substr(value, 2, marker - 2) \
+                    substr(value, marker + 1)
+            return value
+        }
+        { print canonical_symbol($0) }
+    '
+}
+
+CANONICALIZATION=$EVIDENCE/rust-symbol-canonicalization.txt
+printf '%s\n' \
+    '<ed301_eddsa::edwards::EdwardsPoint>::double' \
+    'ed301_eddsa::edwards::EdwardsPoint::double' \
+    '<crypto_bigint::modular::safegcd::SignedInt<5>>::lincomb_int::<1>' \
+    'crypto_bigint::modular::safegcd::SignedInt<5>::lincomb_int::<1>' \
+    | canonicalize_symbol_stream >"$CANONICALIZATION"
+if [ "$(/usr/bin/cat "$CANONICALIZATION")" != \
+        'ed301_eddsa::edwards::EdwardsPoint::double
+ed301_eddsa::edwards::EdwardsPoint::double
+crypto_bigint::modular::safegcd::SignedInt<5>::lincomb_int::<1>
+crypto_bigint::modular::safegcd::SignedInt<5>::lincomb_int::<1>' ]; then
+    echo "FAIL Rust-symbol canonicalization self-test" >&2
+    exit 1
+fi
+printf '%s\n' 'PASS rust_symbol_canonicalization=legacy-and-v0' \
+    | tee -a "$SUMMARY"
+
 # Resolve local R_X86_64_RELATIVE GOT entries back to their named functions.
 # This lets the call-closure check name Rust panic/cleanup callees without
 # pinning the policy to load addresses or RIP displacements.
@@ -95,47 +132,47 @@ SUMMARY=$EVIDENCE/summary.txt
     >"$EVIDENCE/relative-got-targets.txt"
 
 extract_symbol() {
-    symbol=$1
-    destination=$2
-    count=$(/usr/bin/awk -v symbol="$symbol" '
-        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ &&
-                index($0, "<" symbol ">:") != 0 { count++ }
-        END { print count + 0 }
-    ' "$DUMP")
-    if [ "$count" -ne 1 ]; then
-        printf 'expected exactly one final-binary symbol %s, found %s\n' \
-            "$symbol" "$count" >&2
-        exit 1
-    fi
-    /usr/bin/awk -v symbol="$symbol" '
-        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
-            active = index($0, "<" symbol ">:") != 0
-        }
-        active { print }
-    ' "$DUMP" >"$destination"
-    test -s "$destination"
+    extract_symbol_instances "$1" 1 "$2"
 }
 
 extract_symbol_instances() {
     symbol=$1
     expected_count=$2
     destination=$3
-    count=$(/usr/bin/awk -v symbol="$symbol" '
-        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ &&
-                index($0, "<" symbol ">:") != 0 { count++ }
+    : >"$destination"
+    count=$(/usr/bin/awk -v symbol="$symbol" -v destination="$destination" '
+        function canonical_symbol(value, marker) {
+            if (substr(value, 1, 1) == "<" &&
+                    (marker = index(value, ">::")) != 0)
+                value = substr(value, 2, marker - 2) \
+                    substr(value, marker + 1)
+            return value
+        }
+        function header_symbol(line, value) {
+            value = line
+            sub(/^[[:space:]]*[[:xdigit:]]+[[:space:]]+</, "", value)
+            sub(/>:[[:space:]]*$/, "", value)
+            return canonical_symbol(value)
+        }
+        BEGIN { symbol = canonical_symbol(symbol) }
+        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
+            active = header_symbol($0) == symbol
+            if (active)
+                count++
+        }
+        active { print > destination }
         END { print count + 0 }
     ' "$DUMP")
     if [ "$count" -ne "$expected_count" ]; then
-        printf 'expected %s final-binary instances of %s, found %s\n' \
-            "$expected_count" "$symbol" "$count" >&2
+        if [ "$expected_count" -eq 1 ]; then
+            printf 'expected exactly one final-binary symbol %s, found %s\n' \
+                "$symbol" "$count" >&2
+        else
+            printf 'expected %s final-binary instances of %s, found %s\n' \
+                "$expected_count" "$symbol" "$count" >&2
+        fi
         exit 1
     fi
-    /usr/bin/awk -v symbol="$symbol" '
-        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
-            active = index($0, "<" symbol ">:") != 0
-        }
-        active { print }
-    ' "$DUMP" >"$destination"
     test -s "$destination"
 }
 
@@ -212,6 +249,13 @@ check_exact_call_graph() {
     observed=$EVIDENCE/$label.calls
 
     /usr/bin/awk '
+        function canonical_symbol(value, marker) {
+            if (substr(value, 1, 1) == "<" &&
+                    (marker = index(value, ">::")) != 0)
+                value = substr(value, 2, marker - 2) \
+                    substr(value, marker + 1)
+            return value
+        }
         function normalize_address(value) {
             sub(/^0+/, "", value)
             return value == "" ? "0" : value
@@ -233,7 +277,7 @@ check_exact_call_graph() {
             sub(/>[[:space:]]*$/, "", target)
             if (target ~ /^memcpy@/)
                 target = "memcpy"
-            return target
+            return canonical_symbol(target)
         }
         function got_address(line, tail, parts) {
             tail = line
@@ -245,7 +289,7 @@ check_exact_call_graph() {
             tab = index($0, "\t")
             if (tab != 0)
                 got[normalize_address(substr($0, 1, tab - 1))] = \
-                    substr($0, tab + 1)
+                    canonical_symbol(substr($0, tab + 1))
             next
         }
         /^[[:space:]]*[[:xdigit:]]+:/ {
@@ -297,6 +341,7 @@ check_exact_call_graph() {
         }
     ' "$EVIDENCE/relative-got-targets.txt" "$file" >"$observed"
 
+    expected=$(printf '%s\n' "$expected" | canonicalize_symbol_stream)
     if [ "$(/usr/bin/cat "$observed")" != "$expected" ]; then
         printf 'FAIL changed or unresolved call graph in %s\n' "$label" >&2
         /usr/bin/cat "$observed" >&2

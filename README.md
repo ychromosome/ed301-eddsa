@@ -46,6 +46,12 @@ capability. PKI encoders and the private-use TLS proof are separately named,
 disabled-by-default test artifacts whose registry setup belongs to the host
 harness.
 
+The provider matrix requires Rust with Cargo, rustfmt, Clippy and rustdoc,
+plus GCC, Clang/scan-build, binutils, make, Perl, Python 3, pkg-config,
+Valgrind, `jq`, curl, tar and xz. The final-binary codegen gate accepts both
+legacy and v0 Rust demangler spellings, but it does not relax the reviewed
+instruction counts, branch rules or exact helper-call closures.
+
 The optional PKI integration uses the internally assigned Adiumentum OID
 `1.3.6.1.4.1.66282.301.3` for this exact Ed301-EdDSA key/signature profile.
 This private-enterprise allocation is not a standards or IANA TLS

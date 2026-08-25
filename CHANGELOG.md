@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made final-provider symbol matching independent of Rust's legacy versus v0
+  demangler spelling while retaining the exact instruction-shape and call-
+  graph policies, and documented `jq` among the provider-matrix prerequisites.
 - Integrated the independently produced Package-A Python implementation as a
   hash-bound, immutable test oracle after its 109/109 Package-B blind result.
   A narrow adapter accepts only immutable byte strings and exposes no raw
