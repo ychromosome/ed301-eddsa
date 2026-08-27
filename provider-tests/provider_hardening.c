@@ -39,6 +39,21 @@ static void clear_alloc_failpoint(void)
     unsetenv("ED301_EDDSA_DRAFT00_ALLOC_FAILPOINT");
 }
 
+static int allocation_failure_is_reported(void)
+{
+    unsigned long error;
+    int found = 0;
+
+    while ((error = ERR_get_error()) != 0) {
+        const char *reason = ERR_reason_error_string(error);
+
+        if (ERR_GET_REASON(error) == 4 && reason != NULL
+                && strcmp(reason, "allocation failure") == 0)
+            found = 1;
+    }
+    return found;
+}
+
 static void *counting_malloc(size_t size, const char *file, int line)
 {
     (void)file;
@@ -188,8 +203,9 @@ static int allocation_fail_key_duplicate(OSSL_LIB_CTX *libctx)
     if (pkey == NULL)
         return 0;
     if (set_alloc_failpoint("key_duplicate")) {
+        ERR_clear_error();
         copy = EVP_PKEY_dup(pkey);
-        failed = copy == NULL;
+        failed = copy == NULL && allocation_failure_is_reported();
     }
     clear_alloc_failpoint();
     EVP_PKEY_free(copy);
@@ -212,10 +228,12 @@ static int allocation_fail_signature_new(OSSL_LIB_CTX *libctx)
     if (pkey == NULL)
         return 0;
     if (set_alloc_failpoint("signature_new")) {
+        ERR_clear_error();
         pctx = EVP_PKEY_CTX_new_from_pkey(
             libctx, pkey, D00_FAILPOINT_PROP);
         failed = pctx == NULL
             || !d00_sign_message_init(libctx, pctx, NULL);
+        failed = failed && allocation_failure_is_reported();
     }
     clear_alloc_failpoint();
     EVP_PKEY_CTX_free(pctx);
@@ -252,8 +270,10 @@ static int allocation_fail_signature_duplicate(OSSL_LIB_CTX *libctx)
         goto done;
 
     if (set_alloc_failpoint("signature_duplicate")) {
+        ERR_clear_error();
         copy = EVP_MD_CTX_new();
         failed = copy != NULL && EVP_MD_CTX_copy_ex(copy, mctx) != 1;
+        failed = failed && allocation_failure_is_reported();
     }
     clear_alloc_failpoint();
     EVP_MD_CTX_free(copy);

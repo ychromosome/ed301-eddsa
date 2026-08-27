@@ -731,8 +731,11 @@ static void *ed301d00_key_duplicate(const void *source_data, int selection)
         source->inner,
         ed301d00_wants_private(selection),
         ed301d00_wants_public(selection));
-    if (inner == NULL)
+    if (inner == NULL) {
+        ed301d00_raise(source->provider, ED301D00_R_ALLOCATION_FAILURE,
+            "draft-00 key duplication failed");
         return NULL;
+    }
     return ed301d00_wrap_key(source->provider, inner);
 }
 
@@ -873,8 +876,11 @@ static void *ed301d00_signature_new_context(
     if (provider == NULL || provider->rust == NULL)
         return NULL;
     inner = provider->rust->signature_new();
-    if (inner == NULL)
+    if (inner == NULL) {
+        ed301d00_raise(provider, ED301D00_R_ALLOCATION_FAILURE,
+            "draft-00 signature context allocation failed");
         return NULL;
+    }
     return ed301d00_signature_wrap_context(provider, inner);
 }
 
@@ -901,8 +907,11 @@ static void *ed301d00_signature_duplicate_context(void *signature_context)
             || source->provider->rust == NULL || source->inner == NULL)
         return NULL;
     inner = source->provider->rust->signature_duplicate(source->inner);
-    if (inner == NULL)
+    if (inner == NULL) {
+        ed301d00_raise(source->provider, ED301D00_R_ALLOCATION_FAILURE,
+            "draft-00 signature context duplication failed");
         return NULL;
+    }
     return ed301d00_signature_wrap_context(source->provider, inner);
 }
 
