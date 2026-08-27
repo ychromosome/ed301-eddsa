@@ -2,7 +2,7 @@
 #define ED301D00_HARNESS_COMMON_H
 
 /*
- * Shared helpers for the Ed301-EdDSA-draft-00 provider acceptance
+ * Shared helpers for the Ed301-EdDSA-v1 provider acceptance
  * harnesses.  Test-harness patterns are adapted from the historical
  * provider's C test suite (see the result provenance map).
  */
@@ -27,18 +27,18 @@
 #include <openssl/param_build.h>
 #include <openssl/provider.h>
 
-#define D00_ALG "Ed301-EdDSA-draft-00"
-#define D00_OID_TEXT "1.3.6.1.4.1.66282.301.3"
-#define D00_PROVIDER "ed301_eddsa_draft00"
-#define D00_PROP "provider=ed301_eddsa_draft00"
-#define D00_FAILPOINT_PROVIDER "ed301_eddsa_draft00_failpoint"
-#define D00_FAILPOINT_PROP "provider=ed301_eddsa_draft00_failpoint"
-#define D00_PKI_PROVIDER "ed301_eddsa_draft00_pki_test"
-#define D00_PKI_PROP "provider=ed301_eddsa_draft00_pki_test"
-#define D00_TLS_PROVIDER "ed301_eddsa_draft00_tls_test"
-#define D00_TLS_PROP "provider=ed301_eddsa_draft00_tls_test"
-#define D00_TLS_COLLIDER_PROVIDER "ed301_eddsa_draft00_tls_collider"
-#define D00_TLS_COLLIDER_PROP "provider=ed301_eddsa_draft00_tls_collider"
+#define D00_ALG "Ed301-EdDSA-v1"
+#define D00_OID_TEXT "1.3.6.1.4.1.66282.301.4"
+#define D00_PROVIDER "ed301_eddsa_v1"
+#define D00_PROP "provider=ed301_eddsa_v1"
+#define D00_FAILPOINT_PROVIDER "ed301_eddsa_v1_failpoint"
+#define D00_FAILPOINT_PROP "provider=ed301_eddsa_v1_failpoint"
+#define D00_PKI_PROVIDER "ed301_eddsa_v1_pki_test"
+#define D00_PKI_PROP "provider=ed301_eddsa_v1_pki_test"
+#define D00_TLS_PROVIDER "ed301_eddsa_v1_tls_test"
+#define D00_TLS_PROP "provider=ed301_eddsa_v1_tls_test"
+#define D00_TLS_COLLIDER_PROVIDER "ed301_eddsa_v1_tls_collider"
+#define D00_TLS_COLLIDER_PROP "provider=ed301_eddsa_v1_tls_collider"
 #define D00_SEED_BYTES ((size_t)38)
 #define D00_PUB_BYTES ((size_t)38)
 #define D00_SIG_BYTES ((size_t)76)
@@ -413,7 +413,7 @@ static inline int d00_summary(const char *name)
     return d00_fail_count == 0 ? 0 : 1;
 }
 
-/* Load the default provider and a draft-00 module into a context. */
+/* Load the default provider and an Ed301-EdDSA-v1 module into a context. */
 static inline OSSL_PROVIDER *d00_load_named(
     OSSL_LIB_CTX *libctx,
     OSSL_PROVIDER **defp,

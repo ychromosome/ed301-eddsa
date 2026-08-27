@@ -31,12 +31,12 @@ static int capability_count(const OSSL_PARAM *params, void *argument)
 
 static int set_alloc_failpoint(const char *site)
 {
-    return setenv("ED301_EDDSA_DRAFT00_ALLOC_FAILPOINT", site, 1) == 0;
+    return setenv("ED301_EDDSA_V1_ALLOC_FAILPOINT", site, 1) == 0;
 }
 
 static void clear_alloc_failpoint(void)
 {
-    unsetenv("ED301_EDDSA_DRAFT00_ALLOC_FAILPOINT");
+    unsetenv("ED301_EDDSA_V1_ALLOC_FAILPOINT");
 }
 
 static int allocation_failure_is_reported(void)
@@ -406,7 +406,7 @@ int main(void)
                     && index < sizeof(cases) / sizeof(cases[0]); index++) {
             int failed_closed = 0;
 
-            setenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT",
+            setenv("ED301_EDDSA_V1_PANIC_FAILPOINT",
                 cases[index].failpoint, 1);
             if (strcmp(cases[index].failpoint, "key_generate") == 0) {
                 EVP_PKEY *pkey = d00_keygen(libctx);
@@ -425,10 +425,10 @@ int main(void)
                 EVP_PKEY *pkey;
                 unsigned char sig[76];
 
-                unsetenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT");
+                unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
                 pkey = d00_key_from_seed(libctx,
                     POSITIVE_CASES[0].seed);
-                setenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT",
+                setenv("ED301_EDDSA_V1_PANIC_FAILPOINT",
                     cases[index].failpoint, 1);
                 failed_closed = pkey != NULL
                     && !d00_digest_sign(libctx, pkey,
@@ -439,10 +439,10 @@ int main(void)
                 EVP_PKEY *pkey;
                 int verify_result;
 
-                unsetenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT");
+                unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
                 pkey = d00_key_from_seed(libctx,
                     POSITIVE_CASES[0].seed);
-                setenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT",
+                setenv("ED301_EDDSA_V1_PANIC_FAILPOINT",
                     cases[index].failpoint, 1);
                 ERR_clear_error();
                 verify_result = pkey == NULL ? 0
@@ -454,7 +454,7 @@ int main(void)
                     && ERR_peek_error() != 0;
                 EVP_PKEY_free(pkey);
             }
-            unsetenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT");
+            unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
             ERR_clear_error();
             D00_CHECK(failed_closed,
                 "injected panic in %s fails closed without aborting",
@@ -494,9 +494,9 @@ int main(void)
         EVP_PKEY *pkey;
         unsigned char sig[76];
 
-        setenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT", "signature_sign",
+        setenv("ED301_EDDSA_V1_PANIC_FAILPOINT", "signature_sign",
             1);
-        setenv("ED301_EDDSA_DRAFT00_ALLOC_FAILPOINT", "signature_new",
+        setenv("ED301_EDDSA_V1_ALLOC_FAILPOINT", "signature_new",
             1);
         pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
         D00_CHECK(draft != NULL && pkey != NULL
@@ -507,7 +507,7 @@ int main(void)
                     sizeof(sig)) == 0,
             "ordinary module is fully functional with the failpoint "
             "variable set (hook compiled out)");
-        unsetenv("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT");
+        unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
         clear_alloc_failpoint();
         EVP_PKEY_free(pkey);
         OSSL_PROVIDER_unload(draft);

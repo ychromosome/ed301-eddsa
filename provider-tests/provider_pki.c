@@ -21,7 +21,7 @@ static X509_NAME *make_name(const char *common_name)
 
     if (name == NULL
             || X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                (const unsigned char *)"Ed301 draft-00 experiment "
+                (const unsigned char *)"Ed301-EdDSA-v1 experiment "
                     "(test-only)", -1, -1, 0) != 1
             || X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                 (const unsigned char *)common_name, -1, -1, 0) != 1) {
@@ -275,7 +275,7 @@ int main(void)
      */
     {
         X509_REQ *req = X509_REQ_new();
-        X509_NAME *subject = make_name("draft-00 CSR (test-only)");
+        X509_NAME *subject = make_name("Ed301-EdDSA-v1 CSR (test-only)");
 
         D00_CHECK(req != NULL && subject != NULL
                 && X509_REQ_set_version(req, 0) == 1
@@ -307,7 +307,7 @@ int main(void)
             X509_REQ_get0_signature(req, &signature, &algorithm);
             D00_CHECK(signature != NULL
                     && ASN1_STRING_length(signature) == 76,
-                "CSR carries a 76-byte draft-00 signature");
+                "CSR carries a 76-byte Ed301-EdDSA-v1 signature");
             if (algorithm != NULL) {
                 char oid_text[96] = { 0 };
 
@@ -461,7 +461,7 @@ int main(void)
      * self-signed DER round trip and direct Ed301 CA -> Ed301 leaf chain.
      */
     {
-        X509 *ca_cert = make_cert("draft-00 test CA", NULL, ca_key,
+        X509 *ca_cert = make_cert("Ed301-EdDSA-v1 test CA", NULL, ca_key,
             ca_key, 1, 1);
         X509 *leaf_cert = NULL;
 
@@ -479,7 +479,7 @@ int main(void)
         }
 
         if (ca_cert != NULL) {
-            leaf_cert = make_cert("draft-00 test leaf",
+            leaf_cert = make_cert("Ed301-EdDSA-v1 test leaf",
                 X509_get_subject_name(ca_cert), leaf_key, ca_key, 0, 2);
             D00_CHECK(leaf_cert != NULL, "CA-signed leaf certificate");
             D00_CHECK(d00_pki_certificate_is_exact(leaf_cert),

@@ -121,7 +121,7 @@ fn main() {
         .flag_if_supported("-fstack-protector-strong")
         .warnings(true)
         .warnings_into_errors(true)
-        .compile("ed301_eddsa_draft00_shim");
+        .compile("ed301_eddsa_v1_shim");
 
     println!(
         "cargo:rustc-link-search=native={}",

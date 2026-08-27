@@ -166,7 +166,7 @@ int main(void)
                 && out_len == D00_PUB_BYTES
                 && memcmp(public_out, base->public_key,
                     D00_PUB_BYTES) == 0,
-            "derived public key matches the draft-00 vector");
+            "derived public key matches the frozen key-derivation vector");
         D00_CHECK(pkey != NULL
                 && EVP_PKEY_get_octet_string_param(pkey,
                     OSSL_PKEY_PARAM_PRIV_KEY, seed_out,
@@ -730,7 +730,7 @@ int main(void)
         unsigned char public_out[38];
         unsigned char sig[76];
         size_t out_len = 0;
-        static const unsigned char probe[] = "draft-00 keygen probe";
+        static const unsigned char probe[] = "Ed301-EdDSA-v1 keygen probe";
 
         D00_CHECK(generated != NULL, "key generation");
         if (generated != NULL) {

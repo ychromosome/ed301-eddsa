@@ -326,7 +326,7 @@ static X509_NAME *make_name(const char *common_name)
 
     if (name == NULL
             || X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                (const unsigned char *)"Ed301 draft-00 TLS (test-only)",
+                (const unsigned char *)"Ed301-EdDSA-v1 TLS (test-only)",
                 -1, -1, 0) != 1
             || X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                 (const unsigned char *)common_name, -1, -1, 0) != 1) {
@@ -900,16 +900,16 @@ int main(void)
         return d00_summary("provider_tls");
 
     /* Deployment-like PKI (FBL-14): CA anchor, CA:FALSE leaves. */
-    ca_cert = issue_cert("draft-00 TLS test CA", NULL, NULL, NULL, ca_key,
+    ca_cert = issue_cert("Ed301-EdDSA-v1 TLS test CA", NULL, NULL, NULL, ca_key,
         ca_key, 1, 1);
-    ca2_cert = issue_cert("draft-00 untrusted CA", NULL, NULL, NULL,
+    ca2_cert = issue_cert("Ed301-EdDSA-v1 untrusted CA", NULL, NULL, NULL,
         ca2_key, ca2_key, 1, 2);
     D00_CHECK(ca_cert != NULL && ca2_cert != NULL, "CA certificates");
     if (ca_cert == NULL || ca2_cert == NULL)
         return d00_summary("provider_tls");
-    server_cert = issue_cert("draft-00 TLS server leaf", SERVER_NAME,
+    server_cert = issue_cert("Ed301-EdDSA-v1 TLS server leaf", SERVER_NAME,
         "serverAuth", ca_cert, server_key, ca_key, 0, 3);
-    client_cert = issue_cert("draft-00 TLS client leaf", CLIENT_NAME,
+    client_cert = issue_cert("Ed301-EdDSA-v1 TLS client leaf", CLIENT_NAME,
         "clientAuth", ca_cert, client_key, ca_key, 0, 4);
     D00_CHECK(server_cert != NULL && client_cert != NULL,
         "leaf certificates (CA:FALSE, digitalSignature, EKU, SAN)");
@@ -1059,7 +1059,7 @@ int main(void)
 
         /* Wrong EKU: server presents a clientAuth-only leaf. */
         {
-            X509 *wrong_eku = issue_cert("draft-00 wrong-EKU leaf",
+            X509 *wrong_eku = issue_cert("Ed301-EdDSA-v1 wrong-EKU leaf",
                 SERVER_NAME, "clientAuth", ca_cert, server_key, ca_key, 0,
                 5);
 
@@ -1078,11 +1078,11 @@ int main(void)
 
         /* Wrong CA flag: trust anchor is a CA:FALSE certificate. */
         {
-            X509 *fake_ca = issue_cert("draft-00 non-CA issuer",
+            X509 *fake_ca = issue_cert("Ed301-EdDSA-v1 non-CA issuer",
                 "issuer.d00.test.example", "serverAuth", NULL, ca2_key,
                 ca2_key, 0, 6);
             X509 *bad_leaf = fake_ca == NULL ? NULL
-                : issue_cert("draft-00 leaf under non-CA", SERVER_NAME,
+                : issue_cert("Ed301-EdDSA-v1 leaf under non-CA", SERVER_NAME,
                     "serverAuth", fake_ca, server_key, ca2_key, 0, 7);
 
             memset(&options, 0, sizeof(options));
@@ -1100,7 +1100,7 @@ int main(void)
 
         /* Untrusted CA: leaf signed by a CA outside the trust store. */
         {
-            X509 *foreign_leaf = issue_cert("draft-00 foreign leaf",
+            X509 *foreign_leaf = issue_cert("Ed301-EdDSA-v1 foreign leaf",
                 SERVER_NAME, "serverAuth", ca2_cert, server_key, ca2_key,
                 0, 8);
 
@@ -1119,7 +1119,7 @@ int main(void)
 
         /* Corrupted certificate signature. */
         {
-            X509 *corrupt = issue_cert("draft-00 corrupt leaf",
+            X509 *corrupt = issue_cert("Ed301-EdDSA-v1 corrupt leaf",
                 SERVER_NAME, "serverAuth", ca_cert, server_key, ca_key, 0,
                 9);
             const ASN1_BIT_STRING *signature = NULL;
@@ -1173,7 +1173,7 @@ int main(void)
                 || strstr(outcome.error_reason, "sigalg") != NULL
                 || strstr(outcome.error_reason,
                     "no shared cipher") != NULL),
-        "handshake fails under TLS 1.2 (draft-00 credentials unusable: "
+        "handshake fails under TLS 1.2 (Ed301-EdDSA-v1 credentials unusable: "
         "%s)", outcome.error_reason);
 
     /* Capability visibility only while the provider is loaded. */

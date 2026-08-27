@@ -1,10 +1,11 @@
 /*
- * Acceptance section 3 (signature contract): four positive draft-00
+ * Acceptance section 3 (signature contract): four positive v1
  * vectors byte-for-byte, 14 point / 6 scalar / 22 verification edge cases,
  * the 77 deterministic negative mutations from the reference lane,
  * determinism, exact size query, undersized buffers without partial
  * signatures, S + L malleability, mode rejections (external digest,
- * prehash, streaming, randomized signing, context) and the demonstration
+ * prehash, streaming and randomized signing) plus native context handling
+ * and the demonstration
  * that historical Ed301-Sig-v1 material does not verify.
  */
 
@@ -15,7 +16,7 @@
 
 static const unsigned char D00_EXPECTED_ALGORITHM_ID[15] = {
     0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06, 0x01, 0x04,
-    0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d, 0x03
+    0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d, 0x04
 };
 
 /*
@@ -229,6 +230,173 @@ int main(void)
                 tc->message_len, tc->signature, D00_SIG_BYTES),
             "%s: DigestVerify accepts", tc->id);
 
+        EVP_PKEY_free(pkey);
+    }
+
+    /* Ed448 pattern translated to Ed301-v1: the one-octet length binds
+     * binary contexts of length 0 through 255 into both transcripts. */
+    for (index = 0;
+            index < sizeof(CONTEXT_CASES) / sizeof(CONTEXT_CASES[0]);
+            index++) {
+        const CONTEXT_CASE *tc = &CONTEXT_CASES[index];
+        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY_CTX *sign_ctx = NULL;
+        EVP_PKEY_CTX *verify_ctx = NULL;
+        EVP_PKEY_CTX *duplicate = NULL;
+        EVP_MD_CTX *digest_ctx = NULL;
+        OSSL_PARAM params[2];
+        OSSL_PARAM query[2];
+        unsigned char signature[D00_SIG_BYTES] = { 0 };
+        unsigned char duplicate_signature[D00_SIG_BYTES] = { 0 };
+        unsigned char queried_context[255] = { 0 };
+        unsigned char wrong_context[255] = { 0 };
+        size_t signature_length = sizeof(signature);
+        size_t duplicate_length = sizeof(duplicate_signature);
+
+        params[0] = OSSL_PARAM_construct_octet_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+            (void *)tc->context, tc->context_len);
+        params[1] = OSSL_PARAM_construct_end();
+        query[0] = OSSL_PARAM_construct_octet_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+            queried_context, sizeof(queried_context));
+        query[1] = OSSL_PARAM_construct_end();
+
+        sign_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        D00_CHECK(sign_ctx != NULL
+                && d00_sign_message_init(libctx, sign_ctx, params)
+                && EVP_PKEY_CTX_get_params(sign_ctx, query) == 1
+                && query[0].return_size == tc->context_len
+                && memcmp(queried_context, tc->context,
+                    tc->context_len) == 0
+                && EVP_PKEY_sign(sign_ctx, signature, &signature_length,
+                    tc->message, tc->message_len) == 1
+                && signature_length == D00_SIG_BYTES
+                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+            "%s: native-context sign and get_params match vector", tc->id);
+
+        duplicate = sign_ctx == NULL ? NULL : EVP_PKEY_CTX_dup(sign_ctx);
+        D00_CHECK(duplicate != NULL
+                && EVP_PKEY_sign(duplicate, duplicate_signature,
+                    &duplicate_length, tc->message, tc->message_len) == 1
+                && duplicate_length == D00_SIG_BYTES
+                && memcmp(duplicate_signature, tc->signature,
+                    D00_SIG_BYTES) == 0,
+            "%s: duplicated context preserves native domain", tc->id);
+
+        signature_length = sizeof(signature);
+        D00_CHECK(sign_ctx != NULL
+                && d00_sign_message_init(libctx, sign_ctx, params)
+                && EVP_PKEY_sign(sign_ctx, signature, &signature_length,
+                    tc->message, tc->message_len) == 1
+                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+            "%s: message reinit reapplies native domain", tc->id);
+
+        memset(signature, 0, sizeof(signature));
+        signature_length = sizeof(signature);
+        D00_CHECK(sign_ctx != NULL
+                && d00_sign_message_init(libctx, sign_ctx, NULL)
+                && EVP_PKEY_CTX_get_params(sign_ctx, query) == 1
+                && query[0].return_size == 0
+                && EVP_PKEY_sign(sign_ctx, signature, &signature_length,
+                    tc->message, tc->message_len) == 1
+                && signature_length == D00_SIG_BYTES
+                && memcmp(signature, tc->empty_context_signature,
+                    D00_SIG_BYTES) == 0,
+            "%s: message reinit without params restores empty context",
+            tc->id);
+
+        verify_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        D00_CHECK(verify_ctx != NULL
+                && d00_verify_message_init(libctx, verify_ctx, params)
+                && EVP_PKEY_verify(verify_ctx, tc->signature,
+                    D00_SIG_BYTES, tc->message, tc->message_len) == 1,
+            "%s: matching native context verifies", tc->id);
+
+        D00_CHECK(tc->context_len != 0,
+            "%s: context fixture is nonempty", tc->id);
+        memcpy(wrong_context, tc->context, tc->context_len);
+        wrong_context[0] ^= 1;
+        params[0] = OSSL_PARAM_construct_octet_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+            wrong_context, tc->context_len);
+        D00_CHECK(verify_ctx != NULL
+                && EVP_PKEY_CTX_set_params(verify_ctx, params) == 1
+                && EVP_PKEY_verify(verify_ctx, tc->signature,
+                    D00_SIG_BYTES, tc->message, tc->message_len) == 0,
+            "%s: altered native context is a non-match", tc->id);
+
+        digest_ctx = EVP_MD_CTX_new();
+        params[0] = OSSL_PARAM_construct_octet_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+            (void *)tc->context, tc->context_len);
+        signature_length = sizeof(signature);
+        D00_CHECK(digest_ctx != NULL
+                && EVP_DigestSignInit_ex(digest_ctx, NULL, NULL, libctx,
+                    D00_PROP, pkey, params) == 1
+                && EVP_DigestSign(digest_ctx, signature, &signature_length,
+                    tc->message, tc->message_len) == 1
+                && signature_length == D00_SIG_BYTES
+                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+            "%s: DigestSign native-context vector", tc->id);
+
+        EVP_MD_CTX_free(digest_ctx);
+        EVP_PKEY_CTX_free(duplicate);
+        EVP_PKEY_CTX_free(verify_ctx);
+        EVP_PKEY_CTX_free(sign_ctx);
+        EVP_PKEY_free(pkey);
+    }
+
+    /* Context bounds and type checks are fail-closed and invalidate any
+     * previously bound operation so an old domain can never be reused. */
+    {
+        const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
+        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_from_pkey(
+            libctx, pkey, D00_PROP);
+        unsigned char oversized[256] = { 0 };
+        unsigned char output[D00_SIG_BYTES];
+        unsigned char canary[D00_SIG_BYTES];
+        char wrong_type[] = "ctx";
+        OSSL_PARAM params[3];
+        size_t output_length = sizeof(output);
+
+        params[0] = OSSL_PARAM_construct_octet_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+            oversized, sizeof(oversized));
+        params[1] = OSSL_PARAM_construct_end();
+        memset(output, 0xa5, sizeof(output));
+        memcpy(canary, output, sizeof(canary));
+        D00_CHECK(pctx != NULL
+                && d00_sign_message_init(libctx, pctx, NULL)
+                && EVP_PKEY_CTX_set_params(pctx, params) != 1
+                && EVP_PKEY_sign(pctx, output, &output_length,
+                    tc->message, tc->message_len) != 1
+                && memcmp(output, canary, sizeof(output)) == 0,
+            "256-byte context rejected and prior operation invalidated");
+        ERR_clear_error();
+        EVP_PKEY_CTX_free(pctx);
+
+        params[0] = OSSL_PARAM_construct_utf8_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING, wrong_type, 0);
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        D00_CHECK(pctx != NULL
+                && !d00_sign_message_init(libctx, pctx, params),
+            "context parameter with UTF8 type rejected");
+        ERR_clear_error();
+        EVP_PKEY_CTX_free(pctx);
+
+        params[0] = OSSL_PARAM_construct_octet_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING, wrong_type, 1);
+        params[1] = OSSL_PARAM_construct_octet_string(
+            OSSL_SIGNATURE_PARAM_CONTEXT_STRING, wrong_type, 1);
+        params[2] = OSSL_PARAM_construct_end();
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        D00_CHECK(pctx != NULL
+                && !d00_sign_message_init(libctx, pctx, params),
+            "duplicate context parameters rejected atomically");
+        ERR_clear_error();
+        EVP_PKEY_CTX_free(pctx);
         EVP_PKEY_free(pkey);
     }
 
@@ -569,25 +737,25 @@ int main(void)
 
     /* Historical Ed301-Sig-v1 material does not verify. */
     {
-        EVP_PKEY *draft_key = d00_key_from_seed(
+        EVP_PKEY *v1_key = d00_key_from_seed(
             libctx, POSITIVE_CASES[0].seed);
 
         D00_CHECK(memcmp(HISTORICAL_PUBLIC_KEY,
                 POSITIVE_CASES[0].public_key, D00_PUB_BYTES) != 0,
-            "same seed yields different draft-00 and Ed301-Sig-v1 "
+            "same seed yields different Ed301-EdDSA-v1 and Ed301-Sig-v1 "
             "public keys");
         D00_CHECK(!d00_triple_accepts(libctx,
                 HISTORICAL_PUBLIC_KEY, D00_PUB_BYTES,
-                NULL, 0,
-                HISTORICAL_SIGNATURE, sizeof(HISTORICAL_SIGNATURE)),
+            NULL, 0,
+            HISTORICAL_SIGNATURE, sizeof(HISTORICAL_SIGNATURE)),
             "historical signature under historical public key does not "
-            "verify as draft-00");
-        D00_CHECK(draft_key != NULL
-                && !d00_digest_verify(libctx, draft_key, NULL, 0,
+            "verify as Ed301-EdDSA-v1");
+        D00_CHECK(v1_key != NULL
+                && !d00_digest_verify(libctx, v1_key, NULL, 0,
                     HISTORICAL_SIGNATURE, sizeof(HISTORICAL_SIGNATURE)),
-            "historical signature under the draft-00 key does not verify");
+            "historical signature under the v1 key does not verify");
         ERR_clear_error();
-        EVP_PKEY_free(draft_key);
+        EVP_PKEY_free(v1_key);
     }
 
     /* Mode rejections. */
@@ -668,10 +836,8 @@ int main(void)
         ERR_clear_error();
         EVP_MD_CTX_free(mctx);
 
-        /*
-         * S6 -- Draft/provider pure-only contract: context strings are
-         * rejected explicitly, never ignored to create a different signature.
-         */
+        /* S6 -- Ed448-style native contexts are accepted on every one-shot
+         * entry point.  Empty context is exactly the default transcript. */
         {
             OSSL_PARAM params[2];
             OSSL_PARAM empty_params[2];
@@ -689,77 +855,77 @@ int main(void)
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
                     && d00_sign_message_init(libctx, pctx, NULL)
-                    && EVP_PKEY_CTX_set_params(pctx, params) != 1,
-                "context string rejected via set_params after message init");
+                    && EVP_PKEY_CTX_set_params(pctx, params) == 1,
+                "context string accepted via set_params after message init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
-                    && !d00_sign_message_init(libctx, pctx, params),
-                "context string rejected at message-sign init");
+                    && d00_sign_message_init(libctx, pctx, params),
+                "context string accepted at message-sign init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
-                    && !d00_verify_message_init(libctx, pctx, params),
-                "context string rejected at message-verify init");
+                    && d00_verify_message_init(libctx, pctx, params),
+                "context string accepted at message-verify init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             mctx = EVP_MD_CTX_new();
             D00_CHECK(pkey != NULL && mctx != NULL
                     && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                        D00_PROP, pkey, params) != 1,
-                "context string rejected at DigestSignInit params");
+                        D00_PROP, pkey, params) == 1,
+                "context string accepted at DigestSignInit params");
             ERR_clear_error();
             EVP_MD_CTX_free(mctx);
 
-            /* An explicitly supplied empty context is still a context mode. */
+            /* Explicit empty context is the default Ed301-EdDSA-v1 domain. */
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
                     && d00_sign_message_init(libctx, pctx, NULL)
-                    && EVP_PKEY_CTX_set_params(pctx, empty_params) != 1,
-                "empty context string rejected via sign set_params");
+                    && EVP_PKEY_CTX_set_params(pctx, empty_params) == 1,
+                "empty context string accepted via sign set_params");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
-                    && !d00_sign_message_init(libctx, pctx, empty_params),
-                "empty context string rejected at message-sign init");
+                    && d00_sign_message_init(libctx, pctx, empty_params),
+                "empty context string accepted at message-sign init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
                     && d00_verify_message_init(libctx, pctx, NULL)
-                    && EVP_PKEY_CTX_set_params(pctx, empty_params) != 1,
-                "empty context string rejected via verify set_params");
+                    && EVP_PKEY_CTX_set_params(pctx, empty_params) == 1,
+                "empty context string accepted via verify set_params");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             D00_CHECK(pctx != NULL
-                    && !d00_verify_message_init(libctx, pctx, empty_params),
-                "empty context string rejected at message-verify init");
+                    && d00_verify_message_init(libctx, pctx, empty_params),
+                "empty context string accepted at message-verify init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             mctx = EVP_MD_CTX_new();
             D00_CHECK(pkey != NULL && mctx != NULL
                     && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                        D00_PROP, pkey, empty_params) != 1,
-                "empty context string rejected at DigestSignInit params");
+                        D00_PROP, pkey, empty_params) == 1,
+                "empty context string accepted at DigestSignInit params");
             ERR_clear_error();
             EVP_MD_CTX_free(mctx);
 
             mctx = EVP_MD_CTX_new();
             D00_CHECK(pkey != NULL && mctx != NULL
                     && EVP_DigestVerifyInit_ex(mctx, NULL, NULL, libctx,
-                        D00_PROP, pkey, empty_params) != 1,
-                "empty context string rejected at DigestVerifyInit params");
+                        D00_PROP, pkey, empty_params) == 1,
+                "empty context string accepted at DigestVerifyInit params");
             ERR_clear_error();
             EVP_MD_CTX_free(mctx);
         }
@@ -768,15 +934,14 @@ int main(void)
          * previous Rust operation; no stale key may sign or verify. */
         {
             OSSL_PARAM bad_params[2];
-            static const unsigned char context_value[] = "ctx";
+            static char digest_value[] = "SHA256";
             unsigned char stale_sig[76] = { 0 };
             unsigned char canary[76];
             size_t stale_sig_len;
             EVP_PKEY_CTX *state_ctx;
 
-            bad_params[0] = OSSL_PARAM_construct_octet_string(
-                OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
-                (void *)context_value, sizeof(context_value) - 1);
+            bad_params[0] = OSSL_PARAM_construct_utf8_string(
+                OSSL_SIGNATURE_PARAM_DIGEST, digest_value, 0);
             bad_params[1] = OSSL_PARAM_construct_end();
 
             state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
@@ -789,7 +954,7 @@ int main(void)
                     && EVP_PKEY_sign(state_ctx, stale_sig, &stale_sig_len,
                         probe, sizeof(probe) - 1) != 1
                     && memcmp(stale_sig, canary, sizeof(stale_sig)) == 0,
-                "rejected context set_params cannot alter signature output");
+                "rejected digest set_params cannot alter signature output");
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
@@ -804,7 +969,7 @@ int main(void)
                     && EVP_PKEY_sign(state_ctx, stale_sig, &stale_sig_len,
                         probe, sizeof(probe) - 1) != 1
                     && memcmp(stale_sig, canary, sizeof(stale_sig)) == 0,
-                "rejected context reinit cannot alter signature output");
+                "rejected digest reinit cannot alter signature output");
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
@@ -910,14 +1075,13 @@ int main(void)
         /* A successfully loaded provider publishes stable reason strings. */
         {
             OSSL_PARAM params[2];
-            static const unsigned char context_value[] = "reason-check";
+            static char digest_value[] = "SHA256";
             unsigned long error;
             const char *reason;
             int rejected;
 
-            params[0] = OSSL_PARAM_construct_octet_string(
-                OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
-                (void *)context_value, sizeof(context_value) - 1);
+            params[0] = OSSL_PARAM_construct_utf8_string(
+                OSSL_SIGNATURE_PARAM_DIGEST, digest_value, 0);
             params[1] = OSSL_PARAM_construct_end();
             pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
             rejected = pctx != NULL
@@ -989,7 +1153,7 @@ int main(void)
          * S7 -- Draft/provider pure-only contract.  OpenSSL 4.0
          * providers/implementations/signature/eddsa_sig.c
          * eddsa_set_ctx_params_internal() names the ph/ctx instance classes;
-         * neither class is an Ed301-draft-00 mode.
+         * neither class is an Ed301-EdDSA-v1 mode.
          */
         {
             static const char *const instance_names[] = {
@@ -1074,23 +1238,30 @@ int main(void)
 
         D00_CHECK(pkey != NULL, "tls-version: key");
 
-        /* The 4.0 settable list advertises exactly the signed-int form. */
+        /* The 4.0 list adds signed-int TLS metadata beside native context. */
         pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
         {
             const OSSL_PARAM *settable = NULL;
-            const OSSL_PARAM *entry = NULL;
+            const OSSL_PARAM *tls_entry = NULL;
+            const OSSL_PARAM *context_entry = NULL;
 
             if (pctx != NULL
                     && d00_sign_message_init(libctx, pctx, NULL))
                 settable = EVP_PKEY_CTX_settable_params(pctx);
             if (settable != NULL)
-                entry = OSSL_PARAM_locate_const(settable,
+                tls_entry = OSSL_PARAM_locate_const(settable,
                     OSSL_SIGNATURE_PARAM_TLS_VERSION);
-            D00_CHECK(entry != NULL
-                    && entry->data_type == OSSL_PARAM_INTEGER
+            if (settable != NULL)
+                context_entry = OSSL_PARAM_locate_const(settable,
+                    OSSL_SIGNATURE_PARAM_CONTEXT_STRING);
+            D00_CHECK(tls_entry != NULL
+                    && tls_entry->data_type == OSSL_PARAM_INTEGER
+                    && context_entry != NULL
+                    && context_entry->data_type == OSSL_PARAM_OCTET_STRING
                     && settable[0].key != NULL
-                    && settable[1].key == NULL,
-                "tls-version: 4.0 settable list is exactly the int form");
+                    && settable[1].key != NULL
+                    && settable[2].key == NULL,
+                "tls-version: 4.0 settable list has context and int metadata");
         }
         EVP_PKEY_CTX_free(pctx);
 
@@ -1202,7 +1373,7 @@ int main(void)
 #else
         D00_CHECK(pkey != NULL, "tls-version: key");
 
-        /* The 3.5 lane advertises no settable TLS parameter at all. */
+        /* The 3.5 lane advertises native context but no TLS metadata. */
         pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
         {
             const OSSL_PARAM *settable = NULL;
@@ -1210,8 +1381,13 @@ int main(void)
             if (pctx != NULL
                     && d00_sign_message_init(libctx, pctx, NULL))
                 settable = EVP_PKEY_CTX_settable_params(pctx);
-            D00_CHECK(settable != NULL && settable[0].key == NULL,
-                "tls-version: 3.5 settable list stays empty");
+            D00_CHECK(settable != NULL
+                    && settable[0].key != NULL
+                    && strcmp(settable[0].key,
+                        OSSL_SIGNATURE_PARAM_CONTEXT_STRING) == 0
+                    && settable[0].data_type == OSSL_PARAM_OCTET_STRING
+                    && settable[1].key == NULL,
+                "tls-version: 3.5 settable list has context only");
         }
         EVP_PKEY_CTX_free(pctx);
 

@@ -2,14 +2,15 @@
 
 This is an experimental cryptographic implementation candidate. Small,
 reviewable issues and pull requests are welcome, but no contribution should
-expand its claims or silently change the draft-00 byte contract.
+expand its claims or silently change the active v1 byte contract. The
+domainless draft-00 inputs remain immutable historical evidence.
 
 Before proposing a change:
 
-1. read `README.md`, `STATUS.md`, `ZEROIZATION_AND_CT_BOUNDARY.md` and the
-   immutable inputs under `inputs/round4/`;
-2. preserve the context-free one-shot API and exact encodings unless a new,
-   incompatible profile is explicitly proposed;
+1. read `README.md`, `STATUS.md`, `ZEROIZATION_AND_CT_BOUNDARY.md`, the active
+   profile under `inputs/v1/` and the immutable inputs under `inputs/round4/`;
+2. preserve the Ed448-style v1 domain, one-shot API and exact encodings unless
+   a new, incompatible profile and identity are explicitly proposed;
 3. update tests and provenance for every behavioral change;
 4. regenerate `SOURCE_MANIFEST.sha256`; and
 5. run `sh scripts/check.sh` and, where Valgrind is available,

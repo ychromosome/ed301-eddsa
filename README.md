@@ -1,11 +1,11 @@
 # Ed301-EdDSA
 
-Experimental Rust implementation of `Ed301-EdDSA-draft-00` over the ED301
+Experimental Rust implementation of `Ed301-EdDSA-v1` over the ED301
 elliptic curve.
 
 - `no_std`
 - safe Rust
-- context-free one-shot signing and verification
+- one-shot signing and verification with an optional 0--255-byte context
 - locked, vendored and offline builds
 - draft vectors and edge cases included
 
@@ -53,10 +53,11 @@ legacy and v0 Rust demangler spellings, but it does not relax the reviewed
 instruction counts, branch rules or exact helper-call closures.
 
 The optional PKI integration uses the internally assigned Adiumentum OID
-`1.3.6.1.4.1.66282.301.3` for this exact Ed301-EdDSA key/signature profile.
-This private-enterprise allocation is not a standards or IANA TLS
-registration. See `docs/OID_REGISTRY.md` for the allocation and immutability
-rules.
+`1.3.6.1.4.1.66282.301.4` for this exact Ed301-EdDSA key/signature profile.
+The historical `.301.3` assignment remains frozen for the incompatible
+domainless draft-00 transcript. This private-enterprise allocation is not a
+standards or IANA TLS registration. See `docs/OID_REGISTRY.md` for the
+allocation and immutability rules.
 
 The provider is an integration candidate, not a release.  See
 `PROVIDER_STATUS.md`.

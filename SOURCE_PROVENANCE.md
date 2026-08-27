@@ -1,15 +1,33 @@
 # Source provenance
 
-## Normative inputs
+## Curve inputs and historical signature profile
 
-The signature contract and fixtures are copied byte-for-byte from the
-manifest-bound Round-4 source tree observed on 2026-08-15. Their portable
-hashes are recorded in `inputs/round4/SHA256SUMS`.
+The ED301-v1 curve, key derivation, encodings and historical domainless
+signature fixtures are copied byte-for-byte from the manifest-bound Round-4
+source tree observed on 2026-08-15. Their portable hashes are recorded in
+`inputs/round4/SHA256SUMS`. Those signature fixtures remain compatibility
+evidence and are not the active signature profile.
 
 The copied Round-4 source manifest has SHA-256
 `bea39d24dd5f952d715c3cdd3db5c163a95cdb4645128b046e88d4c2db226da2`.
 The Round-4 review recommendation and later execution logs are intentionally
 not implementation inputs and are not included in this source tree.
+
+## Active Ed301-EdDSA-v1 profile
+
+`inputs/v1/ED301-EdDSA-v1.md` defines the incompatible active profile. It
+keeps the curve, key derivation and wire sizes, but prefixes both signature
+hash transcripts with the RFC 8032 Ed448-shaped native domain
+`"SigEd301-v1" || 0x00 || octet(len(C)) || C`. OID `.301.4` is bound to this
+profile; `.301.3` remains frozen for the historical domainless profile.
+
+`tools/generate_ed301_eddsa_v1_vectors.py` derives the active vectors from the
+sealed seeds, messages and structural edge cases. Its variable-time Python
+oracle in `provider-tests/oracle/ed301_eddsa_v1/` implements the new transcript
+independently of the Rust transcript while deliberately reusing the separately
+tested Python curve arithmetic. `inputs/v1/SHA256SUMS` binds the profile,
+oracle, generator and resulting vectors. Reproduction must write to a fresh
+directory and compare both generated JSON files byte-for-byte.
 
 ## Reused Rust primitives
 
@@ -37,9 +55,9 @@ The implementation reused or consulted the following paths in commit
 | `secret-taint/valgrind-client/src/lib.rs` | byte-identical test helper | `b99fda8a3a8e266a565d458b98b5e89e2cdca84d` | `704238f245a73618c8aae3911a22e91115f21b3f8324e6d5d8d30338bcf077c3` |
 
 The candidate copies remove unrelated X301 helpers and narrow interfaces for
-draft-00. The scalar, transcript and signature layers adapt implementation
-patterns but rewrite the incompatible byte-contract semantics; the historical
-signature semantics are not reused. The
+Ed301-EdDSA-v1. The scalar, transcript and signature layers adapt
+implementation patterns but rewrite the incompatible byte-contract semantics;
+the historical signature semantics are not reused. The
 Valgrind client is test-only and remains outside the public crate's safe Rust
 boundary. The square-root exponentiation delegates to the bounded,
 constant-schedule Montgomery exponentiation supplied by the same pinned
@@ -95,7 +113,7 @@ Imported relationships:
 Old compiled modules, harness binaries, result logs and PASS receipts were not
 imported.  The repository version binds the provider directly to the current
 local `ed301-eddsa` crate, uses the repository's vendored dependencies,
-generates fixtures from `inputs/round4/`, replaces the donor orchestrator,
+generates active fixtures from `inputs/v1/`, replaces the donor orchestrator,
 and records fresh local evidence.  The donor is design and source provenance,
 not an independent security review.
 

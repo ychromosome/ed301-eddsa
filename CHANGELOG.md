@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Introduced the incompatible `Ed301-EdDSA-v1` transcript under OID
+  `1.3.6.1.4.1.66282.301.4`. Following the Ed448 `dom4` shape, both nonce and
+  challenge hashes now begin with `"SigEd301-v1" || 0x00 || len(C) || C` for
+  an opaque 0--255-byte context. The flag is fixed to the pure instance, the
+  empty context remains explicitly domain-bound, and no prehash variant is
+  defined. The domainless `.301.3` profile remains frozen and incompatible.
 - Reduced the public `Signature` to its exact 76-byte wire value. Decoded
   commitment and response state is now private and operation-local; the normal
   byte and provider verification paths still decode once, while the taint gate
@@ -28,9 +34,9 @@
   finding. Fresh single-KAT and equal-weight four-KAT EVP benchmarks document
   both short-message throughput and message-length sensitivity without
   treating either batch measurement as single-call latency.
-- Assigned `1.3.6.1.4.1.66282.301.3` to the fixed Ed301-EdDSA profile,
-  retained `.301.1` as the retired Ed301-Sig-v1 identity, and left X301 on
-  `.301.2`.
+- Historically assigned `1.3.6.1.4.1.66282.301.3` to the now-frozen,
+  domainless draft-00 profile, retained `.301.1` as the retired
+  Ed301-Sig-v1 identity, and left X301 on `.301.2`.
 - Added OpenSSL whole-message signature dispatch, rejected raw/prehashed
   signing modes, preserved the required verify `1`/`0`/negative result split,
   and added native OpenSSL EVP test vectors for both supported ABI majors.

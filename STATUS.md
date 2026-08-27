@@ -1,9 +1,13 @@
 # Status
 
-- Scope: Rust implementation candidate for `Ed301-EdDSA-draft-00`.
-- Protocol input: the manifest-bound Round-4 draft and vector files.
+- Scope: Rust implementation candidate for `Ed301-EdDSA-v1`.
+- Protocol input: the versioned profile and independently generated vectors in
+  `inputs/v1/`; the manifest-bound Round-4 profile remains frozen historical
+  input and is never reinterpreted as v1.
 - Runtime dependencies: `crypto-bigint`, `shake` and `zeroize`, exactly pinned.
-- API: context-free one-shot key derivation, signing and verification.
+- API: one-shot key derivation plus deterministic signing and verification
+  with an opaque 0--255-byte context. The empty context is the default and
+  still carries the Ed448-style native domain prefix.
 - Review state: the 2026-08-23 mixed-revision scan found two build-assurance
   defects at current HEAD. Both have focused repairs and local regression
   evidence. A complete security diff review of the post-Package-B integration

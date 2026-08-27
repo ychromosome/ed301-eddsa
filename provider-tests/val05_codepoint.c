@@ -44,7 +44,7 @@
 #include "vectors.h"
 
 #define D00_TLS_SIGALG_CODE_POINT 0xfe84U
-#define D00_TLS_SIGALG_IANA_NAME "ed301_eddsa_draft00_test"
+#define D00_TLS_SIGALG_IANA_NAME "ed301_eddsa_v1_test"
 #define SSL3_MT_CERTIFICATE_VERIFY_LOCAL 15
 #define D00_CV_WIRE_BYTES ((size_t)(8 + D00_SIG_BYTES))
 

@@ -1,5 +1,5 @@
 /*
- * Experimental signature-only OpenSSL provider for Ed301-EdDSA-draft-00.
+ * Experimental signature-only OpenSSL provider for Ed301-EdDSA-v1.
  *
  * Adapted from the historical ed301-openssl-provider shim (dispatch shapes,
  * selection logic, buffer contracts and serialization structure).  See the
@@ -8,7 +8,7 @@
  * 1.3.6.1.4.1.66282.301.1 and TLS codepoint 0xFE2D are intentionally not
  * reused.
  *
- * Identifier boundary: 1.3.6.1.4.1.66282.301.3 is assigned by the project
+ * Identifier boundary: 1.3.6.1.4.1.66282.301.4 is assigned by the project
  * owner beneath the Adiumentum GmbH private-enterprise arc to this exact
  * Ed301-EdDSA profile.  That private assignment is not an IANA TLS
  * SignatureScheme registration or a standards, production, constant-time or
@@ -51,6 +51,7 @@
 #define ED301D00_SEED_BYTES ((size_t)38)
 #define ED301D00_PUBLIC_KEY_BYTES ((size_t)38)
 #define ED301D00_SIGNATURE_BYTES ((size_t)76)
+#define ED301D00_MAX_CONTEXT_BYTES ((size_t)255)
 #define ED301D00_BITS 301
 #define ED301D00_SECURITY_BITS 149
 #define ED301D00_TLS_VERSION_1_3 0x0304
@@ -63,7 +64,7 @@
  * exists only in separately named TLS test artifacts.
  */
 #define ED301D00_OID_TEXT \
-    "1.3.6.1.4.1.66282.301.3"
+    "1.3.6.1.4.1.66282.301.4"
 #define ED301D00_TLS_SIGALG_CODE_POINT ((unsigned int)0xfe84)
 
 /*
@@ -71,15 +72,15 @@
  * "provider=" property.  The ordinary module exposes no TLS capability.
  */
 #ifdef ED301D00_TEST_FAILPOINT_ARTIFACT
-# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_failpoint"
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_v1_failpoint"
 #elif defined(ED301D00_TLS_EXPERIMENT_ARTIFACT)
-# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_tls_test"
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_v1_tls_test"
 #elif defined(ED301D00_TLS_COLLIDER_ARTIFACT)
-# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_tls_collider"
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_v1_tls_collider"
 #elif defined(ED301D00_PKI_EXPERIMENT_ARTIFACT)
-# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00_pki_test"
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_v1_pki_test"
 #else
-# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_draft00"
+# define ED301D00_PROVIDER_BASENAME "ed301_eddsa_v1"
 #endif
 
 #ifdef ED301D00_PKI_EXPERIMENT_ARTIFACT
@@ -98,41 +99,41 @@
 #endif
 
 static const char ED301D00_PROVIDER_NAME[] =
-    "Ed301-EdDSA-draft-00 Experimental Provider (test-only)";
+    "Ed301-EdDSA-v1 Experimental Provider (test-only)";
 static const char ED301D00_PROVIDER_VERSION[] = "0.0.1";
 static const char ED301D00_PROVIDER_BUILDINFO[] =
-    "ed301_eddsa_draft00 provider-experiment-1 (project-assigned OID; "
+    "ed301_eddsa_v1 provider-experiment-1 (project-assigned OID; "
     "private-use TLS test identifier); headers: " OPENSSL_VERSION_TEXT;
-static const char ED301D00_ALGORITHM_NAME[] = "Ed301-EdDSA-draft-00";
-static const char ED301D00_ALGORITHM_NAMES[] = "Ed301-EdDSA-draft-00";
+static const char ED301D00_ALGORITHM_NAME[] = "Ed301-EdDSA-v1";
+static const char ED301D00_ALGORITHM_NAMES[] = "Ed301-EdDSA-v1";
 static const char ED301D00_PROPERTY[] =
     "provider=" ED301D00_PROVIDER_BASENAME;
 #if ED301D00_HAS_TEST_TLS_CAPABILITY
 static const char ED301D00_OID[] = ED301D00_OID_TEXT;
 static const char ED301D00_TLS_SIGALG_CAPABILITY[] = "TLS-SIGALG";
 static const char ED301D00_TLS_SIGALG_IANA_NAME[] =
-    "ed301_eddsa_draft00_test";
+    "ed301_eddsa_v1_test";
 #endif
 
 /*
- * DER SEQUENCE { OBJECT IDENTIFIER 1.3.6.1.4.1.66282.301.3 };
+ * DER SEQUENCE { OBJECT IDENTIFIER 1.3.6.1.4.1.66282.301.4 };
  * parameterless by profile.
  */
 static const unsigned char ED301D00_ALGORITHM_ID_DER[] = {
     0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06, 0x01, 0x04,
-    0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d, 0x03
+    0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d, 0x04
 };
 
 static const unsigned char ED301D00_SPKI_PREFIX[] = {
     0x30, 0x38, 0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06,
     0x01, 0x04, 0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d,
-    0x03, 0x03, 0x27, 0x00
+    0x04, 0x03, 0x27, 0x00
 };
 
 static const unsigned char ED301D00_PKCS8_PREFIX[] = {
     0x30, 0x3c, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06,
     0x0b, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x84, 0x85,
-    0x6a, 0x82, 0x2d, 0x03, 0x04, 0x28, 0x04, 0x26
+    0x6a, 0x82, 0x2d, 0x04, 0x04, 0x28, 0x04, 0x26
 };
 
 #define ED301D00_OID_TLV_BYTES ((size_t)13)
@@ -140,14 +141,14 @@ static const unsigned char ED301D00_PKCS8_PREFIX[] = {
 
 _Static_assert(
     sizeof(ED301D00_ALGORITHM_ID_DER) == 15,
-    "draft-00 AlgorithmIdentifier must be exactly 15 bytes");
+    "v1 AlgorithmIdentifier must be exactly 15 bytes");
 _Static_assert(
     sizeof(ED301D00_SPKI_PREFIX) + ED301D00_PUBLIC_KEY_BYTES == 58,
-    "draft-00 SPKI must be exactly 58 bytes");
+    "v1 SPKI must be exactly 58 bytes");
 _Static_assert(
     sizeof(ED301D00_PKCS8_PREFIX) + ED301D00_SEED_BYTES
         == ED301D00_MAX_ENCODED_KEY_BYTES,
-    "draft-00 PKCS#8 must be exactly 62 bytes");
+    "v1 PKCS#8 must be exactly 62 bytes");
 
 typedef struct ed301d00_key_st {
     ED301D00_PROVIDER_CONTEXT *provider;
@@ -259,6 +260,7 @@ static const OSSL_PARAM ED301D00_SETTABLE_KEY_PARAMS[] = {
 #endif
 
 static const OSSL_PARAM ED301D00_SETTABLE_CTX_PARAMS[] = {
+    OSSL_PARAM_octet_string(OSSL_SIGNATURE_PARAM_CONTEXT_STRING, NULL, 0),
 #if ED301D00_ACCEPT_TLS_VERSION_PARAM
     OSSL_PARAM_int(OSSL_SIGNATURE_PARAM_TLS_VERSION, NULL),
 #endif
@@ -267,6 +269,7 @@ static const OSSL_PARAM ED301D00_SETTABLE_CTX_PARAMS[] = {
 
 static const OSSL_PARAM ED301D00_GETTABLE_CTX_PARAMS[] = {
     OSSL_PARAM_octet_string(OSSL_SIGNATURE_PARAM_ALGORITHM_ID, NULL, 0),
+    OSSL_PARAM_octet_string(OSSL_SIGNATURE_PARAM_CONTEXT_STRING, NULL, 0),
     OSSL_PARAM_END
 };
 
@@ -353,7 +356,7 @@ static ED301D00_KEY *ed301d00_wrap_key(
     if (key == NULL) {
         provider->rust->key_free(inner);
         ed301d00_raise(provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 key allocation failed");
+            "Ed301-EdDSA-v1 key allocation failed");
         return NULL;
     }
 
@@ -372,7 +375,7 @@ static void *ed301d00_key_new(void *provider_context)
     inner = provider->rust->key_new();
     if (inner == NULL) {
         ed301d00_raise(provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 key allocation failed");
+            "Ed301-EdDSA-v1 key allocation failed");
         return NULL;
     }
     return ed301d00_wrap_key(provider, inner);
@@ -454,7 +457,7 @@ static int ed301d00_key_import(
 
 invalid:
     ed301d00_raise(key->provider, ED301D00_R_INVALID_KEY,
-        "invalid draft-00 key material");
+        "invalid Ed301-EdDSA-v1 key material");
     return 0;
 }
 
@@ -533,7 +536,7 @@ cleanup:
         key->provider->rust->cleanse(private_key, sizeof(private_key));
     if (result != 1 && key != NULL)
         ed301d00_raise(key->provider, ED301D00_R_INVALID_KEY,
-            "draft-00 key export failed");
+            "Ed301-EdDSA-v1 key export failed");
     return result == 1 ? 1 : 0;
 }
 
@@ -615,7 +618,7 @@ cleanup:
         key->provider->rust->cleanse(private_key, sizeof(private_key));
     if (result != 1 && key != NULL)
         ed301d00_raise(key->provider, ED301D00_R_INVALID_PARAMETER,
-            "draft-00 key parameter query failed");
+            "Ed301-EdDSA-v1 key parameter query failed");
     return result;
 }
 
@@ -650,7 +653,7 @@ static int ed301d00_key_set_params(void *key_data, const OSSL_PARAM params[])
                 public_key,
                 public_length) != 1) {
         ed301d00_raise(key->provider, ED301D00_R_INVALID_KEY,
-            "invalid draft-00 encoded public key");
+            "invalid Ed301-EdDSA-v1 encoded public key");
         return 0;
     }
     return 1;
@@ -691,7 +694,7 @@ static int ed301d00_key_validate(
         ed301d00_wants_public(selection));
     if (result != 1)
         ed301d00_raise(key->provider, ED301D00_R_INVALID_KEY,
-            "draft-00 key validation failed");
+            "Ed301-EdDSA-v1 key validation failed");
     return result;
 }
 
@@ -733,7 +736,7 @@ static void *ed301d00_key_duplicate(const void *source_data, int selection)
         ed301d00_wants_public(selection));
     if (inner == NULL) {
         ed301d00_raise(source->provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 key duplication failed");
+            "Ed301-EdDSA-v1 key duplication failed");
         return NULL;
     }
     return ed301d00_wrap_key(source->provider, inner);
@@ -761,14 +764,14 @@ static void *ed301d00_key_gen_init(
             || !generates_keypair || !ed301d00_selection_supported(selection)
             || (params != NULL && params[0].key != NULL)) {
         ed301d00_raise(provider, ED301D00_R_INVALID_PARAMETER,
-            "invalid draft-00 key generation parameters");
+            "invalid Ed301-EdDSA-v1 key generation parameters");
         return NULL;
     }
 
     generation = ed301d00_allocate(provider, sizeof(*generation));
     if (generation == NULL) {
         ed301d00_raise(provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 generation context allocation failed");
+            "Ed301-EdDSA-v1 generation context allocation failed");
         return NULL;
     }
     generation->provider = provider;
@@ -802,13 +805,13 @@ static void *ed301d00_key_gen(
             sizeof(seed),
             ED301D00_SECURITY_BITS) != 1) {
         ed301d00_raise(provider, ED301D00_R_INVALID_KEY,
-            "OpenSSL private RAND failed during draft-00 key generation");
+            "OpenSSL private RAND failed during Ed301-EdDSA-v1 key generation");
         goto cleanup;
     }
     inner = rust->key_from_seed(seed, sizeof(seed));
     if (inner == NULL) {
         ed301d00_raise(provider, ED301D00_R_INVALID_KEY,
-            "draft-00 key derivation failed");
+            "Ed301-EdDSA-v1 key derivation failed");
         goto cleanup;
     }
     key = ed301d00_wrap_key(provider, inner);
@@ -856,7 +859,7 @@ static ED301D00_SIGNATURE_CONTEXT *ed301d00_signature_wrap_context(
     if (signature == NULL) {
         provider->rust->signature_free(inner);
         ed301d00_raise(provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 signature context allocation failed");
+            "Ed301-EdDSA-v1 signature context allocation failed");
         return NULL;
     }
 
@@ -878,7 +881,7 @@ static void *ed301d00_signature_new_context(
     inner = provider->rust->signature_new();
     if (inner == NULL) {
         ed301d00_raise(provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 signature context allocation failed");
+            "Ed301-EdDSA-v1 signature context allocation failed");
         return NULL;
     }
     return ed301d00_signature_wrap_context(provider, inner);
@@ -909,7 +912,7 @@ static void *ed301d00_signature_duplicate_context(void *signature_context)
     inner = source->provider->rust->signature_duplicate(source->inner);
     if (inner == NULL) {
         ed301d00_raise(source->provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 signature context duplication failed");
+            "Ed301-EdDSA-v1 signature context duplication failed");
         return NULL;
     }
     return ed301d00_signature_wrap_context(source->provider, inner);
@@ -924,11 +927,31 @@ static void ed301d00_signature_reset(
         signature->provider->rust->signature_reset(signature->inner);
 }
 
+static void ed301d00_signature_clear_context(
+    ED301D00_SIGNATURE_CONTEXT *signature)
+{
+    if (signature != NULL && signature->provider != NULL
+            && signature->provider->rust != NULL
+            && signature->inner != NULL)
+        (void)signature->provider->rust->signature_set_context(
+            signature->inner, NULL, 0);
+}
+
+static void ed301d00_signature_invalidate(
+    ED301D00_SIGNATURE_CONTEXT *signature)
+{
+    ed301d00_signature_reset(signature);
+    ed301d00_signature_clear_context(signature);
+}
+
 static int ed301d00_signature_get_context_params(
     void *signature_context,
     OSSL_PARAM params[])
 {
     ED301D00_SIGNATURE_CONTEXT *signature = signature_context;
+    OSSL_PARAM *context_parameter;
+    unsigned char context[ED301D00_MAX_CONTEXT_BYTES];
+    size_t context_length = 0;
 
     if (signature == NULL || signature->provider == NULL
             || signature->provider->rust == NULL
@@ -937,10 +960,24 @@ static int ed301d00_signature_get_context_params(
     if (params == NULL)
         return 1;
 
+    if (!ed301d00_param_set_optional_octet_string(
+            OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID),
+            ED301D00_ALGORITHM_ID_DER,
+            sizeof(ED301D00_ALGORITHM_ID_DER)))
+        return 0;
+    context_parameter = OSSL_PARAM_locate(
+        params, OSSL_SIGNATURE_PARAM_CONTEXT_STRING);
+    if (context_parameter == NULL)
+        return 1;
+    if (signature->provider->rust->signature_get_context(
+            signature->inner,
+            context,
+            sizeof(context),
+            &context_length) != 1
+            || context_length > sizeof(context))
+        return 0;
     return ed301d00_param_set_optional_octet_string(
-        OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID),
-        ED301D00_ALGORITHM_ID_DER,
-        sizeof(ED301D00_ALGORITHM_ID_DER));
+        context_parameter, context, context_length);
 }
 
 static const OSSL_PARAM *ed301d00_signature_gettable_context_params(
@@ -952,33 +989,50 @@ static const OSSL_PARAM *ed301d00_signature_gettable_context_params(
     return ED301D00_GETTABLE_CTX_PARAMS;
 }
 
-/*
- * Fail closed on every present signature-context parameter.  The draft
- * defines no context string, digest selection, prehash mode, streaming
- * update or randomized-signing option; a caller supplying any of these must
- * observe an error rather than silent acceptance.
- */
-static int ed301d00_signature_reject_params(
+/* Validate all parameters before atomically replacing the native context. */
+static int ed301d00_signature_apply_params(
     ED301D00_SIGNATURE_CONTEXT *signature,
     const OSSL_PARAM params[])
 {
+    unsigned char context[ED301D00_MAX_CONTEXT_BYTES];
+    size_t context_length = 0;
     size_t index;
+    int context_seen = 0;
     int tls_version_seen = 0;
 
     if (params == NULL)
         return 1;
     for (index = 0; params[index].key != NULL; index++) {
+        const OSSL_PARAM *parameter = &params[index];
+
+        if (strcmp(parameter->key,
+                OSSL_SIGNATURE_PARAM_CONTEXT_STRING) == 0) {
+            if (context_seen
+                    || parameter->data_type != OSSL_PARAM_OCTET_STRING
+                    || parameter->data_size > sizeof(context)
+                    || (parameter->data_size != 0
+                        && parameter->data == NULL)) {
+                ed301d00_raise(signature->provider,
+                    ED301D00_R_INVALID_PARAMETER,
+                    "Ed301-EdDSA-v1 context must be one OCTET STRING of "
+                    "at most 255 bytes");
+                return 0;
+            }
+            if (parameter->data_size != 0)
+                memcpy(context, parameter->data, parameter->data_size);
+            context_length = parameter->data_size;
+            context_seen = 1;
+            continue;
+        }
 #if ED301D00_ACCEPT_TLS_VERSION_PARAM
         /*
          * OpenSSL 4.0 transport metadata only: at most one
          * OSSL_PARAM_INTEGER of exactly sizeof(int) whose value is
          * exactly TLS 1.3.  It is neither stored nor hashed nor added
-         * to the draft-00 transcript and enables no mode; the whole
+         * to the Ed301-EdDSA-v1 transcript and enables no mode; the whole
          * array is still walked so a valid tls-version cannot shadow
          * a later unsupported parameter.
          */
-        const OSSL_PARAM *parameter = &params[index];
-
         if (strcmp(parameter->key, OSSL_SIGNATURE_PARAM_TLS_VERSION) == 0
                 && !tls_version_seen
                 && parameter->data_type == OSSL_PARAM_INTEGER
@@ -995,12 +1049,21 @@ static int ed301d00_signature_reject_params(
 #endif
         if (signature != NULL)
             ed301d00_raise(signature->provider, ED301D00_R_UNSUPPORTED_MODE,
-                "Ed301-EdDSA-draft-00 rejects parameter '%s': no context, "
-                "digest, prehash, streaming or randomized mode is defined",
+                "Ed301-EdDSA-v1 rejects parameter '%s': no digest, prehash, "
+                "instance, streaming or randomized mode is defined",
                 params[index].key);
         return 0;
     }
     (void)tls_version_seen;
+    if (context_seen
+            && signature->provider->rust->signature_set_context(
+                signature->inner,
+                context_length == 0 ? NULL : context,
+                context_length) != 1) {
+        ed301d00_raise(signature->provider, ED301D00_R_INVALID_PARAMETER,
+            "Ed301-EdDSA-v1 context update failed");
+        return 0;
+    }
     return 1;
 }
 
@@ -1014,8 +1077,8 @@ static int ed301d00_signature_set_context_params(
             || signature->provider->rust == NULL
             || signature->inner == NULL)
         return 0;
-    if (!ed301d00_signature_reject_params(signature, params)) {
-        ed301d00_signature_reset(signature);
+    if (!ed301d00_signature_apply_params(signature, params)) {
+        ed301d00_signature_invalidate(signature);
         return 0;
     }
     return 1;
@@ -1049,30 +1112,36 @@ static int ed301d00_signature_sign_init(
      * operation, then let the Rust context accept only a matching Sign state.
      */
     if (key == NULL) {
-        if (!ed301d00_signature_reject_params(signature, params))
+        /* Match Ed448: each initialization starts from the empty context. */
+        ed301d00_signature_clear_context(signature);
+        if (!ed301d00_signature_apply_params(signature, params)) {
+            ed301d00_signature_invalidate(signature);
             return 0;
+        }
         if (signature->provider->rust->signature_sign_init(
                 signature->inner, NULL) != 1) {
             /* A failed FFI call may have left the retained operation live. */
-            ed301d00_signature_reset(signature);
+            ed301d00_signature_invalidate(signature);
             ed301d00_raise(signature->provider, ED301D00_R_INVALID_STATE,
-                "draft-00 signing reinitialization has no bound signing key");
+                "v1 signing reinitialization has no bound signing key");
             return 0;
         }
         return 1;
     }
 
-    ed301d00_signature_reset(signature);
+    /* Match Ed448: clear both the prior key operation and native context. */
+    ed301d00_signature_invalidate(signature);
     if (signature->provider != key->provider
             || key->inner == NULL)
         return 0;
-    if (!ed301d00_signature_reject_params(signature, params))
+    if (!ed301d00_signature_apply_params(signature, params)) {
         return 0;
+    }
     if (signature->provider->rust->signature_sign_init(
             signature->inner,
             key->inner) != 1) {
         ed301d00_raise(signature->provider, ED301D00_R_INVALID_KEY,
-            "draft-00 signing requires a consistent private key");
+            "v1 signing requires a consistent private key");
         return 0;
     }
     return 1;
@@ -1093,30 +1162,36 @@ static int ed301d00_signature_verify_init(
 
     /* Same NULL-key reinitialization contract as the signing path. */
     if (key == NULL) {
-        if (!ed301d00_signature_reject_params(signature, params))
+        /* Match Ed448: each initialization starts from the empty context. */
+        ed301d00_signature_clear_context(signature);
+        if (!ed301d00_signature_apply_params(signature, params)) {
+            ed301d00_signature_invalidate(signature);
             return 0;
+        }
         if (signature->provider->rust->signature_verify_init(
                 signature->inner, NULL) != 1) {
             /* A failed FFI call may have left the retained operation live. */
-            ed301d00_signature_reset(signature);
+            ed301d00_signature_invalidate(signature);
             ed301d00_raise(signature->provider, ED301D00_R_INVALID_STATE,
-                "draft-00 verification reinitialization has no bound key");
+                "v1 verification reinitialization has no bound key");
             return 0;
         }
         return 1;
     }
 
-    ed301d00_signature_reset(signature);
+    /* Match Ed448: clear both the prior key operation and native context. */
+    ed301d00_signature_invalidate(signature);
     if (signature->provider != key->provider
             || key->inner == NULL)
         return 0;
-    if (!ed301d00_signature_reject_params(signature, params))
+    if (!ed301d00_signature_apply_params(signature, params)) {
         return 0;
+    }
     if (signature->provider->rust->signature_verify_init(
             signature->inner,
             key->inner) != 1) {
         ed301d00_raise(signature->provider, ED301D00_R_INVALID_KEY,
-            "draft-00 verification requires a valid public key");
+            "v1 verification requires a valid public key");
         return 0;
     }
     return 1;
@@ -1143,7 +1218,7 @@ static int ed301d00_signature_sign(
     if (signature_size < ED301D00_SIGNATURE_BYTES) {
         *signature_length = ED301D00_SIGNATURE_BYTES;
         ed301d00_raise(signature->provider, ED301D00_R_INVALID_PARAMETER,
-            "draft-00 output buffer is too small");
+            "Ed301-EdDSA-v1 output buffer is too small");
         return 0;
     }
 
@@ -1155,7 +1230,7 @@ static int ed301d00_signature_sign(
             signature_value,
             signature_size) != 1) {
         ed301d00_raise(signature->provider, ED301D00_R_INVALID_STATE,
-            "draft-00 signing failed");
+            "Ed301-EdDSA-v1 signing failed");
         return 0;
     }
     *signature_length = ED301D00_SIGNATURE_BYTES;
@@ -1179,14 +1254,14 @@ static int ed301d00_signature_verify(
     if ((message == NULL && message_length != 0)
             || message_length > (size_t)INTPTR_MAX) {
         ed301d00_raise(signature->provider, ED301D00_R_INVALID_PARAMETER,
-            "draft-00 verification received an invalid input buffer");
+            "Ed301-EdDSA-v1 verification received an invalid input buffer");
         return -1;
     }
     if (signature_length != ED301D00_SIGNATURE_BYTES)
         return 0;
     if (signature_value == NULL) {
         ed301d00_raise(signature->provider, ED301D00_R_INVALID_PARAMETER,
-            "draft-00 verification received an invalid signature buffer");
+            "Ed301-EdDSA-v1 verification received an invalid signature buffer");
         return -1;
     }
     result = signature->provider->rust->signature_verify(
@@ -1197,7 +1272,7 @@ static int ed301d00_signature_verify(
         signature_length);
     if (result < 0)
         ed301d00_raise(signature->provider, ED301D00_R_INVALID_STATE,
-            "draft-00 verification failed internally");
+            "Ed301-EdDSA-v1 verification failed internally");
     return result;
 }
 
@@ -1216,11 +1291,9 @@ static int ed301d00_signature_digest_sign_init(
 
     if (!ed301d00_digest_name_is_pure(digest_name)) {
         if (signature != NULL) {
-            /* A new key starts a new operation and must fail closed. */
-            if (key_data != NULL)
-                ed301d00_signature_reset(signature);
+            ed301d00_signature_invalidate(signature);
             ed301d00_raise(signature->provider, ED301D00_R_UNSUPPORTED_MODE,
-                "Ed301-EdDSA-draft-00 does not accept an external digest");
+                "Ed301-EdDSA-v1 does not accept an external digest");
         }
         return 0;
     }
@@ -1237,11 +1310,9 @@ static int ed301d00_signature_digest_verify_init(
 
     if (!ed301d00_digest_name_is_pure(digest_name)) {
         if (signature != NULL) {
-            /* A new key starts a new operation and must fail closed. */
-            if (key_data != NULL)
-                ed301d00_signature_reset(signature);
+            ed301d00_signature_invalidate(signature);
             ed301d00_raise(signature->provider, ED301D00_R_UNSUPPORTED_MODE,
-                "Ed301-EdDSA-draft-00 does not accept an external digest");
+                "Ed301-EdDSA-v1 does not accept an external digest");
         }
         return 0;
     }
@@ -1297,7 +1368,7 @@ static ED301D00_CODEC_CONTEXT *ed301d00_codec_new_context(
     codec = ed301d00_allocate(provider, sizeof(*codec));
     if (codec == NULL) {
         ed301d00_raise(provider, ED301D00_R_ALLOCATION_FAILURE,
-            "draft-00 codec context allocation failed");
+            "Ed301-EdDSA-v1 codec context allocation failed");
         return NULL;
     }
     codec->provider = provider;
@@ -1713,7 +1784,7 @@ cleanup:
     ed301d00_codec_cleanse(codec, encoded, sizeof(encoded));
     if (result != 1 && codec != NULL)
         ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
-            "draft-00 key encoding failed");
+            "Ed301-EdDSA-v1 key encoding failed");
     return result;
 }
 
@@ -1816,7 +1887,7 @@ static int ed301d00_codec_decode(
     owns_input = 1;
     if (memcmp(encoded, prefix, prefix_length) != 0) {
         ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
-            "non-canonical draft-00 key encoding");
+            "non-canonical Ed301-EdDSA-v1 key encoding");
         result = 0;
         goto cleanup;
     }
@@ -1824,7 +1895,7 @@ static int ed301d00_codec_decode(
     key = ed301d00_codec_import_key(codec, encoded + prefix_length);
     if (key == NULL) {
         ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
-            "draft-00 key decoding rejected key material");
+            "Ed301-EdDSA-v1 key decoding rejected key material");
         result = 0;
         goto cleanup;
     }
@@ -1850,7 +1921,7 @@ cleanup:
     if (!owns_input && checkpoint >= 0
             && !ed301d00_codec_restore(codec, input, checkpoint)) {
         ed301d00_raise(codec->provider, ED301D00_R_SERIALIZATION_FAILURE,
-            "draft-00 decoder could not restore an unowned input");
+            "Ed301-EdDSA-v1 decoder could not restore an unowned input");
         result = 0;
     }
     ed301d00_key_free(key);
@@ -2068,7 +2139,7 @@ static const OSSL_ALGORITHM ED301D00_KEYMGMT_ALGORITHMS[] = {
         ED301D00_ALGORITHM_NAMES,
         ED301D00_PROPERTY,
         ED301D00_KEYMGMT_DISPATCH,
-        "Experimental Ed301-EdDSA-draft-00 raw key management (test-only)"
+        "Experimental Ed301-EdDSA-v1 raw key management (test-only)"
     },
     { NULL, NULL, NULL, NULL }
 };
@@ -2078,7 +2149,7 @@ static const OSSL_ALGORITHM ED301D00_SIGNATURE_ALGORITHMS[] = {
         ED301D00_ALGORITHM_NAMES,
         ED301D00_PROPERTY,
         ED301D00_SIGNATURE_DISPATCH,
-        "Experimental pure Ed301-EdDSA-draft-00 signatures (test-only)"
+        "Experimental pure Ed301-EdDSA-v1 signatures (test-only)"
     },
     { NULL, NULL, NULL, NULL }
 };
@@ -2088,25 +2159,25 @@ static const OSSL_ALGORITHM ED301D00_ENCODER_ALGORITHMS[] = {
         ED301D00_ALGORITHM_NAMES,
         "provider=" ED301D00_PROVIDER_BASENAME ",output=der,structure=PrivateKeyInfo",
         ED301D00_PKCS8_DER_ENCODER_DISPATCH,
-        "draft-00 PKCS#8 DER encoder (test-only)"
+        "Ed301-EdDSA-v1 PKCS#8 DER encoder (test-only)"
     },
     {
         ED301D00_ALGORITHM_NAMES,
         "provider=" ED301D00_PROVIDER_BASENAME ",output=pem,structure=PrivateKeyInfo",
         ED301D00_PKCS8_PEM_ENCODER_DISPATCH,
-        "draft-00 PKCS#8 PEM encoder (test-only)"
+        "Ed301-EdDSA-v1 PKCS#8 PEM encoder (test-only)"
     },
     {
         ED301D00_ALGORITHM_NAMES,
         "provider=" ED301D00_PROVIDER_BASENAME ",output=der,structure=SubjectPublicKeyInfo",
         ED301D00_SPKI_DER_ENCODER_DISPATCH,
-        "draft-00 SPKI DER encoder (test-only)"
+        "Ed301-EdDSA-v1 SPKI DER encoder (test-only)"
     },
     {
         ED301D00_ALGORITHM_NAMES,
         "provider=" ED301D00_PROVIDER_BASENAME ",output=pem,structure=SubjectPublicKeyInfo",
         ED301D00_SPKI_PEM_ENCODER_DISPATCH,
-        "draft-00 SPKI PEM encoder (test-only)"
+        "Ed301-EdDSA-v1 SPKI PEM encoder (test-only)"
     },
     { NULL, NULL, NULL, NULL }
 };
@@ -2117,7 +2188,7 @@ static const OSSL_ALGORITHM ED301D00_DECODER_ALGORITHMS[] = {
         ED301D00_ALGORITHM_NAMES,
         "provider=" ED301D00_PROVIDER_BASENAME ",input=der,structure=SubjectPublicKeyInfo",
         ED301D00_SPKI_DER_DECODER_DISPATCH,
-        "draft-00 transactional SPKI DER decoder (TLS test-only)"
+        "Ed301-EdDSA-v1 transactional SPKI DER decoder (TLS test-only)"
     },
     { NULL, NULL, NULL, NULL }
 };
@@ -2367,7 +2438,7 @@ static int ed301d00_rust_api_valid(
     const ED301D00_SIGNATURE_RUST_API *rust_api)
 {
     return rust_api != NULL
-        && rust_api->abi_version == 2
+        && rust_api->abi_version == 3
         && rust_api->struct_size == sizeof(*rust_api)
         && rust_api->seed_bytes == ED301D00_SEED_BYTES
         && rust_api->public_key_bytes == ED301D00_PUBLIC_KEY_BYTES
@@ -2387,6 +2458,8 @@ static int ed301d00_rust_api_valid(
         && rust_api->signature_free != NULL
         && rust_api->signature_duplicate != NULL
         && rust_api->signature_reset != NULL
+        && rust_api->signature_set_context != NULL
+        && rust_api->signature_get_context != NULL
         && rust_api->signature_sign_init != NULL
         && rust_api->signature_verify_init != NULL
         && rust_api->signature_sign != NULL
@@ -2394,14 +2467,14 @@ static int ed301d00_rust_api_valid(
         && rust_api->cleanse != NULL;
 }
 
-int ed301_eddsa_draft00_shim_init(
+int ed301_eddsa_v1_shim_init(
     const OSSL_CORE_HANDLE *handle,
     const OSSL_DISPATCH *input_dispatch,
     const OSSL_DISPATCH **output_dispatch,
     void **provider_context,
     const ED301D00_SIGNATURE_RUST_API *rust_api);
 
-int ed301_eddsa_draft00_shim_init(
+int ed301_eddsa_v1_shim_init(
     const OSSL_CORE_HANDLE *handle,
     const OSSL_DISPATCH *input_dispatch,
     const OSSL_DISPATCH **output_dispatch,

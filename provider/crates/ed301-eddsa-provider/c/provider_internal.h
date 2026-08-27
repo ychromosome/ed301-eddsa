@@ -3,11 +3,11 @@
 
 /*
  * Internal contract between the C provider shim and the Rust callback table
- * for the experimental Ed301-EdDSA-draft-00 signature-only provider.
+ * for the experimental Ed301-EdDSA-v1 signature-only provider.
  *
  * Adapted from the historical provider's provider_internal.h dispatch shape
- * (see the result provenance map).  The X301/KEM surface, the context-string
- * callback and the historical identity are intentionally absent.
+ * (see the result provenance map).  The X301/KEM surface and historical
+ * signature identities are intentionally absent.
  */
 
 #include <stddef.h>
@@ -67,6 +67,15 @@ typedef struct ed301d00_signature_rust_api_st {
     void (*signature_free)(void *signature);
     void *(*signature_duplicate)(const void *source);
     void (*signature_reset)(void *signature);
+    int (*signature_set_context)(
+        void *signature,
+        const unsigned char *context_string,
+        size_t context_length);
+    int (*signature_get_context)(
+        const void *signature,
+        unsigned char *context_string,
+        size_t context_capacity,
+        size_t *context_length);
     int (*signature_sign_init)(void *signature, const void *key);
     int (*signature_verify_init)(void *signature, const void *key);
     int (*signature_sign)(

@@ -19,9 +19,9 @@
 #include "vectors.h"
 
 #define D00_TLS_PKCS8_DECODER_PROP \
-    "provider=ed301_eddsa_draft00_tls_test,input=der,structure=PrivateKeyInfo"
+    "provider=ed301_eddsa_v1_tls_test,input=der,structure=PrivateKeyInfo"
 #define D00_TLS_SPKI_DECODER_PROP \
-    "provider=ed301_eddsa_draft00_tls_test,input=der,structure=SubjectPublicKeyInfo"
+    "provider=ed301_eddsa_v1_tls_test,input=der,structure=SubjectPublicKeyInfo"
 
 static unsigned char *make_der(
     OSSL_LIB_CTX *libctx,

@@ -18,6 +18,8 @@ static int unit_sign_key_bound;
 static int unit_verify_key_bound;
 static int unit_sign_init_result = 1;
 static int unit_verify_init_result = 1;
+static unsigned char unit_context[ED301D00_MAX_CONTEXT_BYTES];
+static size_t unit_context_length;
 
 static int unit_signature_verify(
     const void *signature,
@@ -41,6 +43,38 @@ static void unit_signature_reset(void *signature)
     unit_signature_reset_calls++;
     unit_sign_key_bound = 0;
     unit_verify_key_bound = 0;
+}
+
+static int unit_signature_set_context(
+    void *signature,
+    const unsigned char *context_string,
+    size_t context_length)
+{
+    (void)signature;
+    if (context_length > sizeof(unit_context)
+            || (context_length != 0 && context_string == NULL))
+        return 0;
+    memset(unit_context, 0, sizeof(unit_context));
+    if (context_length != 0)
+        memcpy(unit_context, context_string, context_length);
+    unit_context_length = context_length;
+    return 1;
+}
+
+static int unit_signature_get_context(
+    const void *signature,
+    unsigned char *context_string,
+    size_t context_capacity,
+    size_t *context_length)
+{
+    (void)signature;
+    if (context_length == NULL || context_capacity < unit_context_length
+            || (unit_context_length != 0 && context_string == NULL))
+        return 0;
+    if (unit_context_length != 0)
+        memcpy(context_string, unit_context, unit_context_length);
+    *context_length = unit_context_length;
+    return 1;
 }
 
 static int unit_signature_sign_init(void *signature, const void *key)
@@ -129,7 +163,7 @@ static void unit_test_digest_reinit_contract(
     ED301D00_SIGNATURE_CONTEXT signature = { 0 };
     ED301D00_KEY key = { 0 };
     OSSL_PARAM bad_params[2];
-    static unsigned char context_value[] = "ctx";
+    static char digest_value[] = "SHA256";
     int signature_inner = 1;
     int key_inner = 2;
     unit_digest_init_fn init = verification
@@ -138,6 +172,8 @@ static void unit_test_digest_reinit_contract(
     const char *operation = verification ? "verify" : "sign";
 
     api->signature_reset = unit_signature_reset;
+    api->signature_set_context = unit_signature_set_context;
+    api->signature_get_context = unit_signature_get_context;
     api->signature_sign_init = unit_signature_sign_init;
     api->signature_verify_init = unit_signature_verify_init;
     provider.handle = (const OSSL_CORE_HANDLE *)&provider;
@@ -150,9 +186,8 @@ static void unit_test_digest_reinit_contract(
     key.provider = &provider;
     key.inner = &key_inner;
 
-    bad_params[0] = OSSL_PARAM_construct_octet_string(
-        OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
-        context_value, sizeof(context_value) - 1);
+    bad_params[0] = OSSL_PARAM_construct_utf8_string(
+        OSSL_SIGNATURE_PARAM_DIGEST, digest_value, 0);
     bad_params[1] = OSSL_PARAM_construct_end();
 
     unit_signature_reset_calls = 0;
@@ -162,30 +197,6 @@ static void unit_test_digest_reinit_contract(
     unit_verify_init_result = 1;
     unit_sign_key_bound = !verification;
     unit_verify_key_bound = verification;
-    D00_CHECK(init(&signature, "SHA256", NULL, NULL) == 0
-            && unit_signature_reset_calls == 0
-            && (verification ? unit_verify_init_calls
-                             : unit_sign_init_calls) == 0
-            && (verification ? unit_verify_key_bound
-                             : unit_sign_key_bound) == 1,
-        "rejected digest preserves a bound NULL-key %s operation",
-        operation);
-
-    unit_signature_reset_calls = 0;
-    unit_sign_init_calls = 0;
-    unit_verify_init_calls = 0;
-    D00_CHECK(init(&signature, NULL, NULL, bad_params) == 0
-            && unit_signature_reset_calls == 0
-            && (verification ? unit_verify_init_calls
-                             : unit_sign_init_calls) == 0
-            && (verification ? unit_verify_key_bound
-                             : unit_sign_key_bound) == 1,
-        "rejected params preserve a bound NULL-key %s operation",
-        operation);
-
-    unit_signature_reset_calls = 0;
-    unit_sign_init_calls = 0;
-    unit_verify_init_calls = 0;
     D00_CHECK(init(&signature, NULL, NULL, NULL) == 1
             && unit_signature_reset_calls == 0
             && (verification ? unit_verify_init_calls
@@ -193,6 +204,32 @@ static void unit_test_digest_reinit_contract(
             && (verification ? unit_verify_key_bound
                              : unit_sign_key_bound) == 1,
         "valid NULL-key %s reinit retains the matching operation",
+        operation);
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    D00_CHECK(init(&signature, "SHA256", NULL, NULL) == 0
+            && unit_signature_reset_calls == 1
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 0
+            && unit_sign_key_bound == 0
+            && unit_verify_key_bound == 0,
+        "rejected digest invalidates a bound NULL-key %s operation",
+        operation);
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    unit_sign_key_bound = !verification;
+    unit_verify_key_bound = verification;
+    D00_CHECK(init(&signature, NULL, NULL, bad_params) == 0
+            && unit_signature_reset_calls == 1
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 0
+            && unit_sign_key_bound == 0
+            && unit_verify_key_bound == 0,
+        "rejected params invalidate a bound NULL-key %s operation",
         operation);
 
     /* Model a caught Rust panic: the callback returns failure unchanged. */
@@ -203,6 +240,8 @@ static void unit_test_digest_reinit_contract(
         unit_verify_init_result = 0;
     else
         unit_sign_init_result = 0;
+    unit_sign_key_bound = !verification;
+    unit_verify_key_bound = verification;
     D00_CHECK(init(&signature, NULL, NULL, NULL) == 0
             && unit_signature_reset_calls == 1
             && (verification ? unit_verify_init_calls
@@ -259,7 +298,7 @@ static void unit_test_digest_reinit_contract(
 static void unit_fill_api(ED301D00_SIGNATURE_RUST_API *api)
 {
     memset(api, 0, sizeof(*api));
-    api->abi_version = 2;
+    api->abi_version = 3;
     api->struct_size = sizeof(*api);
     api->seed_bytes = ED301D00_SEED_BYTES;
     api->public_key_bytes = ED301D00_PUBLIC_KEY_BYTES;
@@ -281,6 +320,8 @@ static void unit_fill_api(ED301D00_SIGNATURE_RUST_API *api)
     ASSIGN_CALLBACK(signature_free);
     ASSIGN_CALLBACK(signature_duplicate);
     ASSIGN_CALLBACK(signature_reset);
+    api->signature_set_context = unit_signature_set_context;
+    api->signature_get_context = unit_signature_get_context;
     ASSIGN_CALLBACK(signature_sign_init);
     ASSIGN_CALLBACK(signature_verify_init);
     ASSIGN_CALLBACK(signature_sign);
@@ -323,6 +364,8 @@ int main(void)
     EXPECT_MISSING_CALLBACK(&api, signature_free);
     EXPECT_MISSING_CALLBACK(&api, signature_duplicate);
     EXPECT_MISSING_CALLBACK(&api, signature_reset);
+    EXPECT_MISSING_CALLBACK(&api, signature_set_context);
+    EXPECT_MISSING_CALLBACK(&api, signature_get_context);
     EXPECT_MISSING_CALLBACK(&api, signature_sign_init);
     EXPECT_MISSING_CALLBACK(&api, signature_verify_init);
     EXPECT_MISSING_CALLBACK(&api, signature_sign);

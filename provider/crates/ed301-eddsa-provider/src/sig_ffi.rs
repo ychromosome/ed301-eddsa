@@ -1,12 +1,12 @@
-//! Rust-owned key and one-shot signature contexts for `Ed301-EdDSA-draft-00`.
+//! Rust-owned key and one-shot signature contexts for `Ed301-EdDSA-v1`.
 //!
 //! Adapted from the historical provider's `ed301_sig_ffi.rs` dispatch shape
 //! (see the result provenance map).  Differences bound by this experiment:
 //! the cryptographic core is the frozen `ed301-eddsa` crate in this
 //! repository,
-//! there is no context, digest, prehash, streaming or randomized-signing
-//! surface at all, and the historical `Ed301-Sig-v1` semantics are not
-//! reachable from this module.
+//! the native context follows the Ed448 domain-separation shape, while digest,
+//! prehash, streaming and randomized-signing modes remain unreachable.  The
+//! historical `Ed301-Sig-v1` semantics are not reachable from this module.
 //!
 //! All object pointers in the callback table are opaque outside Rust.  Every
 //! callback catches unwinding so a Rust panic can never cross the C ABI
@@ -24,7 +24,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use crypto_bigint::CtEq;
 use ed301_eddsa::{
     ExpandedSigningKey, SigningKey, VerifyingKey,
-    parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
+    parameters::{MAX_CONTEXT_BYTES, PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
 };
 use zeroize::Zeroize;
 
@@ -52,6 +52,9 @@ pub(crate) struct SignatureRustApi {
     pub(crate) signature_free: unsafe extern "C" fn(*mut c_void),
     pub(crate) signature_duplicate: unsafe extern "C" fn(*const c_void) -> *mut c_void,
     pub(crate) signature_reset: unsafe extern "C" fn(*mut c_void),
+    pub(crate) signature_set_context: unsafe extern "C" fn(*mut c_void, *const u8, usize) -> c_int,
+    pub(crate) signature_get_context:
+        unsafe extern "C" fn(*const c_void, *mut u8, usize, *mut usize) -> c_int,
     pub(crate) signature_sign_init: unsafe extern "C" fn(*mut c_void, *const c_void) -> c_int,
     pub(crate) signature_verify_init: unsafe extern "C" fn(*mut c_void, *const c_void) -> c_int,
     pub(crate) signature_sign:
@@ -61,9 +64,9 @@ pub(crate) struct SignatureRustApi {
     pub(crate) cleanse: unsafe extern "C" fn(*mut u8, usize),
 }
 
-/// `Ed301-EdDSA-draft-00` callback table for the C provider shim.
+/// `Ed301-EdDSA-v1` callback table for the C provider shim.
 pub(crate) static SIGNATURE_RUST_API: SignatureRustApi = SignatureRustApi {
-    abi_version: 2,
+    abi_version: 3,
     struct_size: core::mem::size_of::<SignatureRustApi>(),
     seed_bytes: SEED_BYTES,
     public_key_bytes: PUBLIC_KEY_BYTES,
@@ -83,6 +86,8 @@ pub(crate) static SIGNATURE_RUST_API: SignatureRustApi = SignatureRustApi {
     signature_free,
     signature_duplicate,
     signature_reset,
+    signature_set_context,
+    signature_get_context,
     signature_sign_init,
     signature_verify_init,
     signature_sign,
@@ -218,6 +223,38 @@ enum SignatureOperation {
 #[derive(Clone, Default)]
 pub(crate) struct DraftSignatureContext {
     operation: SignatureOperation,
+    context: NativeContext,
+}
+
+#[derive(Clone)]
+struct NativeContext {
+    bytes: [u8; MAX_CONTEXT_BYTES],
+    len: u8,
+}
+
+impl Default for NativeContext {
+    fn default() -> Self {
+        Self {
+            bytes: [0; MAX_CONTEXT_BYTES],
+            len: 0,
+        }
+    }
+}
+
+impl NativeContext {
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+
+    fn set(&mut self, value: &[u8]) -> bool {
+        let Ok(len) = u8::try_from(value.len()) else {
+            return false;
+        };
+        self.bytes.fill(0);
+        self.bytes[..value.len()].copy_from_slice(value);
+        self.len = len;
+        true
+    }
 }
 
 /// Test-only fail-closed diagnostic, compiled in ONLY under the
@@ -228,7 +265,7 @@ pub(crate) struct DraftSignatureContext {
 /// this feature and contains neither the hook nor the variable-name string.
 #[cfg(feature = "test-failpoint")]
 fn hit_panic_failpoint(name: &str) {
-    match std::env::var("ED301_EDDSA_DRAFT00_PANIC_FAILPOINT") {
+    match std::env::var("ED301_EDDSA_V1_PANIC_FAILPOINT") {
         Ok(value) if value == name => panic!("injected test panic in {name}"),
         _ => {}
     }
@@ -252,7 +289,7 @@ fn hit_panic_failpoint(_name: &str) {}
 #[cfg(feature = "test-failpoint")]
 fn hit_alloc_failpoint(name: &str) -> bool {
     matches!(
-        std::env::var("ED301_EDDSA_DRAFT00_ALLOC_FAILPOINT"),
+        std::env::var("ED301_EDDSA_V1_ALLOC_FAILPOINT"),
         Ok(value) if value == name
     )
 }
@@ -697,6 +734,55 @@ pub(crate) unsafe extern "C" fn signature_reset(context: *mut c_void) {
     }));
 }
 
+/// Replace the native context atomically without changing the bound key.
+pub(crate) unsafe extern "C" fn signature_set_context(
+    context: *mut c_void,
+    value: *const u8,
+    value_len: usize,
+) -> c_int {
+    ffi_int(|| {
+        // SAFETY: The shim passes a live Rust-owned signature context.
+        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_mut() }) else {
+            return 0;
+        };
+        // SAFETY: The shim keeps value_len bytes readable for this call.
+        let Some(value) = (unsafe { read_bytes(value, value_len) }) else {
+            return 0;
+        };
+        i32::from(context.context.set(value))
+    })
+}
+
+/// Copy the current native context to a shim-owned output buffer.
+pub(crate) unsafe extern "C" fn signature_get_context(
+    context: *const c_void,
+    output: *mut u8,
+    output_len: usize,
+    value_len: *mut usize,
+) -> c_int {
+    ffi_int(|| {
+        // SAFETY: The shim passes a live Rust-owned signature context.
+        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_ref() }) else {
+            return 0;
+        };
+        if value_len.is_null() {
+            return 0;
+        }
+        let value = context.context.as_slice();
+        // SAFETY: value_len is writable for this call.
+        unsafe { *value_len = value.len() };
+        if output.is_null() {
+            return i32::from(output_len == 0);
+        }
+        if output_len < value.len() {
+            return 0;
+        }
+        // SAFETY: The shim supplies output_len writable bytes.
+        unsafe { core::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len()) };
+        1
+    })
+}
+
 /// Duplicate a signature context, including its initialized key snapshot.
 pub(crate) unsafe extern "C" fn signature_duplicate(source: *const c_void) -> *mut c_void {
     ffi_pointer(|| {
@@ -816,7 +902,8 @@ pub(crate) unsafe extern "C" fn signature_sign(
         let Some(message) = (unsafe { read_bytes(message, message_len) }) else {
             return 0;
         };
-        let Ok(signature) = signing_key.sign(message) else {
+        let Ok(signature) = signing_key.sign_with_context(message, context.context.as_slice())
+        else {
             return 0;
         };
         // SAFETY: output_len was checked above and the shim owns the buffer.
@@ -861,7 +948,11 @@ pub(crate) unsafe extern "C" fn signature_verify(
             return -1;
         };
 
-        i32::from(public.verify_bytes(message, signature_value))
+        i32::from(public.verify_bytes_with_context(
+            message,
+            context.context.as_slice(),
+            signature_value,
+        ))
     })
 }
 
@@ -1071,6 +1162,7 @@ mod tests {
         let expanded = shared(expanded_key(0xA5));
         let mut context = Box::new(DraftSignatureContext {
             operation: SignatureOperation::Sign(expanded.clone()),
+            ..DraftSignatureContext::default()
         });
         let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
         assert_eq!(expanded.reference_count(), 2);
@@ -1123,6 +1215,7 @@ mod tests {
             .to_bytes();
         let mut context = DraftSignatureContext {
             operation: SignatureOperation::Verify(shared(expanded.verifying_key())),
+            ..DraftSignatureContext::default()
         };
         let context_pointer = (&mut context as *mut DraftSignatureContext).cast();
 
@@ -1258,6 +1351,7 @@ mod tests {
     fn signature_reset_invalidates_initialized_secret() {
         let mut context = Box::new(DraftSignatureContext {
             operation: SignatureOperation::Sign(shared(expanded_key(0x3C))),
+            ..DraftSignatureContext::default()
         });
         let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
         unsafe { signature_reset(context_pointer) };
@@ -1315,5 +1409,51 @@ mod tests {
         assert_eq!(public.reference_count(), 3);
         unsafe { signature_reset((&mut verify_context as *mut DraftSignatureContext).cast()) };
         assert_eq!(public.reference_count(), 2);
+    }
+
+    #[test]
+    fn native_context_is_owned_bounded_and_duplicated() {
+        let value = [0xA5_u8; MAX_CONTEXT_BYTES];
+        let too_long = [0x5A_u8; MAX_CONTEXT_BYTES + 1];
+        let mut context = DraftSignatureContext::default();
+        let context_pointer = (&mut context as *mut DraftSignatureContext).cast();
+
+        assert_eq!(
+            unsafe { signature_set_context(context_pointer, value.as_ptr(), value.len()) },
+            1
+        );
+        assert_eq!(context.context.as_slice(), value);
+        assert_eq!(
+            unsafe { signature_set_context(context_pointer, too_long.as_ptr(), too_long.len()) },
+            0
+        );
+        assert_eq!(context.context.as_slice(), value);
+
+        let duplicate = unsafe { signature_duplicate(context_pointer) };
+        assert!(!duplicate.is_null());
+        let mut output = [0_u8; MAX_CONTEXT_BYTES];
+        let mut output_len = 0;
+        assert_eq!(
+            unsafe {
+                signature_get_context(
+                    duplicate,
+                    output.as_mut_ptr(),
+                    output.len(),
+                    &mut output_len,
+                )
+            },
+            1
+        );
+        assert_eq!(output_len, value.len());
+        assert_eq!(output, value);
+        unsafe { signature_free(duplicate) };
+
+        unsafe { signature_reset(context_pointer) };
+        assert_eq!(context.context.as_slice(), value);
+        assert_eq!(
+            unsafe { signature_set_context(context_pointer, core::ptr::null(), 0) },
+            1
+        );
+        assert!(context.context.as_slice().is_empty());
     }
 }

@@ -52,7 +52,7 @@ static inline int ed301d00_param_set_optional_octet_string(
 
 /*
  * OpenSSL's pointer getter intentionally accepts both OCTET_STRING and
- * OCTET_PTR.  The draft-00 key encodings require the former, a non-NULL
+ * OCTET_PTR.  The Ed301-EdDSA-v1 key encodings require the former, a non-NULL
  * value and an exact profile length, so validate those public representation
  * properties before delegating pointer extraction to OpenSSL.
  */

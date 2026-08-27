@@ -413,7 +413,7 @@ int main(void)
      * test/evp_test.c's provider dupctx checks.  Ed301 exposes
      * OSSL_FUNC_SIGNATURE_DUPCTX, so both original and duplicate must remain
      * independently usable under both free orders.  There is no streaming
-     * state to clone because draft-00 is pure one-shot EdDSA.
+     * state to clone because Ed301-EdDSA-v1 is pure one-shot EdDSA.
      */
     D00_CHECK(shared_key != NULL
             && lifecycle_duplicate_contexts(libctx, shared_key, 1),

@@ -161,7 +161,7 @@ static int all_truncations_rejected(
 }
 
 /*
- * Construct the small draft-00 PrivateKeyInfo grammar from semantic fields.
+ * Construct the small Ed301-EdDSA-v1 PrivateKeyInfo grammar from semantic fields.
  * Deriving every enclosing length from seed_length ensures D7 exercises a
  * well-formed alternative value, not an accidentally inconsistent object.
  */

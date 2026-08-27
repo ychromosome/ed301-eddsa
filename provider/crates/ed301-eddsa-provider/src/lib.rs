@@ -1,4 +1,4 @@
-//! Loadable OpenSSL provider for the experimental `Ed301-EdDSA-draft-00`
+//! Loadable OpenSSL provider for the experimental `Ed301-EdDSA-v1`
 //! signature primitive.
 //!
 //! The provider is signature-only.  It exposes raw EVP key management and
@@ -27,7 +27,7 @@ mod policy_tests;
 mod policy_vectors_data;
 
 unsafe extern "C" {
-    fn ed301_eddsa_draft00_shim_init(
+    fn ed301_eddsa_v1_shim_init(
         handle: *const c_void,
         input_dispatch: *const c_void,
         output_dispatch: *mut *const c_void,
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn OSSL_provider_init(
         // SAFETY: Null pointers were rejected above.  OpenSSL owns all pointed
         // objects and the C shim validates the same provider-init contract.
         unsafe {
-            ed301_eddsa_draft00_shim_init(
+            ed301_eddsa_v1_shim_init(
                 handle,
                 input_dispatch,
                 output_dispatch,

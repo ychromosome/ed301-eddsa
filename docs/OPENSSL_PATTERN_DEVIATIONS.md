@@ -1,9 +1,9 @@
 # OpenSSL pattern decisions and deviations
 
-Date: 2026-08-24
+Date: 2026-08-27
 
 This register records which OpenSSL Ed25519/Ed448 test patterns are adopted
-for the optional Ed301 PKI integration and where the draft-00 byte contract
+for the optional Ed301 PKI integration and where the Ed301-EdDSA-v1 contract
 deliberately differs.  OpenSSL test sources are structural precedents, not
 normative Ed301 encodings.  The Ed301 draft and provider byte/API contracts
 remain authoritative.
@@ -27,7 +27,7 @@ Local comparison sources:
 | D3 | Adopt the truncation categories from `endecode_test.c`, specialized to the fixed Ed301 layouts. Empty input, every tag/length/value boundary, and the final short value reject. | Boundary tables in `provider_serialization.c`. |
 | D4 | Follow the parameterless ECX AlgorithmIdentifier pattern. Encoders emit absent parameters; decoders reject `NULL` and every explicit parameter type. | Exact encoder bytes plus PKCS#8/SPKI parameter-negative tests. |
 | D5 | The assigned Ed301 OID must be byte-exact and must map to the no-digest SIGID. Historical Ed301-Sig-v1, X301, and other OIDs are foreign. | Serialization OID negatives and the host-registry assertions in `provider_pki.c`. |
-| D6 | **Deliberate deviation:** draft-00 accepts only PKCS#8 `PrivateKeyInfo` version 0. RFC 5958 `OneAsymmetricKey` version 1, with or without embedded public key, is rejected. The seed uniquely derives the public key and KEYMGMT validates that relation, so accepting a second embedded copy adds mismatch policy without a draft requirement. Revisit only if a later Ed301 PKI profile normatively adopts OneAsymmetricKey. | Explicit version-1 and canonical embedded-public-key rejection tests. No mismatch-acceptance path exists. |
+| D6 | **Deliberate deviation:** v1 accepts only PKCS#8 `PrivateKeyInfo` version 0. RFC 5958 `OneAsymmetricKey` version 1, with or without embedded public key, is rejected. The seed uniquely derives the public key and KEYMGMT validates that relation, so accepting a second embedded copy adds mismatch policy without a profile requirement. Revisit only if a later Ed301 PKI profile normatively adopts OneAsymmetricKey. | Explicit version-1 and canonical embedded-public-key rejection tests. No mismatch-acceptance path exists. |
 | D7 | The draft fixes the seed at 38 bytes. The nested private-key OCTET STRING accepts neither 37 nor 39 bytes. | Independently constructed, internally consistent DER objects carry actual 37- and 39-byte seeds in `provider_serialization.c`; both reject. |
 
 The ordinary and PKI artifacts deliberately expose no generic private-key
@@ -45,14 +45,14 @@ this optional profile.
 | P3 | Mixed-algorithm interoperability is supported through generic OpenSSL X.509 validation in both directions: classic P-256 ECDSA CA -> Ed301 leaf, and Ed301 CA -> classic P-256 ECDSA leaf. Such certificates intentionally fail the all-Ed301 profile predicate where their signature algorithm or SPKI is classic. | Two public-API chain tests; no ASN.1 byte mutation. |
 | P4 | Adopt the signed-TBS integrity pattern. A serial-number mutation through `X509_set_serialNumber()` after signing must invalidate verification. | Focused semantic TBS mutation test. |
 | P5 | An Ed301 CSR must sign and verify, survive DER and PEM reparsing, retain exact SPKI/signature identifiers, and reject signature/SPKI mutations. | CSR matrix in `provider_pki.c`. |
-| P6 | **Not supported in draft-00:** no Ed301 CRL-signing or OCSP-response profile is claimed. Their object identifiers, responder authorization, freshness and extension policies are not defined by the signature draft. Revisit only with a separate PKI profile and permanent identifiers; do not infer support merely because generic EVP signing could be wired to those containers. | Register-only negative scope decision; no synthetic CRL/OCSP test. |
+| P6 | **Not supported in v1:** no Ed301 CRL-signing or OCSP-response profile is claimed. Their object identifiers, responder authorization, freshness and extension policies are not defined by the signature profile. Revisit only with a separate PKI profile and permanent identifiers; do not infer support merely because generic EVP signing could be wired to those containers. | Register-only negative scope decision; no synthetic CRL/OCSP test. |
 
 ## SIGNATURE decisions reserved by the same register
 
 | ID | Decision and contract source | Enforcement |
 | --- | --- | --- |
-| S6 | Ed301-EdDSA draft-00 is pure-only. `OSSL_SIGNATURE_PARAM_CONTEXT_STRING`, including a non-empty context, is rejected rather than ignored; no Ed301ctx instance is defined. This deliberately differs from Ed448 and Ed25519ctx patterns in OpenSSL 4.0 `eddsa_sig.c`. | Existing `provider_signature.c` context rejection tests. |
-| S7 | Ed301-EdDSA draft-00 has one fixed pure instance. `OSSL_SIGNATURE_PARAM_INSTANCE`, prehash mode, external digest selection and streaming/prehashed signing are rejected rather than reinterpreted. This deliberately omits the Ed25519ph/Ed448ph instance family. | Existing pure-only, instance, digest, prehash and streaming rejection tests. |
+| S6 | Ed301-EdDSA-v1 adopts the Ed448 `dom4` structure with label `SigEd301-v1`, fixed `phflag=0`, one-octet context length and an opaque 0--255-byte context. The domain prefixes both nonce and challenge transcripts. Empty context is the default; oversize, duplicate and wrongly typed context parameters fail closed. | Independent context KATs plus empty, binary, 255/256-byte, altered-context, duplicate, reinit, duplication and get/set tests in the Rust core and `provider_signature.c`. |
+| S7 | Ed301-EdDSA-v1 has one fixed pure instance. `OSSL_SIGNATURE_PARAM_INSTANCE`, prehash mode, external digest selection and streaming/prehashed signing are rejected rather than reinterpreted. The Ed448-style `phflag` is always zero; no Ed301ph variant exists. | Existing pure-only, instance, digest, prehash and streaming rejection tests. |
 
 ## KEYMGMT decisions reserved by the same register
 

@@ -1,4 +1,4 @@
-//! Context-free, one-shot `Ed301-EdDSA-draft-00` signatures.
+//! Context-bound, one-shot `Ed301-EdDSA-v1` signatures.
 
 #[cfg(test)]
 extern crate std;
@@ -9,7 +9,7 @@ use crate::{
     scalar::Scalar,
     secret::{Secret, secret},
     secret_taint::declassify,
-    signature_hash::{challenge_hash, expand_seed, hash_to_scalar, nonce_hash},
+    signature_hash::{Domain, challenge_hash, expand_seed, hash_to_scalar, nonce_hash},
 };
 
 /// A deterministic key, parse or signing failure.
@@ -21,6 +21,8 @@ pub enum SignatureError {
     InvalidPublicKey,
     /// The signature length, commitment point or scalar was noncanonical.
     InvalidSignature,
+    /// The native context exceeded the RFC 8032 one-octet length bound.
+    InvalidContextLength,
     /// A secret-derived invariant or signing self-check failed.
     InternalFailure,
 }
@@ -58,9 +60,18 @@ impl SigningKey {
         ExpandedSigningKey::derive(&self.seed)
     }
 
-    /// Sign one opaque message with the exact context-free draft transcript.
+    /// Sign one opaque message with the empty native context.
     pub fn sign(&self, message: &[u8]) -> Result<Signature, SignatureError> {
-        self.expand()?.sign(message)
+        self.sign_with_context(message, b"")
+    }
+
+    /// Sign one opaque message with a native context of at most 255 bytes.
+    pub fn sign_with_context(
+        &self,
+        message: &[u8],
+        context: &[u8],
+    ) -> Result<Signature, SignatureError> {
+        self.expand()?.sign_with_context(message, context)
     }
 }
 
@@ -113,7 +124,18 @@ impl VerifyingKey {
     /// Verify a parsed signature over one opaque message.
     #[must_use]
     pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
-        self.verify_bytes(message, signature.as_bytes())
+        self.verify_with_context(message, b"", signature)
+    }
+
+    /// Verify a parsed signature with a native context of at most 255 bytes.
+    #[must_use]
+    pub fn verify_with_context(
+        &self,
+        message: &[u8],
+        context: &[u8],
+        signature: &Signature,
+    ) -> bool {
+        self.verify_bytes_with_context(message, context, signature.as_bytes())
     }
 
     /// Parse and verify an exact 76-byte signature over one opaque message.
@@ -123,10 +145,29 @@ impl VerifyingKey {
     /// retaining either arithmetic representation in the public `Signature`.
     #[must_use]
     pub fn verify_bytes(&self, message: &[u8], signature: &[u8]) -> bool {
+        self.verify_bytes_with_context(message, b"", signature)
+    }
+
+    /// Parse and verify wire bytes with a native context of at most 255 bytes.
+    #[must_use]
+    pub fn verify_bytes_with_context(
+        &self,
+        message: &[u8],
+        context: &[u8],
+        signature: &[u8],
+    ) -> bool {
+        let Some(domain) = Domain::new(context) else {
+            return false;
+        };
         let Ok(signature) = ParsedSignature::from_bytes(signature) else {
             return false;
         };
-        let digest = challenge_hash(&signature.commitment_encoding, &self.encoded, message);
+        let digest = challenge_hash(
+            domain,
+            &signature.commitment_encoding,
+            &self.encoded,
+            message,
+        );
         let challenge = hash_to_scalar(digest);
         let equation = EdwardsPoint::vartime_double_scalar_mul_basepoint(
             &signature.response,
@@ -222,6 +263,16 @@ pub fn sign(seed: &[u8], message: &[u8]) -> Result<[u8; SIGNATURE_BYTES], Signat
     Ok(key.sign(message)?.to_bytes())
 }
 
+/// Sign one opaque message with a native context of at most 255 bytes.
+pub fn sign_with_context(
+    seed: &[u8],
+    message: &[u8],
+    context: &[u8],
+) -> Result<[u8; SIGNATURE_BYTES], SignatureError> {
+    let key = SigningKey::from_seed(seed)?;
+    Ok(key.sign_with_context(message, context)?.to_bytes())
+}
+
 /// Apply the full draft public-key validation rule.
 #[must_use]
 pub fn validate_public_key(public_key: &[u8]) -> bool {
@@ -231,18 +282,31 @@ pub fn validate_public_key(public_key: &[u8]) -> bool {
 /// Parse and verify a signature, returning one fail-closed boolean.
 #[must_use]
 pub fn verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    verify_with_context(public_key, message, b"", signature)
+}
+
+/// Parse and verify with a native context of at most 255 bytes.
+#[must_use]
+pub fn verify_with_context(
+    public_key: &[u8],
+    message: &[u8],
+    context: &[u8],
+    signature: &[u8],
+) -> bool {
     let public_key = match VerifyingKey::from_bytes(public_key) {
         Ok(public_key) => public_key,
         Err(_) => return false,
     };
-    public_key.verify_bytes(message, signature)
+    public_key.verify_bytes_with_context(message, context, signature)
 }
 
 fn sign_expanded(
     expanded: &ExpandedSigningKey,
     message: &[u8],
+    context: &[u8],
 ) -> Result<Signature, SignatureError> {
-    let nonce_digest = nonce_hash(&expanded.prefix, message);
+    let domain = Domain::new(context).ok_or(SignatureError::InvalidContextLength)?;
+    let nonce_digest = nonce_hash(domain, &expanded.prefix, message);
     let nonce = hash_to_scalar(nonce_digest);
     let commitment_point = EdwardsPoint::scalar_mul_base(&nonce);
 
@@ -252,7 +316,7 @@ fn sign_expanded(
     };
     declassify(&mut commitment);
 
-    let challenge_digest = challenge_hash(&commitment, &expanded.public_key, message);
+    let challenge_digest = challenge_hash(domain, &commitment, &expanded.public_key, message);
     let challenge = hash_to_scalar(challenge_digest);
     let secret_response_term = challenge.mul(&expanded.reduced_scalar);
     let response = nonce.add(&secret_response_term);
@@ -270,7 +334,7 @@ fn sign_expanded(
     #[cfg(feature = "sign-self-verify")]
     if !expanded
         .verifying_key()
-        .verify_bytes(message, signature.as_bytes())
+        .verify_bytes_with_context(message, context, signature.as_bytes())
     {
         return Err(SignatureError::InternalFailure);
     }
@@ -321,7 +385,16 @@ impl ExpandedSigningKey {
 
     /// Sign one opaque message without re-expanding the seed.
     pub fn sign(&self, message: &[u8]) -> Result<Signature, SignatureError> {
-        sign_expanded(self, message)
+        self.sign_with_context(message, b"")
+    }
+
+    /// Sign without repeating key expansion, using at most 255 context bytes.
+    pub fn sign_with_context(
+        &self,
+        message: &[u8],
+        context: &[u8],
+    ) -> Result<Signature, SignatureError> {
+        sign_expanded(self, message, context)
     }
 
     fn derive(seed: &[u8; SEED_BYTES]) -> Result<Self, SignatureError> {
@@ -441,7 +514,8 @@ pub(crate) mod test_support {
             .scalar_mul_pruned(&pruned_scalar)
             .encode()
             .expect("test-derived public key");
-        let nonce_digest = nonce_hash(&prefix, message);
+        let domain = Domain::EMPTY;
+        let nonce_digest = nonce_hash(domain, &prefix, message);
         let nonce_hash = *nonce_digest;
         let nonce = hash_to_scalar(nonce_digest);
         let nonce_scalar = nonce.canonical_bytes();
@@ -449,7 +523,7 @@ pub(crate) mod test_support {
             .scalar_mul(&nonce)
             .encode()
             .expect("test-derived commitment");
-        let challenge_digest = challenge_hash(&commitment, &public_key, message);
+        let challenge_digest = challenge_hash(domain, &commitment, &public_key, message);
         let challenge_hash = *challenge_digest;
         let challenge = hash_to_scalar(challenge_digest);
         let challenge_scalar = challenge.canonical_bytes();

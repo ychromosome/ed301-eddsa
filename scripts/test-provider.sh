@@ -120,7 +120,7 @@ cmp "$BUILD/generated/policy_vectors_data.rs" \
         'oid_section = ed301_oids' \
         '' \
         '[ed301_oids]' \
-        'Ed301-EdDSA-draft-00 = 1.3.6.1.4.1.66282.301.3'
+        'Ed301-EdDSA-v1 = 1.3.6.1.4.1.66282.301.4'
 } >"$BUILD/generated/native-evp-test.cnf"
 (
     cd "$BUILD"
@@ -168,7 +168,7 @@ provider_env "$QA_TARGET" /usr/bin/rustc --version --verbose \
     --locked --offline --no-run --message-format=json \
     >"$BUILD/evidence/provider-unit-artifacts.jsonl")
 sh "$ROOT/scripts/check-profile-markers.sh" "$QA_MARKERS" \
-    crypto_bigint=off ed301_eddsa=on ed301_eddsa_draft00=on
+    crypto_bigint=off ed301_eddsa=on ed301_eddsa_v1=on
 /usr/bin/jq -r \
     'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | .executable' \
     "$BUILD/evidence/provider-unit-artifacts.jsonl" \
@@ -212,23 +212,23 @@ build_variant() {
         RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
         "${command[@]}")
     sh "$ROOT/scripts/check-profile-markers.sh" "$markers" \
-        crypto_bigint=off ed301_eddsa=on ed301_eddsa_draft00=on
-    cp "$target/release/libed301_eddsa_draft00.so" \
+        crypto_bigint=off ed301_eddsa=on ed301_eddsa_v1=on
+    cp "$target/release/libed301_eddsa_v1.so" \
         "$BUILD/modules/$module"
     rm -rf -- "$target"
 }
 
-build_variant normal '' ed301_eddsa_draft00.so
+build_variant normal '' ed301_eddsa_v1.so
 sh "$ROOT/scripts/check-final-provider-codegen.sh" \
-    "$BUILD/modules/ed301_eddsa_draft00.so" \
+    "$BUILD/modules/ed301_eddsa_v1.so" \
     "$BUILD/profile-markers/normal/toolchain.txt" \
     "$BUILD/evidence/final-provider-codegen"
-build_variant failpoint test-failpoint ed301_eddsa_draft00_failpoint.so
-build_variant pki pki-experiment ed301_eddsa_draft00_pki_test.so
-build_variant tls tls-experiment ed301_eddsa_draft00_tls_test.so
-build_variant collider tls-collider ed301_eddsa_draft00_tls_collider.so
-cp "$BUILD/modules/ed301_eddsa_draft00_pki_test.so" \
-    "$BUILD/fresh-modules/ed301_eddsa_draft00_pki_test.so"
+build_variant failpoint test-failpoint ed301_eddsa_v1_failpoint.so
+build_variant pki pki-experiment ed301_eddsa_v1_pki_test.so
+build_variant tls tls-experiment ed301_eddsa_v1_tls_test.so
+build_variant collider tls-collider ed301_eddsa_v1_tls_collider.so
+cp "$BUILD/modules/ed301_eddsa_v1_pki_test.so" \
+    "$BUILD/fresh-modules/ed301_eddsa_v1_pki_test.so"
 
 # The full EVP taint lane uses a separately named directory containing an
 # instrumented ordinary provider. It is test-only and never mixed with the
@@ -249,28 +249,28 @@ provider_env "$TAINT_TARGET" /usr/bin/rustc --version --verbose \
         --features secret-taint-instrumentation)
 sh "$ROOT/scripts/check-profile-markers.sh" "$TAINT_MARKERS" \
     crypto_bigint=off ed301_eddsa=on ed301_valgrind_client=on \
-    ed301_eddsa_draft00=on
-cp "$TAINT_TARGET/release/libed301_eddsa_draft00.so" \
-    "$BUILD/modules-taint/ed301_eddsa_draft00.so"
+    ed301_eddsa_v1=on
+cp "$TAINT_TARGET/release/libed301_eddsa_v1.so" \
+    "$BUILD/modules-taint/ed301_eddsa_v1.so"
 rm -rf -- "$TAINT_TARGET"
 
-if strings "$BUILD/modules/ed301_eddsa_draft00.so" \
-        | grep -E 'ED301_EDDSA_DRAFT00_(PANIC|ALLOC)_FAILPOINT|TLS-SIGALG|BEGIN PRIVATE KEY|1\.3\.6\.1\.4\.1\.66282\.301\.3'; then
+if strings "$BUILD/modules/ed301_eddsa_v1.so" \
+        | grep -E 'ED301_EDDSA_V1_(PANIC|ALLOC)_FAILPOINT|TLS-SIGALG|BEGIN PRIVATE KEY|1\.3\.6\.1\.4\.1\.66282\.301\.[34]'; then
     echo "ordinary module contains a diagnostic, TLS or PKI-only surface" >&2
     exit 1
 fi
-strings "$BUILD/modules/ed301_eddsa_draft00_failpoint.so" \
-    | grep -F ED301_EDDSA_DRAFT00_PANIC_FAILPOINT >/dev/null
-strings "$BUILD/modules/ed301_eddsa_draft00_tls_test.so" \
+strings "$BUILD/modules/ed301_eddsa_v1_failpoint.so" \
+    | grep -F ED301_EDDSA_V1_PANIC_FAILPOINT >/dev/null
+strings "$BUILD/modules/ed301_eddsa_v1_tls_test.so" \
     | grep -F TLS-SIGALG >/dev/null
-strings "$BUILD/modules/ed301_eddsa_draft00_tls_collider.so" \
+strings "$BUILD/modules/ed301_eddsa_v1_tls_collider.so" \
     | grep -F TLS-SIGALG >/dev/null
-strings "$BUILD/modules/ed301_eddsa_draft00_pki_test.so" \
+strings "$BUILD/modules/ed301_eddsa_v1_pki_test.so" \
     | grep -F 'structure=PrivateKeyInfo' >/dev/null
 
-test "$(nm -D --defined-only "$BUILD/modules/ed301_eddsa_draft00.so" \
+test "$(nm -D --defined-only "$BUILD/modules/ed301_eddsa_v1.so" \
     | awk '$2 == "T" { count++ } END { print count + 0 }')" -eq 1
-nm -D --defined-only "$BUILD/modules/ed301_eddsa_draft00.so" \
+nm -D --defined-only "$BUILD/modules/ed301_eddsa_v1.so" \
     | grep -E ' T OSSL_provider_init$' >/dev/null
 
 HARNESSES=(
@@ -371,7 +371,7 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
     D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
     /usr/bin/timeout 240 "$LANE_ROOT/src/openssl-$LANE/test/evp_test" \
-        -provider ed301_eddsa_draft00 \
+        -provider ed301_eddsa_v1 \
         "$ROOT/provider-tests/openssl_evp_ed301.txt"
 
 for mode in free object-only exact occupied-oid occupied-name sigid-conflict \
@@ -424,14 +424,14 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
     "$OPENSSL_BIN" list -provider-path "$BUILD/modules" \
-        -provider default -provider ed301_eddsa_draft00 \
-        -signature-algorithms | grep -F Ed301-EdDSA-draft-00 >/dev/null
+        -provider default -provider ed301_eddsa_v1 \
+        -signature-algorithms | grep -F Ed301-EdDSA-v1 >/dev/null
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
     "$OPENSSL_BIN" genpkey -provider-path "$BUILD/modules" \
-        -provider default -provider ed301_eddsa_draft00_pki_test \
-        -algorithm Ed301-EdDSA-draft-00 \
+        -provider default -provider ed301_eddsa_v1_pki_test \
+        -algorithm Ed301-EdDSA-v1 \
         -out "$BUILD/evidence/cli-generated-key.pem"
 grep -F 'BEGIN PRIVATE KEY' "$BUILD/evidence/cli-generated-key.pem" \
     >/dev/null

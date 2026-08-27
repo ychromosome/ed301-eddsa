@@ -1,7 +1,7 @@
 # Provider status
 
 The `provider-experiment` branch contains an experimental,
-signature-only OpenSSL provider for `Ed301-EdDSA-draft-00`.
+signature-only OpenSSL provider for `Ed301-EdDSA-v1`.
 
 The provider and its evidence boundary were repaired on 2026-08-23 after an
 18-finding deep scan. The 2026-08-24 performance-review revision keeps the
@@ -14,8 +14,8 @@ same acceptance boundary: only fresh exact-revision builds against OpenSSL
 - PKCS#8, SPKI, CSR, CA/leaf certificates and chain validation;
 - TLS 1.3 server authentication and mutual TLS with a private-use test
   SignatureScheme;
-- negative digest, context, streaming, parser, collision and malformed-input
-  cases;
+- context-bound signing plus negative digest, oversize/duplicate context,
+  streaming, parser, collision and malformed-input cases;
 - targeted ASan/UBSan, Valgrind, GCC analyzer and allocation-failure gates.
 
 Before any Cargo command, the provider runner requires a read-only,
@@ -55,11 +55,17 @@ The repaired integration boundary is:
   disabled-by-default test artifacts.
 
 The optional PKI tests use project-assigned OID
-`1.3.6.1.4.1.66282.301.3` beneath the Adiumentum GmbH private-enterprise arc.
+`1.3.6.1.4.1.66282.301.4` beneath the Adiumentum GmbH private-enterprise arc.
 It identifies the exact Ed301-EdDSA key/signature profile but is not an IANA
 TLS registration or a standards claim. Private-use TLS SignatureScheme
 `0xFE84` appears only in the TLS test artifacts and remains nonregistrable and
 unsuitable for deployment.
+
+The `.301.4` profile prefixes both nonce and challenge transcripts with the
+Ed448-shaped native domain `"SigEd301-v1" || 0x00 || octet(len(C)) || C`.
+The prehash flag is fixed to zero and no prehash instance exists. Contexts are
+opaque 0--255-byte strings; the default empty context is still domain-bound.
+The domainless `.301.3` profile is frozen as incompatible historical input.
 
 The ordinary provider keeps expanded secret state and the validated public
 verification table in separate, immutable, fallibly allocated reference-counted
@@ -69,9 +75,8 @@ duplicate cannot retain the expanded signing secret, and each object is
 destroyed only after its final owner releases it. The default signing path
 follows the usual EdDSA construction without performing a second complete
 verification of its own output; a separately selected `sign-self-verify` build
-retains that additional fault-detection check. Neither choice changes the draft
-transcript, wire encoding, curve, verification equation, or acceptance
-language.
+retains that additional fault-detection check. Neither choice changes the wire
+encoding, curve, verification equation, or acceptance language.
 
 The integrated Safe-Rust performance step replaces the portable field
 reducer's borrow-heavy folding schedule with a positive

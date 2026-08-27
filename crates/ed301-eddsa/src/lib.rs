@@ -1,8 +1,8 @@
-//! Rust implementation candidate for `Ed301-EdDSA-draft-00`.
+//! Rust implementation candidate for `Ed301-EdDSA-v1`.
 //!
-//! The crate implements only the context-free, one-shot byte contract bound
-//! by the Round-4 source manifest. It is review software, not a production or
-//! standards-conformance claim.
+//! The crate implements the versioned, Ed448-style native-domain one-shot byte
+//! contract. It is review software, not a production or standards-conformance
+//! claim.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -25,7 +25,7 @@ mod test_support;
 
 pub use signature::{
     ExpandedSigningKey, Signature, SignatureError, SigningKey, VerifyingKey, sign,
-    validate_public_key, verify,
+    sign_with_context, validate_public_key, verify, verify_with_context,
 };
 
 #[cfg(test)]
