@@ -1,0 +1,420 @@
+{
+  "api_vector_count_decimal": "18",
+  "api_vectors": [
+    {
+      "expected": "FAIL",
+      "id": "secret-length-37",
+      "operation": "Public",
+      "reason": "Secret has 37 bytes.",
+      "rejection_stage": "secret-length",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": null,
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "secret-length-39",
+      "operation": "Public",
+      "reason": "Secret has 39 bytes.",
+      "rejection_stage": "secret-length",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242500",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": null,
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "secret-not-bytes",
+      "operation": "Public",
+      "reason": "Secret is a text value, not bytes.",
+      "rejection_stage": "secret-type",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "str"
+      },
+      "u_input": {
+        "hex": null,
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "secret-clamps-to-Nt-preimage-0",
+      "operation": "Public",
+      "reason": "Raw secret clamps to the excluded twist order N_t.",
+      "rejection_stage": "decode-scalar-Nt",
+      "secret": {
+        "hex": "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff1f",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": null,
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "secret-clamps-to-Nt-preimage-1",
+      "operation": "Shared",
+      "reason": "Raw secret clamps to the excluded twist order N_t.",
+      "rejection_stage": "decode-scalar-Nt",
+      "secret": {
+        "hex": "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff0f",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "secret-clamps-to-Nt-preimage-2",
+      "operation": "Shared",
+      "reason": "Raw secret clamps to the excluded twist order N_t.",
+      "rejection_stage": "decode-scalar-Nt",
+      "secret": {
+        "hex": "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff0f",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "secret-clamps-to-Nt-preimage-3",
+      "operation": "Shared",
+      "reason": "Raw secret clamps to the excluded twist order N_t.",
+      "rejection_stage": "decode-scalar-Nt",
+      "secret": {
+        "hex": "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff0f",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-length-37",
+      "operation": "Shared",
+      "reason": "u input has 37 bytes.",
+      "rejection_stage": "u-length",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae95463",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-length-39",
+      "operation": "Shared",
+      "reason": "u input has 39 bytes.",
+      "rejection_stage": "u-length",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae954630800",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-not-bytes",
+      "operation": "Shared",
+      "reason": "u input is text, not bytes.",
+      "rejection_stage": "u-type",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+        "type": "str"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-reserved-bit-301",
+      "operation": "Shared",
+      "reason": "Reserved u bit 301 is set.",
+      "rejection_stage": "decode-u-reserved-bits",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546328",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-reserved-bit-302",
+      "operation": "Shared",
+      "reason": "Reserved u bit 302 is set.",
+      "rejection_stage": "decode-u-reserved-bits",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546348",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-reserved-bit-303",
+      "operation": "Shared",
+      "reason": "Reserved u bit 303 is set.",
+      "rejection_stage": "decode-u-reserved-bits",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546388",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-equal-p",
+      "operation": "Shared",
+      "reason": "u=p is noncanonical.",
+      "rejection_stage": "decode-u-range",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-equal-p-plus-1",
+      "operation": "Shared",
+      "reason": "u=p+1 is above the field range.",
+      "rejection_stage": "decode-u-range",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "b40300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-zero",
+      "operation": "Shared",
+      "reason": "u=0 is rational cofactor torsion.",
+      "rejection_stage": "ladder-Z-zero",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-one",
+      "operation": "Shared",
+      "reason": "u=1 is the rational order-4 case.",
+      "rejection_stage": "ladder-Z-zero",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000",
+        "type": "bytes"
+      }
+    },
+    {
+      "expected": "FAIL",
+      "id": "u-p-minus-1",
+      "operation": "Shared",
+      "reason": "u=p-1 is a twist cofactor-torsion input.",
+      "rejection_stage": "ladder-Z-zero",
+      "secret": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "type": "bytes"
+      },
+      "u_input": {
+        "hex": "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+        "type": "bytes"
+      }
+    }
+  ],
+  "excluded_Nt_preimage_proof": {
+    "N_t": {
+      "decimal": "4074071952668972172536891376818756322102936785292475840710068942732788076946225991873048412",
+      "encoding_le38_hex": "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff1f",
+      "hex_be": "1fffffffffffffffffffffffffffffffffffffa48cdfddb5fd8ee012d73b67f47178bd05af5c"
+    },
+    "ordinary_negative_vector_ids": [
+      "secret-clamps-to-Nt-preimage-0",
+      "secret-clamps-to-Nt-preimage-1",
+      "secret-clamps-to-Nt-preimage-2",
+      "secret-clamps-to-Nt-preimage-3"
+    ],
+    "raw_preimage_count_decimal": "64",
+    "raw_preimages_hex": [
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff0f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff0f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff0f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff0f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff1f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff1f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff1f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff1f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff2f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff2f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff2f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff2f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff3f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff3f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff3f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff3f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff4f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff4f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff4f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff4f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff5f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff5f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff5f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff5f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff6f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff6f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff6f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff6f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff7f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff7f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff7f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff7f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff8f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff8f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff8f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff8f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff9f",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff9f",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff9f",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff9f",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffaf",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffaf",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffaf",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffaf",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffbf",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffbf",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffbf",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffbf",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffcf",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffcf",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffcf",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffcf",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffdf",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffdf",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffdf",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffdf",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffef",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffef",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffef",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffef",
+      "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffff",
+      "5daf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffff",
+      "5eaf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffff",
+      "5faf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffffff"
+    ]
+  },
+  "internal_only": {
+    "all_zero_rejection": {
+      "expected": "FAIL-without-output",
+      "expected_rejection_stage": "post-ladder-AllZero",
+      "id": "internal-finite-zero-output-fault",
+      "injected_ladder_affine_u_decimal": "0"
+    },
+    "classification": "Fault-injection and KeyGen control-flow tests; not ordinary X301 input vectors.",
+    "keygen_retry": {
+      "expected_draw_count_decimal": "2",
+      "expected_public_hex": "b5d19e31e6bfa6f5c47411738360ba94b7bbff1c4bb9fc646e9775bbd7565a6052819781c21a",
+      "expected_secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+      "id": "internal-keygen-retry-after-Nt",
+      "random_draws_hex": [
+        "5caf05bd7871f4673bd712e08efdb5dddf8ca4ffffffffffffffffffffffffffffffffffff1f",
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425"
+      ]
+    }
+  },
+  "outer_parser_vector_count_decimal": "2",
+  "outer_parser_vectors": [
+    {
+      "expected": "FAIL-before-X301",
+      "id": "outer-parser-wrong-suite",
+      "rejection_stage": "outer-parser-suite-selection",
+      "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+      "suite": "X301-v2",
+      "u_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "version_decimal": "1"
+    },
+    {
+      "expected": "FAIL-before-X301",
+      "id": "outer-parser-wrong-version",
+      "rejection_stage": "outer-parser-version-selection",
+      "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+      "suite": "X301-v1",
+      "u_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "version_decimal": "2"
+    }
+  ],
+  "schema": "X301-v1-negative-vectors-v1",
+  "sources": [
+    {
+      "path": "spezifikation/X301-v1.md",
+      "sha256": "214f5385747f859e39e68407bcdbde49776f7e3d0b37de6e1aa6c1663352b592"
+    },
+    {
+      "path": "spezifikation/ED301-v1.md",
+      "sha256": "1e52b0ac5ffcd54ccf67f1b54d1f39d75f397aabda41fd2c3ab6e3b955d9b652"
+    },
+    {
+      "path": "parameter/ed301-v1.json",
+      "sha256": "23cb60255848176320d8938cb1856d469eb91455868da4078526dfb26ef6806f"
+    },
+    {
+      "path": "referenz/x301.py",
+      "sha256": "acf12998fa26f6d19d97ae356ddf9a973994b5b5166034a259c4aaf533aa7dfe"
+    },
+    {
+      "path": "referenz/ed301_curve.py",
+      "sha256": "d67e6dd95f882fcd0d2e04e174047edaeb2feeb679631b37f1f32c154ecc9b23"
+    }
+  ],
+  "status": "reference-conformance-vectors-not-production-audited",
+  "suite": "X301-v1"
+}

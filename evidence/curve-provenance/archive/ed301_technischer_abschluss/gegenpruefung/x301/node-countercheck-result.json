@@ -1,0 +1,62 @@
+{
+  "schema": "X301-v1-independent-node-countercheck-v1",
+  "status": "PASS-NOT-FOR-PRODUCTION",
+  "completed_at": "2026-07-12T02:25:07+02:00",
+  "runtime": {
+    "implementation": "Node.js",
+    "version": "v22.22.2",
+    "external_dependencies": 0
+  },
+  "independence": {
+    "implementation_sources": [
+      "parameter/ed301-v1.json",
+      "spezifikation/ED301-v1.md",
+      "spezifikation/X301-v1.md"
+    ],
+    "python_reference_test_or_generator_read_or_imported": false,
+    "implementation_and_own_tests_completed_before_vectors_were_read": true,
+    "pre_vector_record": "gegenpruefung/x301/pre-vector-test-result.json",
+    "implementation_hash_unchanged_after_vector_read": true,
+    "own_test_hash_unchanged_after_vector_read": true
+  },
+  "results": {
+    "own_tests_passed": 32,
+    "own_tests_failed": 0,
+    "positive_vectors_passed": 10,
+    "positive_vectors_total": 10,
+    "agreement_pairs_passed": 2,
+    "agreement_pairs_total": 2,
+    "negative_api_vectors_passed": 18,
+    "negative_api_vectors_total": 18,
+    "negative_outer_parser_vectors_passed": 2,
+    "negative_outer_parser_vectors_total": 2,
+    "internal_negative_vectors_passed": 2,
+    "internal_negative_vectors_total": 2,
+    "common_clamp_preimages_passed": 64,
+    "common_clamp_preimages_total": 64,
+    "excluded_Nt_preimages_passed": 64,
+    "excluded_Nt_preimages_total": 64,
+    "vector_runner_assertions_passed": 1068,
+    "vector_runner_assertions_failed": 0
+  },
+  "commands": [
+    "npm test",
+    "npm run vectors",
+    "node --check x301.js",
+    "node --check test_independent.js",
+    "node --check run_vectors.js"
+  ],
+  "sha256": {
+    "gegenpruefung/x301/x301.js": "babc850a8717bf95d8e9ea3118b580079551fabb367cbbadf90d17b6b487499c",
+    "gegenpruefung/x301/test_independent.js": "f0e226599ac723cbd80e6850fbafc8ae5be35e5b848e0fc8d670189e1b8b80e8",
+    "gegenpruefung/x301/run_vectors.js": "2165cdb191ea7c45b7fc91d3fb42e25923b94517cf791bf2bdcd9ce50bcf81e8",
+    "gegenpruefung/x301/package.json": "0caa9bd4fe646fe7bc80ceb689230a78d5669ce596065820175727ee4c94ee02",
+    "gegenpruefung/x301/pre-vector-test-result.json": "d2f5605c182006e4a5e96cc7956fe0ccf3cd840f2bdd0b3d4e9270965df3aabc",
+    "parameter/ed301-v1.json": "23cb60255848176320d8938cb1856d469eb91455868da4078526dfb26ef6806f",
+    "spezifikation/ED301-v1.md": "1e52b0ac5ffcd54ccf67f1b54d1f39d75f397aabda41fd2c3ab6e3b955d9b652",
+    "spezifikation/X301-v1.md": "214f5385747f859e39e68407bcdbde49776f7e3d0b37de6e1aa6c1663352b592",
+    "vektoren/x301-v1-positive.json": "aa617c6aebd3ddc16e791cf123d782c064e839a184b0e81d7597b39d1c7be88c",
+    "vektoren/x301-v1-negative.json": "f757fbdf7e130e6d613ac699dbbe8e7591c20877b9444096fbf32a097ae32766"
+  },
+  "warning": "NOT FOR PRODUCTION: JavaScript BigInt arithmetic and branches are not constant-time or side-channel audited"
+}

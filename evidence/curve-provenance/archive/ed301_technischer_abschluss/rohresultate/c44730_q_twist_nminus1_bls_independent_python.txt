@@ -1,0 +1,25 @@
+python_version=Python 3.14.6
+command=python3 -I ed301_technischer_abschluss/scripts/verify_c44730_nminus1_bls_independent.py ed301_technischer_abschluss/zertifikate/c44730_q_twist_nminus1_bls_internal.pari
+exit_status=0
+N=1018517988167243043134222844204689080525734196323118960177517235683197019236556497968262103
+factor=2 valuation=1 witness=5 supplied=0 prime_ok=1 witness_ok=1
+factor=11 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  N=46296272189420138324282856554758594569351554378323589098978056167418046328934386271284641
+  factor=2 valuation=5 witness=17 supplied=0 prime_ok=1 witness_ok=1
+  factor=3 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  factor=5 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  factor=11 valuation=1 witness=3 supplied=0 prime_ok=1 witness_ok=1
+  factor=13 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  factor=37 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  factor=4441 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  factor=2196413 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  factor=6226347247 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  factor=2955582638647 valuation=1 witness=2 supplied=0 prime_ok=1 witness_ok=1
+  F=455879666916873144193429655885274108960 F_bits=129 F_cubed_gt_N=1
+  F_squared_gt_N=0 c1=395965915818203136311003170241251165069 c2=222764292654 discriminant=156789006489748332719968562014117611134115377816327567031506662106258828604145 discriminant_square=0
+  recomposition_exact=1 certificate_level_valid=1
+factor=46296272189420138324282856554758594569351554378323589098978056167418046328934386271284641 valuation=1 witness=2 supplied=1 prime_ok=1 witness_ok=1
+F=1018517988167243043134222844204689080525734196323118960177517235683197019236556497968262102 F_bits=299 F_cubed_gt_N=1
+F_squared_gt_N=1 c1=1 c2=0 discriminant=1 discriminant_square=1
+recomposition_exact=1 certificate_level_valid=1
+independent_N_minus_1_certificate_valid=1

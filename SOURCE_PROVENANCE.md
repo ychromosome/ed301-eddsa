@@ -13,6 +13,17 @@ The copied Round-4 source manifest has SHA-256
 The Round-4 review recommendation and later execution logs are intentionally
 not implementation inputs and are not included in this source tree.
 
+The complete earlier curve-selection and verification archive is now retained
+under `evidence/curve-provenance/archive/ed301_technischer_abschluss/`. Its
+original 458-entry manifest has SHA-256
+`cdaffd6b332681aaf6d944d39a1275610d42dbb3823b74d3a5e3cf446e6f6c50`.
+It binds the original search programs, 355 worker files, combined transcript,
+parameter JSON, certificates, mathematical checks, independent verifiers and
+recorded outputs. A separate curve-only runner verifies those bytes without
+promoting the archive's historical signature or X301 text into the active
+contract. Three human-source inputs outside that archive remain hash-only and
+are not relicensed. No pre-search public commitment is claimed.
+
 ## Active Ed301-EdDSA-v1 profile
 
 `inputs/v1/ED301-EdDSA-v1.md` defines the incompatible active profile. It

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Published the complete manifest-bound 2026-07-31 curve-selection archive,
+  including original search scripts, all 355 worker results, certificates,
+  independent verifiers and a curve-only reproduction path. The record
+  explicitly does not claim a pre-search public commitment.
 - Replaced the ABI-major-only OpenSSL compatibility claim with explicit
   source/API and runtime minima: 3.5.7 for ABI major 3 and 4.0.1 for ABI major
   4. Earlier same-major releases are rejected; each claimed minimum remains

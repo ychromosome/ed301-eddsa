@@ -12,8 +12,10 @@ Before proposing a change:
 2. preserve the Ed448-style v1 domain, one-shot API and exact encodings unless
    a new, incompatible profile and identity are explicitly proposed;
 3. update tests and provenance for every behavioral change;
-4. regenerate `SOURCE_MANIFEST.sha256`; and
-5. run `sh scripts/check.sh` and, where Valgrind is available,
+4. run `evidence/curve-provenance/run_curve_checks.sh --full` after any change
+   to the curve evidence;
+5. regenerate `SOURCE_MANIFEST.sha256`; and
+6. run `sh scripts/check.sh` and, where Valgrind is available,
    `sh scripts/check-secret-taint.sh`.
 
 Do not submit production-readiness, audit, constant-time-completion,

@@ -9,6 +9,15 @@ elliptic curve.
 - locked, vendored and offline builds
 - draft vectors and edge cases included
 
+## Curve provenance
+
+`evidence/curve-provenance/` contains the complete manifest-bound 2026-07-31
+technical archive: original search programs, all worker outputs, parameters,
+certificates, independent verifiers and a curve-only reproduction runner. It
+also records the unavoidable historical limit: no public pre-search commitment
+exists, so the evidence is reproducible after-the-fact provenance rather than
+a retroactive nothing-up-my-sleeve proof.
+
 ## Test
 
 Authoritative gates run only from a caller-created, read-only source snapshot.
