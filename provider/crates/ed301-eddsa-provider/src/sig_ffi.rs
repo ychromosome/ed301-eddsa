@@ -23,7 +23,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crypto_bigint::CtEq;
 use ed301_eddsa::{
-    ExpandedSigningKey, Signature, SignatureError, SigningKey, VerifyingKey,
+    ExpandedSigningKey, SigningKey, VerifyingKey,
     parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
 };
 use zeroize::Zeroize;
@@ -861,12 +861,7 @@ pub(crate) unsafe extern "C" fn signature_verify(
             return -1;
         };
 
-        let signature = match Signature::from_bytes(signature_value) {
-            Ok(signature) => signature,
-            Err(SignatureError::InvalidSignature) => return 0,
-            Err(_) => return -1,
-        };
-        i32::from(public.verify(message, &signature))
+        i32::from(public.verify_bytes(message, signature_value))
     })
 }
 

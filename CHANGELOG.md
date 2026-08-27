@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reduced the public `Signature` to its exact 76-byte wire value. Decoded
+  commitment and response state is now private and operation-local; the normal
+  byte and provider verification paths still decode once, while the taint gate
+  checks the complete returned object rather than only a serialized projection.
 - Made final-provider symbol matching independent of Rust's legacy versus v0
   demangler spelling while retaining the exact instruction-shape and call-
   graph policies, and documented `jq` among the provider-matrix prerequisites.

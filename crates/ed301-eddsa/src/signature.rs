@@ -113,6 +113,19 @@ impl VerifyingKey {
     /// Verify a parsed signature over one opaque message.
     #[must_use]
     pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
+        self.verify_bytes(message, signature.as_bytes())
+    }
+
+    /// Parse and verify an exact 76-byte signature over one opaque message.
+    ///
+    /// This is the preferred boundary for integrations that receive wire
+    /// bytes. It parses the commitment and response exactly once without
+    /// retaining either arithmetic representation in the public `Signature`.
+    #[must_use]
+    pub fn verify_bytes(&self, message: &[u8], signature: &[u8]) -> bool {
+        let Ok(signature) = ParsedSignature::from_bytes(signature) else {
+            return false;
+        };
         let digest = challenge_hash(&signature.commitment_encoding, &self.encoded, message);
         let challenge = hash_to_scalar(digest);
         let equation = EdwardsPoint::vartime_double_scalar_mul_basepoint(
@@ -133,22 +146,14 @@ impl VerifyingKey {
     }
 }
 
-/// Parsed canonical 76-byte signature.
-#[derive(Clone, Copy)]
-pub struct Signature {
-    encoded: [u8; SIGNATURE_BYTES],
+struct ParsedSignature {
     commitment_encoding: [u8; FIELD_BYTES],
     commitment: EdwardsPoint,
     response: Scalar,
 }
 
-impl Signature {
-    /// Parse the exact 76-byte signature syntax.
-    ///
-    /// `R` must be a canonical curve point, but identity, pure torsion and
-    /// mixed-torsion points are intentionally not rejected here. `S` must be
-    /// the canonical 38-byte integer in `0 <= S < L`.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SignatureError> {
+impl ParsedSignature {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, SignatureError> {
         let encoded: &[u8; SIGNATURE_BYTES] = bytes
             .try_into()
             .map_err(|_| SignatureError::InvalidSignature)?;
@@ -164,11 +169,44 @@ impl Signature {
             .into_option_copied()
             .ok_or(SignatureError::InvalidSignature)?;
         Ok(Self {
-            encoded: *encoded,
             commitment_encoding: *commitment_encoding,
             commitment,
             response,
         })
+    }
+}
+
+/// Validated canonical 76-byte wire signature.
+///
+/// The public value contains no retained field, scalar or projective-point
+/// representation. In particular, signing cannot carry nonce-correlated
+/// projective state across the public-output boundary.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct Signature {
+    encoded: [u8; SIGNATURE_BYTES],
+}
+
+const _: () = assert!(core::mem::size_of::<Signature>() == SIGNATURE_BYTES);
+
+impl Signature {
+    /// Parse the exact 76-byte signature syntax.
+    ///
+    /// `R` must be a canonical curve point, but identity, pure torsion and
+    /// mixed-torsion points are intentionally not rejected here. `S` must be
+    /// the canonical 38-byte integer in `0 <= S < L`.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SignatureError> {
+        let encoded: &[u8; SIGNATURE_BYTES] = bytes
+            .try_into()
+            .map_err(|_| SignatureError::InvalidSignature)?;
+        ParsedSignature::from_bytes(encoded)?;
+        Ok(Self { encoded: *encoded })
+    }
+
+    /// Borrow the complete canonical wire representation.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; SIGNATURE_BYTES] {
+        &self.encoded
     }
 
     /// Return the canonical wire representation.
@@ -197,11 +235,7 @@ pub fn verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
         Ok(public_key) => public_key,
         Err(_) => return false,
     };
-    let signature = match Signature::from_bytes(signature) {
-        Ok(signature) => signature,
-        Err(_) => return false,
-    };
-    public_key.verify(message, &signature)
+    public_key.verify_bytes(message, signature)
 }
 
 fn sign_expanded(
@@ -232,23 +266,12 @@ fn sign_expanded(
     hit_secret_failpoint(SecretFailpoint::SignIntermediates);
     declassify(&mut encoded);
 
-    /*
-     * R was produced by the fixed-base group operation, encoded canonically,
-     * and S is already a canonical Scalar.  Re-decoding our own public output
-     * would repeat a square root and discard the point we need immediately
-     * below.  Builds enabling `sign-self-verify` reuse this retained point for
-     * the optional full group-equation fault check.  The ordinary provider
-     * follows the standard EdDSA path and returns the canonical construction
-     * directly.
-     */
-    let signature = Signature {
-        encoded: *encoded,
-        commitment_encoding: commitment,
-        commitment: commitment_point,
-        response: *response,
-    };
+    let signature = Signature { encoded: *encoded };
     #[cfg(feature = "sign-self-verify")]
-    if !expanded.verifying_key().verify(message, &signature) {
+    if !expanded
+        .verifying_key()
+        .verify_bytes(message, signature.as_bytes())
+    {
         return Err(SignatureError::InternalFailure);
     }
     Ok(signature)
@@ -508,5 +531,18 @@ pub(crate) mod test_support {
                 assert!(reparsed.verify(&message, &signature));
             }
         }
+    }
+
+    #[test]
+    fn public_signature_storage_is_exactly_the_wire_value() {
+        let seed = [0x42_u8; SEED_BYTES];
+        let signature = SigningKey::from_seed(&seed)
+            .expect("fixed-size seed")
+            .sign(b"wire-only signature")
+            .expect("deterministic signature");
+
+        assert_eq!(core::mem::size_of::<Signature>(), SIGNATURE_BYTES);
+        assert_eq!(core::mem::size_of_val(&signature), SIGNATURE_BYTES);
+        assert_eq!(signature.as_bytes(), &signature.to_bytes());
     }
 }

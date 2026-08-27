@@ -50,6 +50,16 @@ key derivation and signing through explicit public-output boundaries. It is a
 preliminary control-flow and memory check for one local build, not a proof of
 constant-time execution, complete zeroization or fault resistance.
 
+The public `Signature` is a transparent owner of exactly the 76 canonical wire
+bytes. Decoded commitment and response arithmetic exists only in a private,
+operation-local parser result and is never retained in the returned value.
+The taint harness checks the complete 76-byte object after signing and asserts
+that its storage has no additional bytes; the provider FFI consequently holds
+only that wire value after the Rust signing call returns. This removes the
+avoidable nonce-correlated projective representation from the public and FFI
+output boundary without strengthening the every-copy disclaimer for arithmetic
+temporaries while signing is in progress.
+
 Secret fixed-base multiplication uses signed radix 16 with a fixed number of
 digits. Every digit scans all eight entries in its table and selects with
 constant-time masks. The specialized five-limb field backend uses fixed-size
