@@ -126,7 +126,7 @@ const fn invert_odd_mod_precomp<const LIMBS: usize, const VARTIME: bool>(
         (delta, t) = jump::<VARTIME>(f.lowest(), g.lowest(), delta, batch);
         (f, g) = update_fg(&f, &g, t, batch);
         (d, e) = update_de(&d, &e, m.as_ref(), mi, t, batch);
-        steps -= batch;
+        steps = steps.wrapping_sub(batch);
     }
 
     let d = d.norm(f.is_negative(), m.as_ref());
@@ -150,7 +150,7 @@ pub const fn gcd_odd<const LIMBS: usize, const VARTIME: bool>(
         let batch = u32_min(steps, GCD_BATCH_SIZE);
         (delta, t) = jump::<VARTIME>(f.lowest(), g.lowest(), delta, batch);
         (f, g) = update_fg(&f, &g, t, batch);
-        steps -= batch;
+        steps = steps.wrapping_sub(batch);
     }
 
     f.magnitude().to_odd().expect_copied("odd by construction")
@@ -331,7 +331,7 @@ const fn shr_in_place_wide<const L: usize, const H: usize>(
 ) {
     debug_assert!(H <= L);
     debug_assert!(shift < Uint::<H>::BITS);
-    let copy = hi.shl_vartime(Uint::<H>::BITS - shift);
+    let copy = hi.shl_vartime(Uint::<H>::BITS.wrapping_sub(shift));
     *hi = hi.shr_vartime(shift);
     *lo = lo.shr_vartime(shift);
     let mut offs = bitlen::to_limbs(shift);
@@ -473,7 +473,7 @@ impl<const LIMBS: usize> SignedInt<LIMBS> {
 
         // Compute the multiple of m that will clear the low N bits of (x, x_hi).
         let mut mf = x.resize::<S>().wrapping_mul(&mi);
-        mf = mf.bitand(&Uint::MAX.shr_vartime(Uint::<S>::BITS - shift));
+        mf = mf.bitand(&Uint::MAX.shr_vartime(Uint::<S>::BITS.wrapping_sub(shift)));
         let (xa, xa_hi) = m.widening_mul(&mf);
 
         // Subtract the adjustment from (x, x_hi) potentially producing a borrow.

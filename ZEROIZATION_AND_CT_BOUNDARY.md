@@ -118,10 +118,12 @@ a stricter non-`Copy` secret-arithmetic ownership model. Until those gates are
 complete, this candidate must not process production keys.
 
 The source-bound `crypto-bigint 0.7.5` fork uses explicit wrapping operations
-at the six bounded sites where workspace-wide overflow checks previously added
-secret-dependent panic branches. Every crate, including the fork, is now built
-with overflow checks enabled; no consumer-specific package-profile exception
-is accepted or required. The shared compiler wrapper also enforces
+at six bounded arithmetic sites where workspace-wide overflow checks added
+secret-dependent panic branches, and at four fixed public schedule
+subtractions where the compiler retained unreachable panic branches. Every
+crate, including the fork, is now built with overflow checks enabled; no
+consumer-specific package-profile exception is accepted or required. The
+shared compiler wrapper also enforces
 `panic=unwind`, optimization level 3, one codegen unit and disabled debug
 assertions on the root, downstream, secret-taint and provider release gates.
 The external downstream workspace deliberately supplies no package override;

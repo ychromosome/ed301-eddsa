@@ -6,6 +6,10 @@
   including original search scripts, all 355 worker results, certificates,
   independent verifiers and a curve-only reproduction path. The record
   explicitly does not claim a pre-search public commitment.
+- Made the two safegcd batch counters and two shift-distance calculations
+  explicitly wrapping. Their public fixed schedule cannot underflow; spelling
+  out that invariant removes unreachable overflow-panic branches while
+  preserving the reviewed final-provider code shape.
 - Replaced the ABI-major-only OpenSSL compatibility claim with explicit
   source/API and runtime minima: 3.5.7 for ABI major 3 and 4.0.1 for ABI major
   4. Earlier same-major releases are rejected; each claimed minimum remains

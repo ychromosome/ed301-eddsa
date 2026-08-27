@@ -10,16 +10,22 @@ The active `Cargo.toml` exposes only the dependency closure and empty feature
 names needed by this source-bound build; `zeroize` is the only supported
 optional feature. `Cargo.toml.orig` preserves the complete upstream manifest.
 
-Ed301 also changes six operations whose mathematical ranges are already
+Ed301 also changes ten operations whose mathematical ranges are already
 bounded by the adjacent upstream comments:
 
 - four additions in `src/modular/mul.rs` use `wrapping_add`;
-- two negations in `src/modular/safegcd.rs` use `wrapping_neg`.
+- two negations in `src/modular/safegcd.rs` use `wrapping_neg`;
+- two fixed-schedule counter updates in `src/modular/safegcd.rs` use
+  `wrapping_sub`; their subtrahend is `min(steps, GCD_BATCH_SIZE)`;
+- two fixed-schedule shift-distance calculations use `wrapping_sub`; the
+  adjacent assertion and caller schedule bound `shift` to `1..=62`.
 
-The values do not overflow on valid inputs. Explicit wrapping semantics prevent
-workspace-wide overflow checks from adding secret-dependent panic branches.
-No algorithm, Ed301-used API, modulus or output changes. This source-bound fork
-is not a general-purpose replacement for every upstream feature.
+The arithmetic values do not overflow on valid inputs and the public loop
+counters and shift distances cannot underflow. Explicit wrapping semantics
+prevent workspace-wide overflow checks from adding secret-dependent or
+unreachable panic branches. No algorithm, Ed301-used API, modulus or output
+changes. This source-bound fork is not a general-purpose replacement for every
+upstream feature.
 
 Revalidate the fork whenever the Rust toolchain or upstream dependency changes:
 run the external-consumer tests, the four Valgrind taint cases and the final
