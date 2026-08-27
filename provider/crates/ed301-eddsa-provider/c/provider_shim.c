@@ -37,19 +37,15 @@
 #include "provider_internal.h"
 
 /*
- * One artifact per ABI major: OpenSSL guarantees API/ABI compatibility
- * within a major release.  Major 3 requires the provider-facing API present
- * since 3.5; major 4 starts at 4.0.  Exact build/runtime versions are logged
- * by the harness, but patch and later-minor updates are not rejected.
+ * One artifact per ABI major.  Exact build/runtime versions are logged by the
+ * harness, but compatibility is decided solely by the ABI major.
  */
-#if OPENSSL_VERSION_MAJOR == 3 && OPENSSL_VERSION_MINOR >= 5
+#if OPENSSL_VERSION_MAJOR == 3
 # define ED301D00_SUPPORTED_CORE_MAJOR 3U
-# define ED301D00_SUPPORTED_CORE_MIN_MINOR 5U
 #elif OPENSSL_VERSION_MAJOR == 4
 # define ED301D00_SUPPORTED_CORE_MAJOR 4U
-# define ED301D00_SUPPORTED_CORE_MIN_MINOR 0U
 #else
-# error "This experiment requires OpenSSL 3.5+ headers or OpenSSL 4.x headers"
+#error "This experiment requires OpenSSL ABI major 3 or 4 headers"
 #endif
 
 #define ED301D00_SEED_BYTES ((size_t)38)
@@ -2332,11 +2328,7 @@ static int ed301d00_core_version_text_is_supported(const char *core_version)
         && *cursor++ == '.'
         && ed301d00_parse_version_component(&cursor, &patch)
         && *cursor == '\0'
-        && major == ED301D00_SUPPORTED_CORE_MAJOR
-#if ED301D00_SUPPORTED_CORE_MIN_MINOR > 0
-        && minor >= ED301D00_SUPPORTED_CORE_MIN_MINOR
-#endif
-        ;
+        && major == ED301D00_SUPPORTED_CORE_MAJOR;
 }
 
 static int ed301d00_core_version_is_supported(

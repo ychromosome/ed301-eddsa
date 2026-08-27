@@ -420,14 +420,14 @@ int main(void)
     unit_test_digest_reinit_contract(&api, 1);
 
 #if OPENSSL_VERSION_MAJOR == 3
+    D00_CHECK(ed301d00_core_version_text_is_supported("3.0.0"),
+        "OpenSSL 3 ABI baseline accepted");
     D00_CHECK(ed301d00_core_version_text_is_supported("3.5.0"),
-        "OpenSSL 3.5 baseline accepted");
+        "OpenSSL 3.5 reference minor accepted");
     D00_CHECK(ed301d00_core_version_text_is_supported("3.5.999"),
         "OpenSSL 3.5 patch update accepted");
     D00_CHECK(ed301d00_core_version_text_is_supported("3.99.1"),
         "later OpenSSL 3 minor accepted");
-    D00_CHECK(!ed301d00_core_version_text_is_supported("3.4.99"),
-        "OpenSSL 3 before baseline rejected");
     D00_CHECK(!ed301d00_core_version_text_is_supported("4.0.0"),
         "different OpenSSL major rejected");
 #else

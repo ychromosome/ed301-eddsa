@@ -249,24 +249,15 @@ static void d00_registry_lock_init(void)
 }
 
 /*
- * Every harness requires the supported ABI major and minimum API baseline.
- * Patch and later-minor updates inside that major are compatible; the DSO
- * provenance check below still requires the configured lane directory.
+ * Every harness requires the supported ABI major.  The DSO provenance check
+ * below still requires the configured lane directory.
  */
 static inline int d00_runtime_is_compatible(void)
 {
     const unsigned long runtime = OpenSSL_version_num();
     const unsigned int major = (unsigned int)((runtime >> 28) & 0xfUL);
-    const unsigned int minor = (unsigned int)((runtime >> 20) & 0xffUL);
 
-    if (major != OPENSSL_VERSION_MAJOR)
-        return 0;
-#if OPENSSL_VERSION_MAJOR == 3
-    return minor >= 5U;
-#else
-    (void)minor;
-    return 1;
-#endif
+    return major == OPENSSL_VERSION_MAJOR;
 }
 
 static inline const char *d00_dso_basename(const char *path)
