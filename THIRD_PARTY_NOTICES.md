@@ -1,12 +1,14 @@
 # Third-party notices
 
-The Rust crate uses exactly pinned crates from crates.io. Their original
-license files, Cargo metadata and `.cargo-checksum.json` files are preserved in
-the vendored dependency tree supplied to reviewers.
+The Rust crate uses exactly pinned third-party sources. Registry crates retain
+their license, Cargo metadata and registry checksum files. The source-bound
+`crypto-bigint` fork retains the upstream checksum separately, preserves its
+VCS metadata and documents local changes in
+`vendor/crypto-bigint/ED301_PATCHES.md`.
 
 The direct dependencies declare:
 
-- `crypto-bigint 0.7.5`: Apache-2.0 OR MIT
+- source-bound fork of `crypto-bigint 0.7.5`: Apache-2.0 OR MIT
 - `shake 0.1.0`: MIT OR Apache-2.0
 - `zeroize 1.9.0`: Apache-2.0 OR MIT
 - provider dependency `getrandom 0.4.3`: MIT OR Apache-2.0

@@ -11,6 +11,14 @@ sh "$ROOT/scripts/check-rust-build-environment.sh"
 case "$ROOT" in
     *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
 esac
+for manifest in "$ROOT/Cargo.toml" "$ROOT/provider/Cargo.toml" \
+        "$ROOT/secret-taint/Cargo.toml" "$FIXTURE/Cargo.toml"; do
+    if grep -F '[profile.release.package."crypto-bigint' "$manifest" \
+            >/dev/null; then
+        echo "consumer-specific crypto-bigint profile override: $manifest" >&2
+        exit 1
+    fi
+done
 
 WORK=$(mktemp -d /tmp/ed301-downstream-gate.XXXXXX)
 HOME_DIR=$WORK/home
@@ -46,7 +54,6 @@ run_guarded_cargo() {
         CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$TARGET_DIR" \
         CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
         ED301_PROFILE_MARKER_DIR="$MARKERS" \
-        ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
         RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
         /usr/bin/cargo "$@")
 }
@@ -63,5 +70,5 @@ run_guarded_cargo test --manifest-path "$FIXTURE/Cargo.toml" \
 run_guarded_cargo run --manifest-path "$FIXTURE/Cargo.toml" \
     --locked --offline --release
 sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
-    crypto_bigint=off ed301_eddsa=on ed301_eddsa_downstream_check=on
+    crypto_bigint=on ed301_eddsa=on ed301_eddsa_downstream_check=on
 sh "$ROOT/scripts/require-verified-snapshot.sh"

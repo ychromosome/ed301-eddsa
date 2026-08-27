@@ -42,18 +42,17 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
     CC=/usr/bin/gcc AR=/usr/bin/ar ED301_HERMETIC_NATIVE_BUILD=1 \
     ED301_PROFILE_MARKER_DIR="$MARKERS" \
-    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
     RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
     /usr/bin/cargo build \
         --manifest-path "$ROOT/secret-taint/Cargo.toml" \
         --locked --offline --release)
 sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
-    crypto_bigint=off ed301_eddsa=on ed301_valgrind_client=on \
+    crypto_bigint=on ed301_eddsa=on ed301_valgrind_client=on \
     ed301_eddsa_secret_taint=on
 
 SECRET=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425
 PUBLIC=8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890
-SIGNATURE=2964a4e22d5ed6e41ad5d5bbfdf4d518bb067b8982f3f8f5900d074a6bee97567b95810336944dfdce74dd889ee9d9db3c10bd1f9da0799bad501c8f3e9260020ad64fa6b02a8c27ce837d00
+SIGNATURE=cc1a59719a20680baf3c78afce09b2ffec2072af5966cbbe67d4403c5d41f59c24ac74242a0e4fab53485a56455e195e71deda3152d8347eb08d4f7e8cd3a83aea25c7072ba872b8aa519800
 
 for mode in defined tainted; do
     for case_name in public sign; do

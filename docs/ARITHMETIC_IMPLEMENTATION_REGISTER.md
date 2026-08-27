@@ -10,6 +10,7 @@ the canonical Fedora Rust toolchain changes.
 | Compile-time field borrow | Local Hacker's-Delight identity | `u64::borrowing_sub` is not const-stable. This path constructs public immutable tables and is not executed on secrets at runtime. | Table reconstruction and field differential tests. |
 | Field wide reduction | Positive `high * (2^99 - 947)` MAC fold | Exploits the fixed pseudo-Mersenne modulus while removing borrow-heavy work. | Montgomery differential oracle, reachable one-hot/boundary/random cases, taint and final codegen gate. |
 | Scalar wide reduction | Natural 304+304 split and fixed `2^304 mod L` | Reuses constant-time `crypto-bigint` Montgomery operations and removes the ten-word Horner loop. | Independently reproduced radix, block-boundary/all-one-hot/random division-oracle tests, taint and final codegen gate. |
+| Bounded dependency arithmetic | Source-bound `crypto-bigint 0.7.5` fork with four `wrapping_add` and two `wrapping_neg` sites | Cargo profiles are not transitive. Explicit wrapping semantics remove secret-dependent overflow-panic guards without requiring a downstream package override. | Upstream checksum and exact patch register, external consumer with overflow checks on, four Valgrind taint cases and final provider codegen gate. |
 
 The final codegen gate is intentionally compiler-specific. Passing it under one
 compiler is not a promise about another compiler, architecture, build profile,

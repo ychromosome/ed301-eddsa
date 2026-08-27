@@ -35,6 +35,3 @@ codegen-units = 1
 panic = "unwind"
 overflow-checks = true
 debug = 1
-
-[profile.release.package."crypto-bigint:0.7.5"]
-overflow-checks = false

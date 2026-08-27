@@ -62,24 +62,16 @@ rustdoc-args = [
 extend-ignore-re = ["([0-9A-Fa-f]{16,})"]
 
 [features]
-alloc = ["serdect?/alloc"]
-default = ["rand_core"]
-der = [
-    "dep:der",
-    "hybrid-array",
-]
+alloc = []
+default = []
+der = []
 extra-sizes = []
-getrandom = [
-    "dep:getrandom",
-    "rand_core",
-]
-rand_core = ["dep:rand_core"]
-serde = ["dep:serdect"]
-subtle = [
-    "dep:subtle",
-    "ctutils/subtle",
-    "hybrid-array?/subtle",
-]
+getrandom = []
+hybrid-array = []
+rand_core = []
+rlp = []
+serde = []
+subtle = []
 
 [lib]
 name = "crypto_bigint"
@@ -164,80 +156,14 @@ version = "0.1"
 [dependencies.ctutils]
 version = "0.4"
 
-[dependencies.der]
-version = "0.8"
-optional = true
-default-features = false
-
-[dependencies.getrandom]
-version = "0.4"
-features = ["sys_rng"]
-optional = true
-
-[dependencies.hybrid-array]
-version = "0.4.12"
-optional = true
-
 [dependencies.num-traits]
 version = "0.2.19"
-default-features = false
-
-[dependencies.rand_core]
-version = "0.10"
-optional = true
-default-features = false
-
-[dependencies.rlp]
-version = "0.6"
-optional = true
-default-features = false
-
-[dependencies.serdect]
-version = "0.4"
-optional = true
-default-features = false
-
-[dependencies.subtle]
-version = "2.6"
-optional = true
 default-features = false
 
 [dependencies.zeroize]
 version = "1"
 optional = true
 default-features = false
-
-[dev-dependencies.chacha20]
-version = "0.10"
-features = ["rng"]
-default-features = false
-
-[dev-dependencies.hex-literal]
-version = "1"
-
-[dev-dependencies.num-bigint]
-version = "0.4"
-
-[dev-dependencies.num-integer]
-version = "0.1"
-
-[dev-dependencies.num-modular]
-version = "0.6"
-features = [
-    "num-bigint",
-    "num-integer",
-    "num-traits",
-]
-
-[dev-dependencies.rand_core]
-version = "0.10"
-
-[target."cfg(any(unix, windows))".dev-dependencies.criterion]
-version = "0.7"
-features = ["html_reports"]
-
-[target."cfg(any(unix, windows))".dev-dependencies.proptest]
-version = "1.11"
 
 [lints.clippy]
 borrow_as_ptr = "warn"

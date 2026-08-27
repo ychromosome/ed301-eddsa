@@ -4,7 +4,9 @@
 - Protocol input: the versioned profile and independently generated vectors in
   `inputs/v1/`; the manifest-bound Round-4 profile remains frozen historical
   input and is never reinterpreted as v1.
-- Runtime dependencies: `crypto-bigint`, `shake` and `zeroize`, exactly pinned.
+- Runtime dependencies: the source-bound `crypto-bigint 0.7.5` fork plus
+  exactly pinned `shake` and `zeroize` sources. No consumer profile override is
+  required.
 - API: one-shot key derivation plus deterministic signing and verification
   with an opaque 0--255-byte context. The empty context is the default and
   still carries the Ed448-style native domain prefix.

@@ -117,14 +117,13 @@ multi-architecture timing and cache tests, fault injection, and a decision on
 a stricter non-`Copy` secret-arithmetic ownership model. Until those gates are
 complete, this candidate must not process production keys.
 
-The release override for `crypto-bigint 0.7.5` is a top-level integration
-requirement, because Cargo profiles are not transitive. The repository's
-shared compiler wrapper enforces `crypto-bigint` overflow checks off, ED301
-overflow checks on, `panic=unwind`, optimization level 3, one codegen unit and
-disabled debug assertions on the actual compiler calls used by the root,
-downstream, secret-taint and provider release gates. Inherited Rust/Cargo
-compiler and release-profile overrides are rejected before Cargo runs. Each
-external consuming product must still repeat the override for its real
-production profile and revalidate its final machine code. The bundled
-downstream workspace is an executable integration fixture, not a substitute
-for that production-specific review.
+The source-bound `crypto-bigint 0.7.5` fork uses explicit wrapping operations
+at the six bounded sites where workspace-wide overflow checks previously added
+secret-dependent panic branches. Every crate, including the fork, is now built
+with overflow checks enabled; no consumer-specific package-profile exception
+is accepted or required. The shared compiler wrapper also enforces
+`panic=unwind`, optimization level 3, one codegen unit and disabled debug
+assertions on the root, downstream, secret-taint and provider release gates.
+The external downstream workspace deliberately supplies no package override;
+its Valgrind and final-binary gates remain artifact-specific evidence rather
+than a promise about future compilers.

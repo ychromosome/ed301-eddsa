@@ -61,8 +61,12 @@ the historical signature semantics are not reused. The
 Valgrind client is test-only and remains outside the public crate's safe Rust
 boundary. The square-root exponentiation delegates to the bounded,
 constant-schedule Montgomery exponentiation supplied by the same pinned
-`crypto-bigint 0.7.5` dependency; the project-specific 76-byte scalar reducer
-remains explicit.
+`crypto-bigint 0.7.5` source. The source-bound fork at
+`vendor/crypto-bigint/` replaces six bounded operations with explicit
+wrapping forms so consumer-wide overflow checks cannot add secret-dependent
+panic branches. Its upstream checksum, VCS identity, narrowed active manifest
+and exact patch scope are recorded in that directory. The project-specific
+76-byte scalar reducer remains explicit.
 
 The Git blob identifiers and SHA-256 values above preserve the exact origin
 mapping without making the historical repository part of this source tree.

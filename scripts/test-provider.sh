@@ -161,14 +161,13 @@ provider_env "$QA_TARGET" /usr/bin/rustc --version --verbose \
     >"$QA_MARKERS/toolchain.txt"
 (cd / && provider_env "$QA_TARGET" env \
     ED301_PROFILE_MARKER_DIR="$QA_MARKERS" \
-    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
     RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
     /usr/bin/cargo test \
     --manifest-path "$ROOT/provider/Cargo.toml" --release \
     --locked --offline --no-run --message-format=json \
     >"$BUILD/evidence/provider-unit-artifacts.jsonl")
 sh "$ROOT/scripts/check-profile-markers.sh" "$QA_MARKERS" \
-    crypto_bigint=off ed301_eddsa=on ed301_eddsa_v1=on
+    crypto_bigint=on ed301_eddsa=on ed301_eddsa_v1=on
 /usr/bin/jq -r \
     'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | .executable' \
     "$BUILD/evidence/provider-unit-artifacts.jsonl" \
@@ -208,11 +207,10 @@ build_variant() {
     fi
     (cd / && provider_env "$target" env \
         ED301_PROFILE_MARKER_DIR="$markers" \
-        ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
         RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
         "${command[@]}")
     sh "$ROOT/scripts/check-profile-markers.sh" "$markers" \
-        crypto_bigint=off ed301_eddsa=on ed301_eddsa_v1=on
+        crypto_bigint=on ed301_eddsa=on ed301_eddsa_v1=on
     cp "$target/release/libed301_eddsa_v1.so" \
         "$BUILD/modules/$module"
     rm -rf -- "$target"
@@ -241,14 +239,13 @@ provider_env "$TAINT_TARGET" /usr/bin/rustc --version --verbose \
 (cd / && provider_env "$TAINT_TARGET" env \
     ED301_HERMETIC_NATIVE_BUILD=1 \
     ED301_PROFILE_MARKER_DIR="$TAINT_MARKERS" \
-    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
     RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
     /usr/bin/cargo build \
         --manifest-path "$ROOT/provider/Cargo.toml" \
         --release --locked --offline \
         --features secret-taint-instrumentation)
 sh "$ROOT/scripts/check-profile-markers.sh" "$TAINT_MARKERS" \
-    crypto_bigint=off ed301_eddsa=on ed301_valgrind_client=on \
+    crypto_bigint=on ed301_eddsa=on ed301_valgrind_client=on \
     ed301_eddsa_v1=on
 cp "$TAINT_TARGET/release/libed301_eddsa_v1.so" \
     "$BUILD/modules-taint/ed301_eddsa_v1.so"

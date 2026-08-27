@@ -19,27 +19,23 @@ printf '%s\n' 'this is not Rust' >"$TMP/invalid.rs"
 
 run_pass() {
     crate=$1
-    exceptions=$2
-    shift 2
+    shift
     markers=$TMP/pass-$crate-$$
     mkdir -p "$markers"
     ED301_PROFILE_MARKER_DIR=$markers \
-    ED301_PROFILE_EXCEPTIONS=$exceptions \
         sh "$GUARD" /usr/bin/rustc --crate-name "$crate" \
             --crate-type lib "$TMP/valid.rs" \
             --emit metadata -o "$markers/$crate.rmeta" "$@"
     printf '%s\n' /usr/bin/rustc >"$markers/toolchain.txt"
-    sh "$CHECK" "$markers" "$crate=${exceptions#*=}"
+    sh "$CHECK" "$markers" "$crate=on"
 }
 
 run_fail() {
     crate=$1
-    exceptions=$2
-    shift 2
+    shift
     markers=$TMP/fail-$crate-$$
     mkdir -p "$markers"
     if ED301_PROFILE_MARKER_DIR=$markers \
-       ED301_PROFILE_EXCEPTIONS=$exceptions \
             sh "$GUARD" /usr/bin/rustc --crate-name "$crate" \
                 --crate-type lib "$TMP/valid.rs" \
                 --emit metadata -o "$markers/$crate.rmeta" "$@" \
@@ -53,20 +49,36 @@ run_fail() {
     fi
 }
 
-run_pass ed301_eddsa ed301_eddsa=on -Coverflow-checks=on \
+run_pass ed301_eddsa -Coverflow-checks=on \
     -Cpanic=unwind -Copt-level=3 -Ccodegen-units=1
-run_pass crypto_bigint crypto_bigint=off -Coverflow-checks=off \
+run_pass crypto_bigint -Coverflow-checks=on \
     -Cpanic=unwind -Copt-level=3 -Ccodegen-units=1
-run_fail ed301_eddsa ed301_eddsa=on -Coverflow-checks=off
-run_fail ed301_eddsa ed301_eddsa=on -Cpanic=abort
-run_fail ed301_eddsa ed301_eddsa=on -Copt-level=2
-run_fail ed301_eddsa ed301_eddsa=on -Ccodegen-units=2
-run_fail ed301_eddsa ed301_eddsa=on -Cdebug-assertions=yes
+run_fail ed301_eddsa -Coverflow-checks=off
+run_fail ed301_eddsa -Cpanic=abort
+run_fail ed301_eddsa -Copt-level=2
+run_fail ed301_eddsa -Ccodegen-units=2
+run_fail ed301_eddsa -Cdebug-assertions=yes
+
+# The former dependency-specific overflow bypass is no longer accepted.
+markers=$TMP/profile-exception
+mkdir -p "$markers"
+if ED301_PROFILE_MARKER_DIR=$markers \
+   ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+        sh "$GUARD" /usr/bin/rustc --crate-name crypto_bigint \
+            --crate-type lib "$TMP/valid.rs" --emit metadata \
+            -o "$markers/crypto_bigint.rmeta" >/dev/null 2>&1; then
+    echo "profile guard accepted a dependency overflow exception" >&2
+    exit 1
+fi
+if find "$markers" -name '*.success' -print -quit | grep -q .; then
+    echo "rejected profile exception produced a success marker" >&2
+    exit 1
+fi
 
 # An unlisted linked dependency receives the secure default, not a bypass.
 markers=$TMP/default-dependency
 mkdir -p "$markers"
-ED301_PROFILE_MARKER_DIR=$markers ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+ED301_PROFILE_MARKER_DIR=$markers \
     sh "$GUARD" /usr/bin/rustc --crate-name dependency_crate \
         --crate-type lib "$TMP/valid.rs" --emit metadata \
         -o "$markers/dependency.rmeta"
@@ -77,7 +89,7 @@ sh "$CHECK" "$markers" dependency_crate=on
 # the gate's pinned PATH to the same canonical compiler.
 markers=$TMP/bare-compiler
 mkdir -p "$markers"
-ED301_PROFILE_MARKER_DIR=$markers ED301_PROFILE_EXCEPTIONS= \
+ED301_PROFILE_MARKER_DIR=$markers \
     sh "$GUARD" rustc --crate-name bare_compiler \
         --crate-type lib "$TMP/valid.rs" --emit metadata \
         -o "$markers/bare.rmeta"
@@ -87,7 +99,7 @@ sh "$CHECK" "$markers" bare_compiler=on
 # A compiler failure can never create successful profile evidence.
 markers=$TMP/compiler-failure
 mkdir -p "$markers"
-if ED301_PROFILE_MARKER_DIR=$markers ED301_PROFILE_EXCEPTIONS= \
+if ED301_PROFILE_MARKER_DIR=$markers \
         sh "$GUARD" /usr/bin/rustc --crate-name invalid_crate \
             --crate-type lib "$TMP/invalid.rs" --emit metadata \
             -o "$markers/invalid.rmeta" >/dev/null 2>&1; then
@@ -104,7 +116,7 @@ printf '%s\n' '#!/bin/sh' 'exit 0' >"$TMP/fake-rustc"
 chmod +x "$TMP/fake-rustc"
 markers=$TMP/fake-compiler
 mkdir -p "$markers"
-if ED301_PROFILE_MARKER_DIR=$markers ED301_PROFILE_EXCEPTIONS= \
+if ED301_PROFILE_MARKER_DIR=$markers \
         sh "$GUARD" "$TMP/fake-rustc" --crate-name fake \
             "$TMP/valid.rs" >/dev/null 2>&1; then
     echo "profile guard accepted a noncanonical compiler" >&2

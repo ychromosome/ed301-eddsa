@@ -8,6 +8,10 @@ if [ "$#" -lt 1 ] || [ -z "${ED301_PROFILE_MARKER_DIR:-}" ]; then
     echo "rustc-profile-guard: compiler or marker directory missing" >&2
     exit 2
 fi
+if [ -n "${ED301_PROFILE_EXCEPTIONS:-}" ]; then
+    echo "rustc-profile-guard: overflow-check exceptions are forbidden" >&2
+    exit 2
+fi
 
 compiler=$1
 shift
@@ -108,17 +112,6 @@ if [ "$crate_name" = build_script_build ]; then
 fi
 
 expected_overflow=on
-for exception in ${ED301_PROFILE_EXCEPTIONS:-}; do
-    exception_crate=${exception%%=*}
-    exception_value=${exception#*=}
-    if [ "$exception_value" != on ] && [ "$exception_value" != off ]; then
-        echo "rustc-profile-guard: invalid exception: $exception" >&2
-        exit 2
-    fi
-    if [ "$exception_crate" = "$crate_name" ]; then
-        expected_overflow=$exception_value
-    fi
-done
 
 if [ "$overflow_state" != absent ] \
         && [ "$overflow_state" != "$expected_overflow" ]; then

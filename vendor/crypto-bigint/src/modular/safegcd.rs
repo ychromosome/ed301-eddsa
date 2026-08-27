@@ -201,8 +201,12 @@ const fn jump_step(
             swap.select_i64(t[0][1], t[1][1]) << 1,
         ],
         [
-            t[1][0].wrapping_add(g_odd.select_i64(0, d_gtz.select_i64(t[0][0], -t[0][0]))),
-            t[1][1].wrapping_add(g_odd.select_i64(0, d_gtz.select_i64(t[0][1], -t[0][1]))),
+            t[1][0].wrapping_add(
+                g_odd.select_i64(0, d_gtz.select_i64(t[0][0], t[0][0].wrapping_neg())),
+            ),
+            t[1][1].wrapping_add(
+                g_odd.select_i64(0, d_gtz.select_i64(t[0][1], t[0][1].wrapping_neg())),
+            ),
         ],
     ];
     (f, g, delta, t)

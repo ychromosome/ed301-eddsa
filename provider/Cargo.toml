@@ -14,9 +14,3 @@ lto = "thin"
 codegen-units = 1
 panic = "unwind"
 overflow-checks = true
-
-# Cargo profiles are not transitive.  The provider workspace therefore
-# repeats the crypto-bigint override from the core workspace and verifies it
-# in the provider acceptance lane.
-[profile.release.package."crypto-bigint:0.7.5"]
-overflow-checks = false
