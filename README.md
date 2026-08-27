@@ -46,6 +46,11 @@ capability. PKI encoders and the private-use TLS proof are separately named,
 disabled-by-default test artifacts whose registry setup belongs to the host
 harness.
 
+These releases are also the provider's source/API and runtime minima:
+OpenSSL 3.5.7 for ABI major 3 and OpenSSL 4.0.1 for ABI major 4. Later releases
+in the same major are accepted; earlier releases are not supported merely
+because they share that major.
+
 The provider matrix requires Rust with Cargo, rustfmt, Clippy and rustdoc,
 plus GCC, Clang/scan-build, binutils, make, Perl, Python 3, pkg-config,
 Valgrind, `jq`, curl, tar and xz. The final-binary codegen gate accepts both

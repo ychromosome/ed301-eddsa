@@ -35,9 +35,10 @@ The repaired integration boundary is:
 - the ordinary module has no OID alias and performs no OID/SIGID mutation.
   Optional PKI/TLS setup is serialized and verified by the host harness
   against its own `libcrypto` registry before loading the test artifact;
-- one module is compiled per OpenSSL ABI major; runtime compatibility is
-  accepted within major 3 or major 4. The tested reference lanes remain 3.5.7
-  and 4.0.1; patch equality is not required;
+- one module is compiled per OpenSSL ABI major. The source/API and runtime
+  minimum is 3.5.7 for ABI major 3 and 4.0.1 for ABI major 4. Later releases
+  in the same major are accepted; earlier releases are rejected even though
+  they share the ABI major. Patch equality above the minimum is not required;
 - repeated DigestSign/DigestVerify initialization with a NULL key retains the
   already bound immutable key snapshot, matching OpenSSL's Ed25519 lifecycle;
   invalid modes are rejected before touching that retained snapshot, whereas

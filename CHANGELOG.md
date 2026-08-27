@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replaced the ABI-major-only OpenSSL compatibility claim with explicit
+  source/API and runtime minima: 3.5.7 for ABI major 3 and 4.0.1 for ABI major
+  4. Earlier same-major releases are rejected; each claimed minimum remains
+  subject to its real build/load/sign/verify lane.
 - Introduced the incompatible `Ed301-EdDSA-v1` transcript under OID
   `1.3.6.1.4.1.66282.301.4`. Following the Ed448 `dom4` shape, both nonce and
   challenge hashes now begin with `"SigEd301-v1" || 0x00 || len(C) || C` for

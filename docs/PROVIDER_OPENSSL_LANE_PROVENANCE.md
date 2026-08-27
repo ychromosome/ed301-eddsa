@@ -10,6 +10,13 @@ or release operation. The only accepted lanes are:
 | 3.5.7 | openssl-3.5.7 | https://www.openssl.org/source/openssl-3.5.7.tar.gz | 3 |
 | 4.0.1 | openssl-4.0.1 | https://www.openssl.org/source/openssl-4.0.1.tar.gz | 4 |
 
+These are also the minimum source/API and runtime releases claimed for their
+respective ABI majors. The provider uses message-signature dispatches absent
+from early OpenSSL 3 releases. It accepts later compatible releases within
+major 3 or 4, but rejects runtimes below 3.5.7 or 4.0.1 respectively. Each
+minimum is covered by a real build, provider load, sign and verify lane;
+parsing a synthetic version string is not compatibility evidence.
+
 The builder also pins the full SHA-256 digest of each accepted release
 tarball: `a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8`
 for 3.5.7 and

@@ -37,13 +37,25 @@
 #include "provider_internal.h"
 
 /*
- * One artifact per ABI major.  Exact build/runtime versions are logged by the
- * harness, but compatibility is decided solely by the ABI major.
+ * One artifact per ABI major.  The provider uses message-signature dispatches
+ * that are absent from early OpenSSL 3 releases, so ABI-major compatibility
+ * starts at the oldest source and runtime lane exercised by this project.
  */
 #if OPENSSL_VERSION_MAJOR == 3
+# if OPENSSL_VERSION_MINOR < 5 \
+     || (OPENSSL_VERSION_MINOR == 5 && OPENSSL_VERSION_PATCH < 7)
+#  error "This experiment requires OpenSSL 3.5.7 or later headers"
+# endif
 # define ED301D00_SUPPORTED_CORE_MAJOR 3U
+# define ED301D00_MINIMUM_CORE_MINOR 5U
+# define ED301D00_MINIMUM_CORE_PATCH 7U
 #elif OPENSSL_VERSION_MAJOR == 4
+# if OPENSSL_VERSION_MINOR == 0 && OPENSSL_VERSION_PATCH < 1
+#  error "This experiment requires OpenSSL 4.0.1 or later headers"
+# endif
 # define ED301D00_SUPPORTED_CORE_MAJOR 4U
+# define ED301D00_MINIMUM_CORE_MINOR 0U
+# define ED301D00_MINIMUM_CORE_PATCH 1U
 #else
 #error "This experiment requires OpenSSL ABI major 3 or 4 headers"
 #endif
@@ -2402,13 +2414,19 @@ static int ed301d00_core_version_text_is_supported(const char *core_version)
     unsigned int minor = 0;
     unsigned int patch = 0;
 
-    return ed301d00_parse_version_component(&cursor, &major)
-        && *cursor++ == '.'
-        && ed301d00_parse_version_component(&cursor, &minor)
-        && *cursor++ == '.'
-        && ed301d00_parse_version_component(&cursor, &patch)
-        && *cursor == '\0'
-        && major == ED301D00_SUPPORTED_CORE_MAJOR;
+    if (!(ed301d00_parse_version_component(&cursor, &major)
+            && *cursor++ == '.'
+            && ed301d00_parse_version_component(&cursor, &minor)
+            && *cursor++ == '.'
+            && ed301d00_parse_version_component(&cursor, &patch)
+            && *cursor == '\0'))
+        return 0;
+
+    if (major != ED301D00_SUPPORTED_CORE_MAJOR)
+        return 0;
+    return minor > ED301D00_MINIMUM_CORE_MINOR
+        || (minor == ED301D00_MINIMUM_CORE_MINOR
+            && patch >= ED301D00_MINIMUM_CORE_PATCH);
 }
 
 static int ed301d00_core_version_is_supported(

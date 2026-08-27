@@ -463,21 +463,31 @@ int main(void)
     unit_test_digest_reinit_contract(&api, 1);
 
 #if OPENSSL_VERSION_MAJOR == 3
-    D00_CHECK(ed301d00_core_version_text_is_supported("3.0.0"),
-        "OpenSSL 3 ABI baseline accepted");
-    D00_CHECK(ed301d00_core_version_text_is_supported("3.5.0"),
-        "OpenSSL 3.5 reference minor accepted");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("3.0.0"),
+        "OpenSSL 3.0 predates the source/API minimum");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("3.4.999"),
+        "OpenSSL 3.4 predates the tested source/API minimum");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("3.5.6"),
+        "OpenSSL 3.5 patch below the tested minimum rejected");
+    D00_CHECK(ed301d00_core_version_text_is_supported("3.5.7"),
+        "OpenSSL 3.5.7 source/API minimum accepted");
     D00_CHECK(ed301d00_core_version_text_is_supported("3.5.999"),
         "OpenSSL 3.5 patch update accepted");
+    D00_CHECK(ed301d00_core_version_text_is_supported("3.6.0"),
+        "later OpenSSL 3 minor accepted");
     D00_CHECK(ed301d00_core_version_text_is_supported("3.99.1"),
         "later OpenSSL 3 minor accepted");
-    D00_CHECK(!ed301d00_core_version_text_is_supported("4.0.0"),
+    D00_CHECK(!ed301d00_core_version_text_is_supported("4.0.1"),
         "different OpenSSL major rejected");
 #else
-    D00_CHECK(ed301d00_core_version_text_is_supported("4.0.0"),
-        "OpenSSL 4 baseline accepted");
+    D00_CHECK(!ed301d00_core_version_text_is_supported("4.0.0"),
+        "OpenSSL 4 patch below the source/API minimum rejected");
+    D00_CHECK(ed301d00_core_version_text_is_supported("4.0.1"),
+        "OpenSSL 4.0.1 source/API minimum accepted");
     D00_CHECK(ed301d00_core_version_text_is_supported("4.0.999"),
         "OpenSSL 4 patch update accepted");
+    D00_CHECK(ed301d00_core_version_text_is_supported("4.1.0"),
+        "later OpenSSL 4 minor accepted");
     D00_CHECK(ed301d00_core_version_text_is_supported("4.99.1"),
         "later OpenSSL 4 minor accepted");
     D00_CHECK(!ed301d00_core_version_text_is_supported("3.99.99"),
