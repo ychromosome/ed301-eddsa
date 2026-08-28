@@ -225,6 +225,12 @@ build_variant failpoint test-failpoint ed301_eddsa_v1_failpoint.so
 build_variant pki pki-experiment ed301_eddsa_v1_pki_test.so
 build_variant tls tls-experiment ed301_eddsa_v1_tls_test.so
 build_variant collider tls-collider ed301_eddsa_v1_tls_collider.so
+
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" list -objects \
+    >"$BUILD/evidence/openssl-objects.txt"
+
 cp "$BUILD/modules/ed301_eddsa_v1_pki_test.so" \
     "$BUILD/fresh-modules/ed301_eddsa_v1_pki_test.so"
 
@@ -298,6 +304,12 @@ done
     -I"$ROOT/provider-tests" -o "$BUILD/bin/provider_load_no_rpath" \
     "$ROOT/provider-tests/provider_load.c" \
     -L"$OPENSSL_LIB" -lcrypto -lssl -lpthread -ldl
+/usr/bin/gcc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror \
+    -I"$OPENSSL_PREFIX/include" -I"$ROOT/provider-tests" \
+    -o "$BUILD/bin/provider_context_contract" \
+    "$ROOT/review-tests/provider-context-contract.c" \
+    -L"$OPENSSL_LIB" -Wl,-rpath,"$OPENSSL_LIB" \
+    -lcrypto -lssl -lpthread -ldl
 
 for harness in provider_signature provider_keymgmt provider_serialization \
         val01_decoder_bio provider_load provider_rand provider_lifecycle \
@@ -328,6 +340,7 @@ done
 (
     cd "$BUILD"
     sha256sum cargo-home/config.toml
+    sha256sum evidence/openssl-objects.txt
     sha256sum profile-markers/normal/toolchain.txt \
         profile-markers/secret-taint/toolchain.txt
     find modules modules-taint fresh-modules bin generated \
@@ -342,12 +355,24 @@ sha256sum --strict --quiet -c \
     evidence/pre-execution-artifacts.sha256)
 verify_lane
 
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    CARGO_HOME="$CARGO_HOME_DIR" CARGO_NET_OFFLINE=true \
+    CARGO_INCREMENTAL=0 ED301_SOURCE_MODE=archive \
+    ED301_VERIFIED_SNAPSHOT=1 \
+    ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$ED301_EXPECTED_SOURCE_MANIFEST_SHA256" \
+    OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    ED301_MODULE_DIR="$BUILD/modules" \
+    ED301_PROVIDER_CONTEXT_HARNESS="$BUILD/bin/provider_context_contract" \
+    OPENSSL_OBJECT_LISTS="$BUILD/evidence/openssl-objects.txt" \
+    "$ROOT/review-tests/run.sh" \
+    | tee "$BUILD/evidence/hostile-regressions.log"
+
 run_harness() {
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \
-        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
-        D00_FRESH_COPY_DIR="$BUILD/fresh-modules" \
+        ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        ED301V1_FRESH_COPY_DIR="$BUILD/fresh-modules" \
         /usr/bin/timeout 240 "$BUILD/bin/$1"
 }
 for harness in provider_load provider_keymgmt provider_signature \
@@ -366,7 +391,7 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" \
     OPENSSL_CONF="$BUILD/generated/native-evp-test.cnf" \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
-    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
     /usr/bin/timeout 240 "$LANE_ROOT/src/openssl-$LANE/test/evp_test" \
         -provider ed301_eddsa_v1 \
         "$ROOT/provider-tests/openssl_evp_ed301.txt"
@@ -376,14 +401,14 @@ for mode in free object-only exact occupied-oid occupied-name sigid-conflict \
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \
-        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
         /usr/bin/timeout 60 "$BUILD/bin/provider_oid_collision" "$mode"
 done
 for mode in exact-fast exact-stalled conflict; do
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \
-        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
         /usr/bin/timeout 60 "$BUILD/bin/val03_retry" \
         "$mode" "$BUILD/modules"
 done
@@ -393,8 +418,8 @@ set +e
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
-    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
-    ED301D00_POLICY_MUTATE=1 "$BUILD/bin/provider_signature" \
+    ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    ED301V1_POLICY_MUTATE=1 "$BUILD/bin/provider_signature" \
     >"$POLICY_LOG" 2>&1
 POLICY_RC=$?
 set -e
@@ -405,12 +430,12 @@ WRONG_RUNTIME_LOG=$BUILD/evidence/wrong-runtime.log
 set +e
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
-    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
     "$BUILD/bin/provider_load_no_rpath" >"$WRONG_RUNTIME_LOG" 2>&1
 WRONG_RUNTIME_RC=$?
 set -e
 test "$WRONG_RUNTIME_RC" -ne 0
-grep -E 'FATAL: libcrypto resolved|error while loading shared libraries' \
+grep -E 'FATAL: runtime OpenSSL|FATAL: libcrypto resolved|error while loading shared libraries' \
     "$WRONG_RUNTIME_LOG" >/dev/null
 
 # CLI coverage is intentionally limited to discovery and key encoding.  The
@@ -439,8 +464,8 @@ for harness in provider_signature provider_keymgmt provider_serialization \
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \
-        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
-        D00_FRESH_COPY_DIR="$BUILD/fresh-modules" \
+        ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        ED301V1_FRESH_COPY_DIR="$BUILD/fresh-modules" \
         ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
         UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
         /usr/bin/timeout 240 "$BUILD/bin/${harness}_asan"
@@ -450,8 +475,8 @@ for harness in provider_signature provider_serialization val01_decoder_bio \
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \
-        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
-        D00_FRESH_COPY_DIR="$BUILD/fresh-modules" \
+        ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        ED301V1_FRESH_COPY_DIR="$BUILD/fresh-modules" \
         /usr/bin/valgrind --error-exitcode=99 \
         --errors-for-leak-kinds=definite --leak-check=full --quiet \
         "$BUILD/bin/$harness"
@@ -460,7 +485,7 @@ for mode in defined tainted; do
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules-taint" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \
-        D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+        ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
         /usr/bin/valgrind --tool=memcheck --vgdb=no \
         --error-exitcode=99 --track-origins=yes \
         --undef-value-errors=yes --leak-check=full \
@@ -470,8 +495,8 @@ done
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
-    D00_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
-    ED301D00_RUST_ALLOC_ONLY=1 /usr/bin/valgrind --error-exitcode=99 \
+    ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+    ED301V1_RUST_ALLOC_ONLY=1 /usr/bin/valgrind --error-exitcode=99 \
     --errors-for-leak-kinds=definite --leak-check=full --quiet \
     "$BUILD/bin/provider_hardening"
 

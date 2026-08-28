@@ -1,5 +1,5 @@
-#ifndef ED301D00_PROVIDER_INTERNAL_H
-#define ED301D00_PROVIDER_INTERNAL_H
+#ifndef ED301V1_PROVIDER_INTERNAL_H
+#define ED301V1_PROVIDER_INTERNAL_H
 
 /*
  * Internal contract between the C provider shim and the Rust callback table
@@ -17,7 +17,7 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/crypto.h>
 
-typedef struct ed301d00_signature_rust_api_st {
+typedef struct ed301v1_signature_rust_api_st {
     uint32_t abi_version;
     size_t struct_size;
     size_t seed_bytes;
@@ -91,9 +91,9 @@ typedef struct ed301d00_signature_rust_api_st {
         const unsigned char *signature_value,
         size_t signature_length);
     void (*cleanse)(unsigned char *buffer, size_t length);
-} ED301D00_SIGNATURE_RUST_API;
+} ED301V1_SIGNATURE_RUST_API;
 
-typedef struct ed301d00_provider_context_st {
+typedef struct ed301v1_provider_context_st {
     const OSSL_CORE_HANDLE *handle;
     OSSL_LIB_CTX *libctx;
     OSSL_FUNC_CRYPTO_zalloc_fn *zalloc;
@@ -104,7 +104,7 @@ typedef struct ed301d00_provider_context_st {
     OSSL_FUNC_BIO_read_ex_fn *bio_read_ex;
     OSSL_FUNC_BIO_write_ex_fn *bio_write_ex;
     OSSL_FUNC_BIO_ctrl_fn *bio_ctrl;
-    const ED301D00_SIGNATURE_RUST_API *rust;
-} ED301D00_PROVIDER_CONTEXT;
+    const ED301V1_SIGNATURE_RUST_API *rust;
+} ED301V1_PROVIDER_CONTEXT;
 
 #endif

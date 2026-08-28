@@ -176,23 +176,117 @@ extract_symbol_instances() {
     test -s "$destination"
 }
 
-# Return success only when a conditional transfer, variable-time division, or
-# deliberate trap is present. SETcc is permitted only without a following
-# conditional branch; the latter is rejected here independently of spelling.
-contains_forbidden_instruction() {
-    /usr/bin/awk '
-        /^[[:space:]]*[[:xdigit:]]+:/ {
-            mnemonic = $2
-            if ((mnemonic ~ /^j/ && mnemonic !~ /^jmpq?$/) ||
-                    mnemonic ~ /^loop/ || mnemonic ~ /^div/ ||
-                    mnemonic ~ /^idiv/ || mnemonic == "ud2" ||
-                    mnemonic == "int3") {
-                print
+symbol_instance_count() {
+    symbol=$1
+    /usr/bin/awk -v symbol="$symbol" '
+        function canonical_symbol(value, marker) {
+            if (substr(value, 1, 1) == "<" &&
+                    (marker = index(value, ">::")) != 0)
+                value = substr(value, 2, marker - 2) \
+                    substr(value, marker + 1)
+            return value
+        }
+        function header_symbol(line, value) {
+            value = line
+            sub(/^[[:space:]]*[[:xdigit:]]+[[:space:]]+</, "", value)
+            sub(/>:[[:space:]]*$/, "", value)
+            return canonical_symbol(value)
+        }
+        BEGIN { symbol = canonical_symbol(symbol) }
+        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
+            if (header_symbol($0) == symbol)
+                count++
+        }
+        END { print count + 0 }
+    ' "$DUMP"
+}
+
+contains_call_target() {
+    file=$1
+    pattern=$2
+    /usr/bin/awk -v pattern="$pattern" '
+        function canonical_symbol(value, marker) {
+            if (substr(value, 1, 1) == "<" &&
+                    (marker = index(value, ">::")) != 0)
+                value = substr(value, 2, marker - 2) \
+                    substr(value, marker + 1)
+            return value
+        }
+        function call_target(line, target, position) {
+            position = index(line, "<")
+            if (position == 0)
+                return ""
+            target = substr(line, position + 1)
+            sub(/>[[:space:]]*$/, "", target)
+            return canonical_symbol(target)
+        }
+        /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^call/ {
+            target = call_target($0)
+            if (target ~ ("(^|::)" pattern "$"))
                 found = 1
+        }
+        END { exit found ? 0 : 1 }
+    ' "$file"
+}
+
+# Return success only when a forbidden transfer, variable-time division or
+# deliberate trap is present. Trailing compiler padding is outside the
+# executable body only when it follows a return or a non-returning call and
+# every remaining instruction is padding. Exact call-graph checks below bind
+# the latter case to reviewed panic targets.
+contains_forbidden_instruction() {
+    mode=${2:-reject-conditional}
+    /usr/bin/awk -v mode="$mode" '
+        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
+            block++
+            next
+        }
+        /^[[:space:]]*[[:xdigit:]]+:/ {
+            if (block == 0)
+                block = 1
+            n[block]++
+            mnemonic[block, n[block]] = $2
+            instruction[block, n[block]] = $0
+        }
+        END {
+            for (b = 1; b <= block; b++) {
+                terminal = n[b]
+                while (terminal > 0 &&
+                        (mnemonic[b, terminal] == "int3" ||
+                         mnemonic[b, terminal] ~ /^nop/ ||
+                         mnemonic[b, terminal] == "data16"))
+                    terminal--
+                padding_ok = terminal > 0 &&
+                    (mnemonic[b, terminal] ~ /^ret/ ||
+                     ((mode == "allow-terminal-call" ||
+                       mode == "allow-conditional-terminal-call") &&
+                      mnemonic[b, terminal] ~ /^call/))
+
+                for (i = 1; i <= n[b]; i++) {
+                    conditional = mnemonic[b, i] ~ /^j/ &&
+                        mnemonic[b, i] !~ /^jmpq?$/
+                    terminal_padding = padding_ok && i > terminal &&
+                        mnemonic[b, i] == "int3"
+                    if ((mode !~ /allow-conditional/ && conditional) ||
+                            mnemonic[b, i] ~ /^loop/ ||
+                            mnemonic[b, i] ~ /^div/ ||
+                            mnemonic[b, i] ~ /^idiv/ ||
+                            mnemonic[b, i] == "ud2" ||
+                            (mnemonic[b, i] == "int3" &&
+                             !terminal_padding)) {
+                        print instruction[b, i]
+                        found = 1
+                    }
+                }
             }
         }
         END { exit found ? 0 : 1 }
     ' "$1"
+    result=$?
+    case "$result" in
+        0|1) return "$result" ;;
+        *) echo 'FAIL codegen instruction scanner error' >&2; exit 1 ;;
+    esac
 }
 
 count_mnemonic() {
@@ -225,10 +319,28 @@ check_call_closure() {
     file=$1
     allowed=$2
     if /usr/bin/awk -v allowed="$allowed" '
-        /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^call/ &&
-                $0 !~ allowed {
-            print
-            found = 1
+        function canonical_symbol(value, marker) {
+            if (substr(value, 1, 1) == "<" &&
+                    (marker = index(value, ">::")) != 0)
+                value = substr(value, 2, marker - 2) \
+                    substr(value, marker + 1)
+            return value
+        }
+        function call_target(line, target, position) {
+            position = index(line, "<")
+            if (position == 0)
+                return ""
+            target = substr(line, position + 1)
+            sub(/>[[:space:]]*$/, "", target)
+            return canonical_symbol(target)
+        }
+        BEGIN { exact = "^(" allowed ")$" }
+        /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^call/ {
+            target = call_target($0)
+            if (target == "" || target !~ exact) {
+                print
+                found = 1
+            }
         }
         END { exit found ? 0 : 1 }
     ' "$file"; then
@@ -246,6 +358,7 @@ check_exact_call_graph() {
     label=$1
     file=$2
     expected=$3
+    alternative=${4-}
     observed=$EVIDENCE/$label.calls
 
     /usr/bin/awk '
@@ -310,7 +423,10 @@ check_exact_call_graph() {
 
             if (mnemonic ~ /^call/) {
                 target = ""
-                if (line ~ /<_GLOBAL_OFFSET_TABLE_/) {
+                if (line ~ /<memcpy@/) {
+                    target = "memcpy"
+                } else if (operands ~ /^\*.*\(%rip\)/ &&
+                        line ~ /#[[:space:]]*[[:xdigit:]]+/) {
                     address = got_address(line)
                     target = got[address]
                     if (target == "")
@@ -342,7 +458,18 @@ check_exact_call_graph() {
     ' "$EVIDENCE/relative-got-targets.txt" "$file" >"$observed"
 
     expected=$(printf '%s\n' "$expected" | canonicalize_symbol_stream)
-    if [ "$(/usr/bin/cat "$observed")" != "$expected" ]; then
+    actual=$(/usr/bin/cat "$observed")
+    matched=no
+    if [ "$actual" = "$expected" ]; then
+        matched=yes
+    elif [ -n "$alternative" ]; then
+        alternative=$(printf '%s\n' "$alternative" \
+            | canonicalize_symbol_stream)
+        if [ "$actual" = "$alternative" ]; then
+            matched=yes
+        fi
+    fi
+    if [ "$matched" != yes ]; then
         printf 'FAIL changed or unresolved call graph in %s\n' "$label" >&2
         /usr/bin/cat "$observed" >&2
         exit 1
@@ -415,18 +542,38 @@ check_branch_free field_reduce \
     'ed301_eddsa::field_5x64::reduce_wide' 2 5 no '^$' allow
 check_branch_free field_square \
     'ed301_eddsa::field_5x64::square_wide' 0 0 no '^$' allow
+multiply_symbol='ed301_eddsa::field_5x64::multiply_wide'
+multiply_instances=$(symbol_instance_count "$multiply_symbol")
+case "$multiply_instances" in
+    0)
+        if contains_call_target "$DUMP" 'field_5x64::multiply_wide'; then
+            echo 'FAIL multiply_wide call exists without a local checked symbol' >&2
+            exit 1
+        fi
+        printf '%s\n' 'PASS optional_symbol=field_multiply disposition=inlined' \
+            | tee -a "$SUMMARY"
+        ;;
+    1)
+        check_branch_free field_multiply "$multiply_symbol" 0 0 no '^$' allow
+        ;;
+    *)
+        printf 'FAIL unexpected final-binary instances of %s: %s\n' \
+            "$multiply_symbol" "$multiply_instances" >&2
+        exit 1
+        ;;
+esac
 check_branch_free point_double \
     '<ed301_eddsa::edwards::EdwardsPoint>::double' 20 35 no \
-    'field_5x64::(reduce_wide|square_wide)' allow
+    'ed301_eddsa::field_5x64::(reduce_wide|square_wide|multiply_wide)' allow
 check_branch_free point_add \
     '<ed301_eddsa::edwards::EdwardsPoint>::add' 25 45 no \
-    'field_5x64::reduce_wide' allow
+    'ed301_eddsa::field_5x64::(reduce_wide|multiply_wide)' allow
 check_branch_free point_add_affine \
     '<ed301_eddsa::edwards::EdwardsPoint>::add_affine' 20 30 no \
-    'field_5x64::reduce_wide' allow
+    'ed301_eddsa::field_5x64::(reduce_wide|multiply_wide)' allow
 check_branch_free point_is_valid \
     '<ed301_eddsa::edwards::EdwardsPoint>::is_valid' 10 25 no \
-    'field_5x64::(reduce_wide|square_wide)' allow
+    'ed301_eddsa::field_5x64::(reduce_wide|square_wide|multiply_wide)' allow
 check_branch_free affine_select \
     '<ed301_eddsa::edwards::AffineNielsPoint>::conditional_select' 0 16 no \
     '^$' reject
@@ -458,6 +605,8 @@ check_fixed_branches() {
     label=$1
     symbol=$2
     expected=$3
+    alternative=${4-}
+    terminal_call=${5-}
     section=$EVIDENCE/$label.asm
     observed=$EVIDENCE/$label.branches
     extract_symbol "$symbol" "$section"
@@ -471,17 +620,19 @@ check_fixed_branches() {
             previous_operands = mnemonic ~ /^j/ ? "TARGET" : operands
         }
     ' "$section" >"$observed"
-    if [ "$(cat "$observed")" != "$expected" ]; then
+    actual=$(/usr/bin/cat "$observed")
+    if [ "$actual" != "$expected" ] \
+            && { [ -z "$alternative" ] || [ "$actual" != "$alternative" ]; };
+    then
         printf 'FAIL changed fixed-loop shape in %s\n' "$symbol" >&2
-        cat "$observed" >&2
+        /usr/bin/cat "$observed" >&2
         exit 1
     fi
-    if /usr/bin/awk '
-        /^[[:space:]]*[[:xdigit:]]+:/ &&
-                ($2 ~ /^loop/ || $2 ~ /^div/ || $2 ~ /^idiv/ ||
-                 $2 == "ud2" || $2 == "int3") { found = 1 }
-        END { exit found ? 0 : 1 }
-    ' "$section"; then
+    scanner_mode=allow-conditional
+    if [ "$terminal_call" = allow-terminal-call ]; then
+        scanner_mode=allow-conditional-terminal-call
+    fi
+    if contains_forbidden_instruction "$section" "$scanner_mode"; then
         echo "FAIL forbidden instruction in fixed-loop symbol $symbol" >&2
         exit 1
     fi
@@ -503,18 +654,27 @@ cmp $0x4c,%rax|je
 cmp $0x4a,%rbp|jb
 cmp $0x4a,%rbp|jb
 cmp $0x4c,%rax|jne
-cmp $0x4c,%rcx|jne'
+cmp $0x4c,%rcx|jne' \
+    'cmp $0x4d,%rax|jne
+cmp $0x4c,%rax|je
+cmp $0x4a,%rbp|jb
+cmp $0x4a,%rbp|jb
+cmp $0x4c,%rax|jne'
 check_fixed_branches safegcd_shift \
     '<crypto_bigint::modular::safegcd::SignedInt<5>>::lincomb_int_reduce_shift::<1>' \
     'cmp $0x40,%eax|jae
 cmp $0x40,%ebp|jae
-test %ebp,%ebp|je'
+test %ebp,%ebp|je' '' allow-terminal-call
 check_fixed_branches safegcd_shift_mod \
     '<crypto_bigint::modular::safegcd::SignedInt<5>>::lincomb_int_reduce_shift_mod::<1>' \
     'cmp $0x40,%edi|jae
 cmp $0x40,%ebp|je
 je TARGET|jae
-mov %ebp,0xc(%rsp)|je'
+mov %ebp,0xc(%rsp)|je' \
+    'cmp $0x40,%r11d|jae
+cmp $0x40,%ebp|je
+je TARGET|jae
+test %ebp,%ebp|je' allow-terminal-call
 
 # Exact reviewed call closure for every non-leaf secret-path symbol above.
 # The manifests deliberately include unwind/panic-only edges: a compiler bump
@@ -531,7 +691,15 @@ core::ptr::drop_glue::<zeroize::Zeroizing<[u8; 38]>>
 core::ptr::drop_glue::<zeroize::Zeroizing<[u8; 38]>>
 core::ptr::drop_glue::<zeroize::Zeroizing<[u8; 38]>>
 _Unwind_Resume@plt
-core::panicking::panic_in_cleanup'
+core::panicking::panic_in_cleanup' \
+    'ed301_eddsa::scalar::uint_from_le38
+ed301_eddsa::scalar::uint_from_le38
+crypto_bigint::modular::mul::mul_montgomery_form::<5>
+crypto_bigint::modular::mul::mul_montgomery_form::<5>
+crypto_bigint::modular::mul::mul_montgomery_form::<5>
+<crypto_bigint::modular::const_monty_form::ConstMontyForm<ed301_eddsa::scalar::ScalarModulus, 5>>::retrieve
+core::ptr::drop_glue::<zeroize::Zeroizing<[u8; 38]>>
+core::ptr::drop_glue::<zeroize::Zeroizing<[u8; 38]>>'
 check_exact_call_graph basepoint_select "$EVIDENCE/basepoint_select.asm" \
     '<ed301_eddsa::edwards::AffineNielsPoint>::conditional_select
 memcpy
@@ -570,7 +738,18 @@ memcpy
 ed301_eddsa::edwards::select_basepoint
 <ed301_eddsa::edwards::EdwardsPoint>::add_affine
 memcpy
-_Unwind_Resume@plt'
+_Unwind_Resume@plt' \
+    'memcpy
+ed301_eddsa::edwards::select_basepoint
+<ed301_eddsa::edwards::EdwardsPoint>::add_affine
+memcpy
+<ed301_eddsa::edwards::EdwardsPoint>::double
+<ed301_eddsa::edwards::EdwardsPoint>::double
+<ed301_eddsa::edwards::EdwardsPoint>::double
+<ed301_eddsa::edwards::EdwardsPoint>::double
+ed301_eddsa::edwards::select_basepoint
+<ed301_eddsa::edwards::EdwardsPoint>::add_affine
+memcpy'
 check_exact_call_graph safegcd_shift "$EVIDENCE/safegcd_shift.asm" \
     '<crypto_bigint::modular::safegcd::SignedInt<5>>::lincomb_int::<1>
 core::option::expect_failed
@@ -580,6 +759,65 @@ check_exact_call_graph safegcd_shift_mod "$EVIDENCE/safegcd_shift_mod.asm" \
     '<crypto_bigint::modular::safegcd::SignedInt<5>>::lincomb_int::<1>
 core::option::expect_failed
 core::panicking::panic_bounds_check'
+
+# Keep terminal alignment bytes distinct from executable traps. The positive
+# controls cover both terminal forms used by the reviewed Rust binaries; the
+# negative control proves that an in-body trap still fails.
+PADDING_RET=$EVIDENCE/terminal-padding-after-ret.asm
+PADDING_CALL=$EVIDENCE/terminal-padding-after-call.asm
+PADDING_BAD=$EVIDENCE/in-body-trap-negative-control.asm
+MISSING_HELPER=$EVIDENCE/missing-local-helper-negative-control.asm
+CALL_SUFFIX=$EVIDENCE/call-target-suffix-negative-control.asm
+printf '%s\n' '0 <padding_after_ret>:' '   0: ret' '   1: int3' \
+    '   2: int3' >"$PADDING_RET"
+printf '%s\n' '0 <padding_after_call>:' \
+    '   0: call 0 <core::panicking::panic_bounds_check>' \
+    '   1: int3' >"$PADDING_CALL"
+printf '%s\n' '0 <in_body_trap>:' '   0: int3' '   1: ret' \
+    >"$PADDING_BAD"
+printf '%s\n' '0 <missing_local_helper>:' \
+    '   0: call 0 <ed301_eddsa::field_5x64::multiply_wide>' \
+    '   1: ret' >"$MISSING_HELPER"
+printf '%s\n' '0 <call_target_suffix>:' \
+    '   0: call 0 <ed301_eddsa::field_5x64::multiply_wide_vartime>' \
+    '   1: ret' >"$CALL_SUFFIX"
+if contains_forbidden_instruction "$PADDING_RET" \
+        || contains_forbidden_instruction "$PADDING_CALL" \
+            allow-terminal-call \
+        || contains_forbidden_instruction "$PADDING_CALL" \
+            allow-conditional-terminal-call; then
+    echo 'FAIL terminal-padding positive control' >&2
+    exit 1
+fi
+if ! contains_forbidden_instruction "$PADDING_CALL" >/dev/null; then
+    echo 'FAIL terminal-call padding scope control' >&2
+    exit 1
+fi
+if ! contains_forbidden_instruction "$PADDING_BAD" >/dev/null; then
+    echo 'FAIL in-body trap negative control' >&2
+    exit 1
+fi
+if ! contains_call_target "$MISSING_HELPER" \
+        'field_5x64::multiply_wide'; then
+    echo 'FAIL missing-local-helper negative control' >&2
+    exit 1
+fi
+if ! (check_call_closure "$MISSING_HELPER" \
+        'ed301_eddsa::field_5x64::multiply_wide') >/dev/null 2>&1; then
+    echo 'FAIL exact call-closure positive control' >&2
+    exit 1
+fi
+if contains_call_target "$CALL_SUFFIX" 'field_5x64::multiply_wide'; then
+    echo 'FAIL call-target suffix negative control' >&2
+    exit 1
+fi
+if (check_call_closure "$CALL_SUFFIX" \
+        'ed301_eddsa::field_5x64::multiply_wide') >/dev/null 2>&1; then
+    echo 'FAIL exact call-closure negative control' >&2
+    exit 1
+fi
+printf '%s\n' 'PASS terminal_padding=ret-or-explicit-noreturn-call' \
+    | tee -a "$SUMMARY"
 
 # Prove that the closure checker itself rejects a newly introduced helper
 # edge. Run it in a subshell because the normal failure path intentionally

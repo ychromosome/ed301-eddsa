@@ -89,28 +89,28 @@ static int full_cycle(void)
 {
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     EVP_PKEY *pkey = NULL;
     unsigned char sig[76];
     int ok = 0;
 
     if (libctx == NULL)
         goto done;
-    draft = d00_load(libctx, &deflt);
-    if (draft == NULL)
+    v1 = ed301v1_load(libctx, &deflt);
+    if (v1 == NULL)
         goto done;
-    pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     if (pkey == NULL)
         goto done;
-    if (!d00_digest_sign(libctx, pkey, POSITIVE_CASES[0].message,
+    if (!ed301v1_digest_sign(libctx, pkey, POSITIVE_CASES[0].message,
             POSITIVE_CASES[0].message_len, sig))
         goto done;
     ok = memcmp(sig, POSITIVE_CASES[0].signature, sizeof(sig)) == 0;
 
 done:
     EVP_PKEY_free(pkey);
-    if (draft != NULL)
-        OSSL_PROVIDER_unload(draft);
+    if (v1 != NULL)
+        OSSL_PROVIDER_unload(v1);
     if (deflt != NULL)
         OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
@@ -124,13 +124,13 @@ static int allocation_fail_key_new(OSSL_LIB_CTX *libctx)
     int failed = 0;
 
     if (set_alloc_failpoint("key_new")) {
-        pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+        pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
         failed = pkey == NULL;
     }
     clear_alloc_failpoint();
     EVP_PKEY_free(pkey);
 
-    pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     failed = failed && pkey != NULL;
     EVP_PKEY_free(pkey);
     return failed;
@@ -142,13 +142,13 @@ static int allocation_fail_key_generate(OSSL_LIB_CTX *libctx)
     int failed = 0;
 
     if (set_alloc_failpoint("key_generate")) {
-        pkey = d00_keygen(libctx);
+        pkey = ed301v1_keygen(libctx);
         failed = pkey == NULL;
     }
     clear_alloc_failpoint();
     EVP_PKEY_free(pkey);
 
-    pkey = d00_keygen(libctx);
+    pkey = ed301v1_keygen(libctx);
     failed = failed && pkey != NULL;
     EVP_PKEY_free(pkey);
     return failed;
@@ -160,15 +160,15 @@ static int allocation_fail_key_import(OSSL_LIB_CTX *libctx)
     int failed = 0;
 
     if (set_alloc_failpoint("key_import")) {
-        pkey = d00_key_from_public(libctx, POSITIVE_CASES[0].public_key,
-            D00_PUB_BYTES);
+        pkey = ed301v1_key_from_public(libctx, POSITIVE_CASES[0].public_key,
+            ED301V1_PUB_BYTES);
         failed = pkey == NULL;
     }
     clear_alloc_failpoint();
     EVP_PKEY_free(pkey);
 
-    pkey = d00_key_from_public(libctx, POSITIVE_CASES[0].public_key,
-        D00_PUB_BYTES);
+    pkey = ed301v1_key_from_public(libctx, POSITIVE_CASES[0].public_key,
+        ED301V1_PUB_BYTES);
     failed = failed && pkey != NULL;
     EVP_PKEY_free(pkey);
     return failed;
@@ -176,27 +176,27 @@ static int allocation_fail_key_import(OSSL_LIB_CTX *libctx)
 
 static int allocation_fail_key_set_encoded_public(OSSL_LIB_CTX *libctx)
 {
-    EVP_PKEY *pkey = d00_key_from_public(libctx,
-        POSITIVE_CASES[0].public_key, D00_PUB_BYTES);
+    EVP_PKEY *pkey = ed301v1_key_from_public(libctx,
+        POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES);
     int failed = 0;
 
     if (pkey == NULL)
         return 0;
     if (set_alloc_failpoint("key_set_encoded_public")) {
         failed = EVP_PKEY_set1_encoded_public_key(pkey,
-            POSITIVE_CASES[0].public_key, D00_PUB_BYTES) != 1;
+            POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES) != 1;
     }
     clear_alloc_failpoint();
     failed = failed
         && EVP_PKEY_set1_encoded_public_key(pkey,
-            POSITIVE_CASES[0].public_key, D00_PUB_BYTES) == 1;
+            POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES) == 1;
     EVP_PKEY_free(pkey);
     return failed;
 }
 
 static int allocation_fail_key_duplicate(OSSL_LIB_CTX *libctx)
 {
-    EVP_PKEY *pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     EVP_PKEY *copy = NULL;
     int failed = 0;
 
@@ -219,9 +219,9 @@ static int allocation_fail_key_duplicate(OSSL_LIB_CTX *libctx)
 
 static int allocation_fail_signature_new(OSSL_LIB_CTX *libctx)
 {
-    EVP_PKEY *pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     EVP_PKEY_CTX *pctx = NULL;
-    unsigned char signature[D00_SIG_BYTES];
+    unsigned char signature[ED301V1_SIG_BYTES];
     size_t signature_length = sizeof(signature);
     int failed = 0;
 
@@ -230,23 +230,23 @@ static int allocation_fail_signature_new(OSSL_LIB_CTX *libctx)
     if (set_alloc_failpoint("signature_new")) {
         ERR_clear_error();
         pctx = EVP_PKEY_CTX_new_from_pkey(
-            libctx, pkey, D00_FAILPOINT_PROP);
+            libctx, pkey, ED301V1_FAILPOINT_PROP);
         failed = pctx == NULL
-            || !d00_sign_message_init(libctx, pctx, NULL);
+            || !ed301v1_sign_message_init(libctx, pctx, NULL);
         failed = failed && allocation_failure_is_reported();
     }
     clear_alloc_failpoint();
     EVP_PKEY_CTX_free(pctx);
 
-    pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_FAILPOINT_PROP);
+    pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_FAILPOINT_PROP);
     failed = failed
         && pctx != NULL
-        && d00_sign_message_init(libctx, pctx, NULL)
+        && ed301v1_sign_message_init(libctx, pctx, NULL)
         && EVP_PKEY_sign(pctx, signature, &signature_length,
             POSITIVE_CASES[0].message, POSITIVE_CASES[0].message_len) == 1
-        && signature_length == D00_SIG_BYTES
+        && signature_length == ED301V1_SIG_BYTES
         && memcmp(signature, POSITIVE_CASES[0].signature,
-            D00_SIG_BYTES) == 0;
+            ED301V1_SIG_BYTES) == 0;
     EVP_PKEY_CTX_free(pctx);
     EVP_PKEY_free(pkey);
     return failed;
@@ -254,10 +254,10 @@ static int allocation_fail_signature_new(OSSL_LIB_CTX *libctx)
 
 static int allocation_fail_signature_duplicate(OSSL_LIB_CTX *libctx)
 {
-    EVP_PKEY *pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     EVP_MD_CTX *mctx = NULL;
     EVP_MD_CTX *copy = NULL;
-    unsigned char signature[D00_SIG_BYTES];
+    unsigned char signature[ED301V1_SIG_BYTES];
     size_t signature_length = sizeof(signature);
     int failed = 0;
 
@@ -266,7 +266,7 @@ static int allocation_fail_signature_duplicate(OSSL_LIB_CTX *libctx)
     mctx = EVP_MD_CTX_new();
     if (mctx == NULL
             || EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                D00_FAILPOINT_PROP, pkey, NULL) != 1)
+                ED301V1_FAILPOINT_PROP, pkey, NULL) != 1)
         goto done;
 
     if (set_alloc_failpoint("signature_duplicate")) {
@@ -283,9 +283,9 @@ static int allocation_fail_signature_duplicate(OSSL_LIB_CTX *libctx)
         && EVP_MD_CTX_copy_ex(copy, mctx) == 1
         && EVP_DigestSign(copy, signature, &signature_length,
             POSITIVE_CASES[0].message, POSITIVE_CASES[0].message_len) == 1
-        && signature_length == D00_SIG_BYTES
+        && signature_length == ED301V1_SIG_BYTES
         && memcmp(signature, POSITIVE_CASES[0].signature,
-            D00_SIG_BYTES) == 0;
+            ED301V1_SIG_BYTES) == 0;
 
 done:
     clear_alloc_failpoint();
@@ -298,9 +298,9 @@ done:
 int main(void)
 {
     const int rust_alloc_only =
-        getenv("ED301D00_RUST_ALLOC_ONLY") != NULL;
+        getenv("ED301V1_RUST_ALLOC_ONLY") != NULL;
 
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     if (!rust_alloc_only
             && CRYPTO_set_mem_functions(counting_malloc, counting_realloc,
                 counting_free) != 1) {
@@ -309,7 +309,7 @@ int main(void)
     }
 
     /* Baseline cycle without injected failures. */
-    D00_CHECK(full_cycle(), "baseline cycle under the counting allocator");
+    ED301V1_CHECK(full_cycle(), "baseline cycle under the counting allocator");
 
     /*
      * Allocation-failure sweep: fail the k-th OpenSSL allocation for a
@@ -331,11 +331,11 @@ int main(void)
                 clean_failures++;
             allocation_countdown = 0;
         }
-        D00_CHECK(clean_failures > 0,
+        ED301V1_CHECK(clean_failures > 0,
             "allocation-failure sweep injected failures "
             "(%lu attempts, %lu clean failures, %lu survivals)",
             injected, clean_failures, survivals);
-        D00_CHECK(full_cycle(),
+        ED301V1_CHECK(full_cycle(),
             "full cycle recovers after the allocation sweep");
     }
 
@@ -353,7 +353,7 @@ int main(void)
         size_t index;
         OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
         OSSL_PROVIDER *deflt = NULL;
-        OSSL_PROVIDER *draft;
+        OSSL_PROVIDER *v1;
         int tls_capabilities = 0;
 
         /*
@@ -361,31 +361,31 @@ int main(void)
          * injected-panic lane runs against the separately named
          * test-only failpoint artifact.
          */
-        draft = d00_load_named(libctx, &deflt, D00_FAILPOINT_PROVIDER);
-        d00_property = D00_FAILPOINT_PROP;
-        D00_CHECK(draft != NULL, "failpoint artifact for panic tests");
+        v1 = ed301v1_load_named(libctx, &deflt, ED301V1_FAILPOINT_PROVIDER);
+        ed301v1_property = ED301V1_FAILPOINT_PROP;
+        ED301V1_CHECK(v1 != NULL, "failpoint artifact for panic tests");
 
         /* The separately named failpoint artifact has no TLS capability. */
-        D00_CHECK(draft != NULL
-                && OSSL_PROVIDER_get_capabilities(draft, "TLS-SIGALG",
+        ED301V1_CHECK(v1 != NULL
+                && OSSL_PROVIDER_get_capabilities(v1, "TLS-SIGALG",
                     capability_count, &tls_capabilities) == 1
                 && tls_capabilities == 0,
             "failpoint artifact does not advertise TLS-SIGALG");
 
         /* R1A: every Rust allocation site is reached through public EVP. */
-        D00_CHECK(allocation_fail_key_new(libctx),
+        ED301V1_CHECK(allocation_fail_key_new(libctx),
             "key_new allocation failpoint returns null and recovers");
-        D00_CHECK(allocation_fail_key_generate(libctx),
+        ED301V1_CHECK(allocation_fail_key_generate(libctx),
             "key_generate allocation failpoint returns null and recovers");
-        D00_CHECK(allocation_fail_key_import(libctx),
+        ED301V1_CHECK(allocation_fail_key_import(libctx),
             "key_import shared-state allocation fails closed and recovers");
-        D00_CHECK(allocation_fail_key_set_encoded_public(libctx),
+        ED301V1_CHECK(allocation_fail_key_set_encoded_public(libctx),
             "encoded-public shared-state allocation fails closed and recovers");
-        D00_CHECK(allocation_fail_key_duplicate(libctx),
+        ED301V1_CHECK(allocation_fail_key_duplicate(libctx),
             "key_duplicate allocation failpoint returns null and recovers");
-        D00_CHECK(allocation_fail_signature_new(libctx),
+        ED301V1_CHECK(allocation_fail_signature_new(libctx),
             "signature_new allocation failpoint fails closed and recovers");
-        D00_CHECK(allocation_fail_signature_duplicate(libctx),
+        ED301V1_CHECK(allocation_fail_signature_duplicate(libctx),
             "signature_duplicate allocation failpoint fails closed and recovers");
 
         /*
@@ -397,7 +397,7 @@ int main(void)
          * backtrace machinery, not a provider leak.  The panic fail-closed
          * property is exercised in full by the ordinary (non-Valgrind)
          * provider_hardening gate and the ASan lane; under the
-         * ED301D00_RUST_ALLOC_ONLY Valgrind lane only the panic-free
+         * ED301V1_RUST_ALLOC_ONLY Valgrind lane only the panic-free
          * allocation-failpoint paths above are exercised, so the leak-check
          * stays meaningful.
          */
@@ -409,13 +409,13 @@ int main(void)
             setenv("ED301_EDDSA_V1_PANIC_FAILPOINT",
                 cases[index].failpoint, 1);
             if (strcmp(cases[index].failpoint, "key_generate") == 0) {
-                EVP_PKEY *pkey = d00_keygen(libctx);
+                EVP_PKEY *pkey = ed301v1_keygen(libctx);
 
                 failed_closed = pkey == NULL;
                 EVP_PKEY_free(pkey);
             } else if (strcmp(cases[index].failpoint, "key_import")
                     == 0) {
-                EVP_PKEY *pkey = d00_key_from_seed(
+                EVP_PKEY *pkey = ed301v1_key_from_seed(
                     libctx, POSITIVE_CASES[0].seed);
 
                 failed_closed = pkey == NULL;
@@ -426,12 +426,12 @@ int main(void)
                 unsigned char sig[76];
 
                 unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
-                pkey = d00_key_from_seed(libctx,
+                pkey = ed301v1_key_from_seed(libctx,
                     POSITIVE_CASES[0].seed);
                 setenv("ED301_EDDSA_V1_PANIC_FAILPOINT",
                     cases[index].failpoint, 1);
                 failed_closed = pkey != NULL
-                    && !d00_digest_sign(libctx, pkey,
+                    && !ed301v1_digest_sign(libctx, pkey,
                         POSITIVE_CASES[0].message,
                         POSITIVE_CASES[0].message_len, sig);
                 EVP_PKEY_free(pkey);
@@ -440,35 +440,35 @@ int main(void)
                 int verify_result;
 
                 unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
-                pkey = d00_key_from_seed(libctx,
+                pkey = ed301v1_key_from_seed(libctx,
                     POSITIVE_CASES[0].seed);
                 setenv("ED301_EDDSA_V1_PANIC_FAILPOINT",
                     cases[index].failpoint, 1);
                 ERR_clear_error();
                 verify_result = pkey == NULL ? 0
-                    : d00_digest_verify_result(libctx, pkey,
+                    : ed301v1_digest_verify_result(libctx, pkey,
                         POSITIVE_CASES[0].message,
                         POSITIVE_CASES[0].message_len,
-                        POSITIVE_CASES[0].signature, D00_SIG_BYTES);
+                        POSITIVE_CASES[0].signature, ED301V1_SIG_BYTES);
                 failed_closed = pkey != NULL && verify_result < 0
                     && ERR_peek_error() != 0;
                 EVP_PKEY_free(pkey);
             }
             unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
             ERR_clear_error();
-            D00_CHECK(failed_closed,
+            ED301V1_CHECK(failed_closed,
                 "injected panic in %s fails closed without aborting",
                 cases[index].description);
         }
 
         /* The same context still works after every injected panic. */
         if (!rust_alloc_only) {
-            EVP_PKEY *pkey = d00_key_from_seed(
+            EVP_PKEY *pkey = ed301v1_key_from_seed(
                 libctx, POSITIVE_CASES[0].seed);
             unsigned char sig[76];
 
-            D00_CHECK(pkey != NULL
-                    && d00_digest_sign(libctx, pkey,
+            ED301V1_CHECK(pkey != NULL
+                    && ed301v1_digest_sign(libctx, pkey,
                         POSITIVE_CASES[0].message,
                         POSITIVE_CASES[0].message_len, sig)
                     && memcmp(sig, POSITIVE_CASES[0].signature,
@@ -477,10 +477,10 @@ int main(void)
             EVP_PKEY_free(pkey);
         }
 
-        OSSL_PROVIDER_unload(draft);
+        OSSL_PROVIDER_unload(v1);
         OSSL_PROVIDER_unload(deflt);
         OSSL_LIB_CTX_free(libctx);
-        d00_property = D00_PROP;
+        ed301v1_property = ED301V1_PROP;
     }
 
     /*
@@ -490,7 +490,7 @@ int main(void)
     {
         OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
         OSSL_PROVIDER *deflt = NULL;
-        OSSL_PROVIDER *draft = d00_load(libctx, &deflt);
+        OSSL_PROVIDER *v1 = ed301v1_load(libctx, &deflt);
         EVP_PKEY *pkey;
         unsigned char sig[76];
 
@@ -498,9 +498,9 @@ int main(void)
             1);
         setenv("ED301_EDDSA_V1_ALLOC_FAILPOINT", "signature_new",
             1);
-        pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
-        D00_CHECK(draft != NULL && pkey != NULL
-                && d00_digest_sign(libctx, pkey,
+        pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+        ED301V1_CHECK(v1 != NULL && pkey != NULL
+                && ed301v1_digest_sign(libctx, pkey,
                     POSITIVE_CASES[0].message,
                     POSITIVE_CASES[0].message_len, sig)
                 && memcmp(sig, POSITIVE_CASES[0].signature,
@@ -510,7 +510,7 @@ int main(void)
         unsetenv("ED301_EDDSA_V1_PANIC_FAILPOINT");
         clear_alloc_failpoint();
         EVP_PKEY_free(pkey);
-        OSSL_PROVIDER_unload(draft);
+        OSSL_PROVIDER_unload(v1);
         OSSL_PROVIDER_unload(deflt);
         OSSL_LIB_CTX_free(libctx);
     }
@@ -519,10 +519,10 @@ int main(void)
     {
         OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
         OSSL_PROVIDER *deflt = NULL;
-        OSSL_PROVIDER *draft = d00_load(libctx, &deflt);
+        OSSL_PROVIDER *v1 = ed301v1_load(libctx, &deflt);
         OSSL_PROVIDER *second_handle =
-            OSSL_PROVIDER_load(libctx, D00_PROVIDER);
-        EVP_PKEY *pkey = d00_key_from_seed(libctx,
+            OSSL_PROVIDER_load(libctx, ED301V1_PROVIDER);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx,
             POSITIVE_CASES[1].seed);
         EVP_PKEY *copy = pkey == NULL ? NULL : EVP_PKEY_dup(pkey);
         EVP_MD_CTX *mctx = EVP_MD_CTX_new();
@@ -531,15 +531,15 @@ int main(void)
         unsigned char second_sig[76];
         size_t sig_len;
 
-        D00_CHECK(draft != NULL && second_handle != NULL
+        ED301V1_CHECK(v1 != NULL && second_handle != NULL
                 && pkey != NULL && copy != NULL,
             "objects for ordering tests");
 
         /* Duplicated one-shot context signs identically. */
         sig_len = sizeof(first_sig);
-        D00_CHECK(mctx != NULL && mctx_copy != NULL && pkey != NULL
+        ED301V1_CHECK(mctx != NULL && mctx_copy != NULL && pkey != NULL
                 && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                    D00_PROP, pkey, NULL) == 1
+                    ED301V1_PROP, pkey, NULL) == 1
                 && EVP_MD_CTX_copy_ex(mctx_copy, mctx) == 1
                 && EVP_DigestSign(mctx, first_sig, &sig_len,
                     POSITIVE_CASES[1].message,
@@ -558,16 +558,16 @@ int main(void)
         /* Unload one provider handle; the duplicate key still signs. */
         OSSL_PROVIDER_unload(second_handle);
         sig_len = sizeof(first_sig);
-        D00_CHECK(copy != NULL
-                && d00_digest_sign(libctx, copy,
+        ED301V1_CHECK(copy != NULL
+                && ed301v1_digest_sign(libctx, copy,
                     POSITIVE_CASES[1].message,
                     POSITIVE_CASES[1].message_len, first_sig),
             "duplicate key signs after one handle is unloaded");
 
         /* Free the original before the duplicate. */
         EVP_PKEY_free(pkey);
-        D00_CHECK(copy != NULL
-                && d00_digest_sign(libctx, copy,
+        ED301V1_CHECK(copy != NULL
+                && ed301v1_digest_sign(libctx, copy,
                     POSITIVE_CASES[1].message,
                     POSITIVE_CASES[1].message_len, second_sig)
                 && memcmp(first_sig, second_sig,
@@ -575,7 +575,7 @@ int main(void)
             "duplicate key outlives the original");
         EVP_PKEY_free(copy);
 
-        OSSL_PROVIDER_unload(draft);
+        OSSL_PROVIDER_unload(v1);
         OSSL_PROVIDER_unload(deflt);
         OSSL_LIB_CTX_free(libctx);
     }
@@ -584,5 +584,5 @@ int main(void)
         printf("OpenSSL allocation sweep: NOT RUN (Rust allocation gate)\n");
     else
         printf("openssl allocations observed: %lu\n", allocation_total);
-    return d00_summary("provider_hardening");
+    return ed301v1_summary("provider_hardening");
 }

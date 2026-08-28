@@ -14,20 +14,20 @@
 #include "harness_common.h"
 #include "vectors.h"
 
-static const unsigned char D00_EXPECTED_ALGORITHM_ID[15] = {
+static const unsigned char ED301V1_EXPECTED_ALGORITHM_ID[15] = {
     0x30, 0x0d, 0x06, 0x0b, 0x2b, 0x06, 0x01, 0x04,
     0x01, 0x84, 0x85, 0x6a, 0x82, 0x2d, 0x04
 };
 
 /*
- * FBL-08 mutation control: with ED301D00_POLICY_MUTATE=1 every expected
+ * FBL-08 mutation control: with ED301V1_POLICY_MUTATE=1 every expected
  * parser/policy result of the point, scalar, verification and commitment
  * lanes is inverted and this harness MUST fail; the matrix runner asserts
  * that failure.
  */
-static int d00_policy_invert(void)
+static int ed301v1_policy_invert(void)
 {
-    const char *value = getenv("ED301D00_POLICY_MUTATE");
+    const char *value = getenv("ED301V1_POLICY_MUTATE");
 
     return value != NULL && strcmp(value, "1") == 0;
 }
@@ -36,12 +36,12 @@ static int d00_policy_invert(void)
  * A parameter array that must be refused at sign init; used for every
  * malformed or non-advertised tls-version shape on both lanes.
  */
-static int d00_message_sign_init_rejects(OSSL_LIB_CTX *libctx, EVP_PKEY *pkey,
+static int ed301v1_message_sign_init_rejects(OSSL_LIB_CTX *libctx, EVP_PKEY *pkey,
     const OSSL_PARAM *params)
 {
-    EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+    EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
     int rejected = pctx != NULL
-        && !d00_sign_message_init(libctx, pctx, params);
+        && !ed301v1_sign_message_init(libctx, pctx, params);
 
     ERR_clear_error();
     EVP_PKEY_CTX_free(pctx);
@@ -49,7 +49,7 @@ static int d00_message_sign_init_rejects(OSSL_LIB_CTX *libctx, EVP_PKEY *pkey,
 }
 
 /* OpenSSL's built-in Ed25519 provider is the lifecycle control. */
-static int d00_ed25519_null_key_reinit_control(OSSL_LIB_CTX *libctx)
+static int ed301v1_ed25519_null_key_reinit_control(OSSL_LIB_CTX *libctx)
 {
     static const unsigned char message[] = { 0x00, 0x7f, 0x80, 0xff };
     EVP_PKEY *pkey = EVP_PKEY_Q_keygen(libctx, NULL, "ED25519");
@@ -88,17 +88,17 @@ static int d00_ed25519_null_key_reinit_control(OSSL_LIB_CTX *libctx)
 
 int main(void)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = d00_load(libctx, &deflt);
+    OSSL_PROVIDER *v1 = ed301v1_load(libctx, &deflt);
     size_t index;
-    const int invert = d00_policy_invert();
+    const int invert = ed301v1_policy_invert();
 
-    D00_CHECK(draft != NULL, "provider load");
+    ED301V1_CHECK(v1 != NULL, "provider load");
 
     /*
-     * S1/S8 -- Draft pure-EdDSA contract and OpenSSL
+     * S1/S8 -- Ed301-v1 pure-EdDSA contract and OpenSSL
      * test/evp_extra_test.c Ed25519/Ed448 pattern: one-shot whole-message and
      * DigestSign/DigestVerify paths, including the zero-byte KAT, are positive.
      * S2 -- Provider contract: the size query is exactly 76 bytes and an
@@ -106,33 +106,33 @@ int main(void)
      */
     for (index = 0; index < 4; index++) {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[index];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
         EVP_PKEY_CTX *pctx = NULL;
         unsigned char sig[76] = { 0 };
         unsigned char sig_again[76] = { 0 };
         size_t sig_len = 0;
 
-        D00_CHECK(pkey != NULL, "%s: key", tc->id);
+        ED301V1_CHECK(pkey != NULL, "%s: key", tc->id);
         if (pkey == NULL)
             continue;
 
         /* The pre-digested TBS API must not create an accidental Ed301ph. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL && EVP_PKEY_sign_init(pctx) != 1,
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL && EVP_PKEY_sign_init(pctx) != 1,
             "%s: pre-digested sign init rejected", tc->id);
         ERR_clear_error();
         EVP_PKEY_CTX_free(pctx);
 
         /* Complete-message EVP path with exact size query. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL
-                && d00_sign_message_init(libctx, pctx, NULL),
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL
+                && ed301v1_sign_message_init(libctx, pctx, NULL),
             "%s: whole-message sign init", tc->id);
         sig_len = 0;
-        D00_CHECK(pctx != NULL
+        ED301V1_CHECK(pctx != NULL
                 && EVP_PKEY_sign(pctx, NULL, &sig_len, tc->message,
                     tc->message_len) == 1
-                && sig_len == D00_SIG_BYTES,
+                && sig_len == ED301V1_SIG_BYTES,
             "%s: size query returns exactly 76", tc->id);
 
         /* A 75-byte output buffer fails without a partial signature. */
@@ -143,7 +143,7 @@ int main(void)
             memset(small, 0x5a, sizeof(small));
             memset(canary, 0x5a, sizeof(canary));
             sig_len = sizeof(small);
-            D00_CHECK(pctx != NULL
+            ED301V1_CHECK(pctx != NULL
                     && EVP_PKEY_sign(pctx, small, &sig_len, tc->message,
                         tc->message_len) != 1
                     && memcmp(small, canary, sizeof(small)) == 0,
@@ -153,28 +153,28 @@ int main(void)
         }
 
         sig_len = sizeof(sig);
-        D00_CHECK(pctx != NULL
+        ED301V1_CHECK(pctx != NULL
                 && EVP_PKEY_sign(pctx, sig, &sig_len, tc->message,
                     tc->message_len) == 1
-                && sig_len == D00_SIG_BYTES
-                && memcmp(sig, tc->signature, D00_SIG_BYTES) == 0,
+                && sig_len == ED301V1_SIG_BYTES
+                && memcmp(sig, tc->signature, ED301V1_SIG_BYTES) == 0,
             "%s: whole-message EVP_PKEY_sign matches the vector byte-for-byte",
             tc->id);
 
         /* Determinism. */
         sig_len = sizeof(sig_again);
-        D00_CHECK(pctx != NULL
+        ED301V1_CHECK(pctx != NULL
                 && EVP_PKEY_sign(pctx, sig_again, &sig_len, tc->message,
                     tc->message_len) == 1
-                && memcmp(sig, sig_again, D00_SIG_BYTES) == 0,
+                && memcmp(sig, sig_again, ED301V1_SIG_BYTES) == 0,
             "%s: deterministic", tc->id);
         EVP_PKEY_CTX_free(pctx);
 
         /* One-shot DigestSign agrees exactly. */
         memset(sig_again, 0, sizeof(sig_again));
-        D00_CHECK(d00_digest_sign(libctx, pkey, tc->message,
+        ED301V1_CHECK(ed301v1_digest_sign(libctx, pkey, tc->message,
                 tc->message_len, sig_again)
-                && memcmp(sig_again, tc->signature, D00_SIG_BYTES) == 0,
+                && memcmp(sig_again, tc->signature, ED301V1_SIG_BYTES) == 0,
             "%s: one-shot DigestSign matches the vector", tc->id);
 
         /*
@@ -184,24 +184,24 @@ int main(void)
         {
             EVP_MD_CTX *size_context = EVP_MD_CTX_new();
             EVP_MD_CTX *small_context = EVP_MD_CTX_new();
-            unsigned char small[D00_SIG_BYTES - 1];
-            unsigned char canary[D00_SIG_BYTES - 1];
+            unsigned char small[ED301V1_SIG_BYTES - 1];
+            unsigned char canary[ED301V1_SIG_BYTES - 1];
             size_t digest_sig_len = 0;
 
-            D00_CHECK(size_context != NULL
+            ED301V1_CHECK(size_context != NULL
                     && EVP_DigestSignInit_ex(size_context, NULL, NULL,
-                        libctx, d00_property, pkey, NULL) == 1
+                        libctx, ed301v1_property, pkey, NULL) == 1
                     && EVP_DigestSign(size_context, NULL, &digest_sig_len,
                         tc->message, tc->message_len) == 1
-                    && digest_sig_len == D00_SIG_BYTES,
+                    && digest_sig_len == ED301V1_SIG_BYTES,
                 "%s: DigestSign size query returns exactly 76", tc->id);
 
             memset(small, 0x5a, sizeof(small));
             memset(canary, 0x5a, sizeof(canary));
             digest_sig_len = sizeof(small);
-            D00_CHECK(small_context != NULL
+            ED301V1_CHECK(small_context != NULL
                     && EVP_DigestSignInit_ex(small_context, NULL, NULL,
-                        libctx, d00_property, pkey, NULL) == 1
+                        libctx, ed301v1_property, pkey, NULL) == 1
                     && EVP_DigestSign(small_context, small,
                         &digest_sig_len, tc->message, tc->message_len) != 1
                     && memcmp(small, canary, sizeof(small)) == 0,
@@ -213,21 +213,21 @@ int main(void)
         }
 
         /* The TBS verify API is likewise unavailable; message APIs accept. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL && EVP_PKEY_verify_init(pctx) != 1,
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL && EVP_PKEY_verify_init(pctx) != 1,
             "%s: pre-digested verify init rejected", tc->id);
         ERR_clear_error();
         EVP_PKEY_CTX_free(pctx);
 
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL
-                && d00_verify_message_init(libctx, pctx, NULL)
-                && EVP_PKEY_verify(pctx, tc->signature, D00_SIG_BYTES,
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL
+                && ed301v1_verify_message_init(libctx, pctx, NULL)
+                && EVP_PKEY_verify(pctx, tc->signature, ED301V1_SIG_BYTES,
                     tc->message, tc->message_len) == 1,
             "%s: whole-message EVP_PKEY_verify accepts", tc->id);
         EVP_PKEY_CTX_free(pctx);
-        D00_CHECK(d00_digest_verify(libctx, pkey, tc->message,
-                tc->message_len, tc->signature, D00_SIG_BYTES),
+        ED301V1_CHECK(ed301v1_digest_verify(libctx, pkey, tc->message,
+                tc->message_len, tc->signature, ED301V1_SIG_BYTES),
             "%s: DigestVerify accepts", tc->id);
 
         EVP_PKEY_free(pkey);
@@ -239,15 +239,15 @@ int main(void)
             index < sizeof(CONTEXT_CASES) / sizeof(CONTEXT_CASES[0]);
             index++) {
         const CONTEXT_CASE *tc = &CONTEXT_CASES[index];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
         EVP_PKEY_CTX *sign_ctx = NULL;
         EVP_PKEY_CTX *verify_ctx = NULL;
         EVP_PKEY_CTX *duplicate = NULL;
         EVP_MD_CTX *digest_ctx = NULL;
         OSSL_PARAM params[2];
         OSSL_PARAM query[2];
-        unsigned char signature[D00_SIG_BYTES] = { 0 };
-        unsigned char duplicate_signature[D00_SIG_BYTES] = { 0 };
+        unsigned char signature[ED301V1_SIG_BYTES] = { 0 };
+        unsigned char duplicate_signature[ED301V1_SIG_BYTES] = { 0 };
         unsigned char queried_context[255] = { 0 };
         unsigned char wrong_context[255] = { 0 };
         size_t signature_length = sizeof(signature);
@@ -262,68 +262,68 @@ int main(void)
             queried_context, sizeof(queried_context));
         query[1] = OSSL_PARAM_construct_end();
 
-        sign_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(sign_ctx != NULL
-                && d00_sign_message_init(libctx, sign_ctx, params)
+        sign_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(sign_ctx != NULL
+                && ed301v1_sign_message_init(libctx, sign_ctx, params)
                 && EVP_PKEY_CTX_get_params(sign_ctx, query) == 1
                 && query[0].return_size == tc->context_len
                 && memcmp(queried_context, tc->context,
                     tc->context_len) == 0
                 && EVP_PKEY_sign(sign_ctx, signature, &signature_length,
                     tc->message, tc->message_len) == 1
-                && signature_length == D00_SIG_BYTES
-                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+                && signature_length == ED301V1_SIG_BYTES
+                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0,
             "%s: native-context sign and get_params match vector", tc->id);
 
         duplicate = sign_ctx == NULL ? NULL : EVP_PKEY_CTX_dup(sign_ctx);
-        D00_CHECK(duplicate != NULL
+        ED301V1_CHECK(duplicate != NULL
                 && EVP_PKEY_sign(duplicate, duplicate_signature,
                     &duplicate_length, tc->message, tc->message_len) == 1
-                && duplicate_length == D00_SIG_BYTES
+                && duplicate_length == ED301V1_SIG_BYTES
                 && memcmp(duplicate_signature, tc->signature,
-                    D00_SIG_BYTES) == 0,
+                    ED301V1_SIG_BYTES) == 0,
             "%s: duplicated context preserves native domain", tc->id);
 
         signature_length = sizeof(signature);
-        D00_CHECK(sign_ctx != NULL
-                && d00_sign_message_init(libctx, sign_ctx, params)
+        ED301V1_CHECK(sign_ctx != NULL
+                && ed301v1_sign_message_init(libctx, sign_ctx, params)
                 && EVP_PKEY_sign(sign_ctx, signature, &signature_length,
                     tc->message, tc->message_len) == 1
-                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0,
             "%s: message reinit reapplies native domain", tc->id);
 
         memset(signature, 0, sizeof(signature));
         signature_length = sizeof(signature);
-        D00_CHECK(sign_ctx != NULL
-                && d00_sign_message_init(libctx, sign_ctx, NULL)
+        ED301V1_CHECK(sign_ctx != NULL
+                && ed301v1_sign_message_init(libctx, sign_ctx, NULL)
                 && EVP_PKEY_CTX_get_params(sign_ctx, query) == 1
                 && query[0].return_size == 0
                 && EVP_PKEY_sign(sign_ctx, signature, &signature_length,
                     tc->message, tc->message_len) == 1
-                && signature_length == D00_SIG_BYTES
+                && signature_length == ED301V1_SIG_BYTES
                 && memcmp(signature, tc->empty_context_signature,
-                    D00_SIG_BYTES) == 0,
+                    ED301V1_SIG_BYTES) == 0,
             "%s: message reinit without params restores empty context",
             tc->id);
 
-        verify_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(verify_ctx != NULL
-                && d00_verify_message_init(libctx, verify_ctx, params)
+        verify_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(verify_ctx != NULL
+                && ed301v1_verify_message_init(libctx, verify_ctx, params)
                 && EVP_PKEY_verify(verify_ctx, tc->signature,
-                    D00_SIG_BYTES, tc->message, tc->message_len) == 1,
+                    ED301V1_SIG_BYTES, tc->message, tc->message_len) == 1,
             "%s: matching native context verifies", tc->id);
 
-        D00_CHECK(tc->context_len != 0,
+        ED301V1_CHECK(tc->context_len != 0,
             "%s: context fixture is nonempty", tc->id);
         memcpy(wrong_context, tc->context, tc->context_len);
         wrong_context[0] ^= 1;
         params[0] = OSSL_PARAM_construct_octet_string(
             OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
             wrong_context, tc->context_len);
-        D00_CHECK(verify_ctx != NULL
+        ED301V1_CHECK(verify_ctx != NULL
                 && EVP_PKEY_CTX_set_params(verify_ctx, params) == 1
                 && EVP_PKEY_verify(verify_ctx, tc->signature,
-                    D00_SIG_BYTES, tc->message, tc->message_len) == 0,
+                    ED301V1_SIG_BYTES, tc->message, tc->message_len) == 0,
             "%s: altered native context is a non-match", tc->id);
 
         digest_ctx = EVP_MD_CTX_new();
@@ -331,13 +331,13 @@ int main(void)
             OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
             (void *)tc->context, tc->context_len);
         signature_length = sizeof(signature);
-        D00_CHECK(digest_ctx != NULL
+        ED301V1_CHECK(digest_ctx != NULL
                 && EVP_DigestSignInit_ex(digest_ctx, NULL, NULL, libctx,
-                    D00_PROP, pkey, params) == 1
+                    ED301V1_PROP, pkey, params) == 1
                 && EVP_DigestSign(digest_ctx, signature, &signature_length,
                     tc->message, tc->message_len) == 1
-                && signature_length == D00_SIG_BYTES
-                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+                && signature_length == ED301V1_SIG_BYTES
+                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0,
             "%s: DigestSign native-context vector", tc->id);
 
         EVP_MD_CTX_free(digest_ctx);
@@ -351,12 +351,12 @@ int main(void)
      * previously bound operation so an old domain can never be reused. */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
         EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_from_pkey(
-            libctx, pkey, D00_PROP);
+            libctx, pkey, ED301V1_PROP);
         unsigned char oversized[256] = { 0 };
-        unsigned char output[D00_SIG_BYTES];
-        unsigned char canary[D00_SIG_BYTES];
+        unsigned char output[ED301V1_SIG_BYTES];
+        unsigned char canary[ED301V1_SIG_BYTES];
         char wrong_type[] = "ctx";
         OSSL_PARAM params[3];
         size_t output_length = sizeof(output);
@@ -367,8 +367,8 @@ int main(void)
         params[1] = OSSL_PARAM_construct_end();
         memset(output, 0xa5, sizeof(output));
         memcpy(canary, output, sizeof(canary));
-        D00_CHECK(pctx != NULL
-                && d00_sign_message_init(libctx, pctx, NULL)
+        ED301V1_CHECK(pctx != NULL
+                && ed301v1_sign_message_init(libctx, pctx, NULL)
                 && EVP_PKEY_CTX_set_params(pctx, params) != 1
                 && EVP_PKEY_sign(pctx, output, &output_length,
                     tc->message, tc->message_len) != 1
@@ -379,9 +379,9 @@ int main(void)
 
         params[0] = OSSL_PARAM_construct_utf8_string(
             OSSL_SIGNATURE_PARAM_CONTEXT_STRING, wrong_type, 0);
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL
-                && !d00_sign_message_init(libctx, pctx, params),
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL
+                && !ed301v1_sign_message_init(libctx, pctx, params),
             "context parameter with UTF8 type rejected");
         ERR_clear_error();
         EVP_PKEY_CTX_free(pctx);
@@ -391,9 +391,9 @@ int main(void)
         params[1] = OSSL_PARAM_construct_octet_string(
             OSSL_SIGNATURE_PARAM_CONTEXT_STRING, wrong_type, 1);
         params[2] = OSSL_PARAM_construct_end();
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL
-                && !d00_sign_message_init(libctx, pctx, params),
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL
+                && !ed301v1_sign_message_init(libctx, pctx, params),
             "duplicate context parameters rejected atomically");
         ERR_clear_error();
         EVP_PKEY_CTX_free(pctx);
@@ -401,25 +401,25 @@ int main(void)
     }
 
     /*
-     * S4 -- Draft deterministic-signing contract: five independent one-shot
+     * S4 -- Ed301-v1 deterministic-signing contract: five independent one-shot
      * operations over the same key/message produce the exact KAT bytes.
      */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
-        unsigned char signatures[5][D00_SIG_BYTES];
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
+        unsigned char signatures[5][ED301V1_SIG_BYTES];
         int deterministic = pkey != NULL;
         size_t repetition;
 
         for (repetition = 0; deterministic && repetition < 5; repetition++)
-            deterministic = d00_digest_sign(libctx, pkey,
+            deterministic = ed301v1_digest_sign(libctx, pkey,
                     tc->message, tc->message_len, signatures[repetition])
                 && memcmp(signatures[repetition], tc->signature,
-                    D00_SIG_BYTES) == 0
+                    ED301V1_SIG_BYTES) == 0
                 && (repetition == 0
                     || memcmp(signatures[repetition], signatures[0],
-                        D00_SIG_BYTES) == 0);
-        D00_CHECK(deterministic,
+                        ED301V1_SIG_BYTES) == 0);
+        ED301V1_CHECK(deterministic,
             "five independent signatures are byte-identical to the KAT");
         EVP_PKEY_free(pkey);
     }
@@ -431,48 +431,48 @@ int main(void)
      */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
         EVP_MD_CTX *sign_context = EVP_MD_CTX_new();
         EVP_MD_CTX *verify_context = EVP_MD_CTX_new();
-        unsigned char signature[D00_SIG_BYTES] = { 0 };
+        unsigned char signature[ED301V1_SIG_BYTES] = { 0 };
         size_t signature_length = sizeof(signature);
 
-        D00_CHECK(pkey != NULL && sign_context != NULL
+        ED301V1_CHECK(pkey != NULL && sign_context != NULL
                 && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
-                    D00_PROP, pkey, NULL) == 1
+                    ED301V1_PROP, pkey, NULL) == 1
                 && EVP_DigestSign(sign_context, signature,
                     &signature_length, tc->message, tc->message_len) == 1
-                && signature_length == D00_SIG_BYTES
-                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0
+                && signature_length == ED301V1_SIG_BYTES
+                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0
                 && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
-                    D00_PROP, NULL, NULL) == 1,
+                    ED301V1_PROP, NULL, NULL) == 1,
             "DigestSign NULL-key reinit retains the Ed301 signing key");
 
         memset(signature, 0, sizeof(signature));
         signature_length = sizeof(signature);
-        D00_CHECK(sign_context != NULL
+        ED301V1_CHECK(sign_context != NULL
                 && EVP_DigestSign(sign_context, signature,
                     &signature_length, tc->message, tc->message_len) == 1
-                && signature_length == D00_SIG_BYTES
-                && memcmp(signature, tc->signature, D00_SIG_BYTES) == 0,
+                && signature_length == ED301V1_SIG_BYTES
+                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0,
             "DigestSign succeeds byte-exactly after NULL-key reinit");
 
-        D00_CHECK(pkey != NULL && verify_context != NULL
+        ED301V1_CHECK(pkey != NULL && verify_context != NULL
                 && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
-                    libctx, D00_PROP, pkey, NULL) == 1
+                    libctx, ED301V1_PROP, pkey, NULL) == 1
                 && EVP_DigestVerify(verify_context, tc->signature,
-                    D00_SIG_BYTES, tc->message, tc->message_len) == 1
+                    ED301V1_SIG_BYTES, tc->message, tc->message_len) == 1
                 && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
-                    libctx, D00_PROP, NULL, NULL) == 1
+                    libctx, ED301V1_PROP, NULL, NULL) == 1
                 && EVP_DigestVerify(verify_context, tc->signature,
-                    D00_SIG_BYTES, tc->message, tc->message_len) == 1,
+                    ED301V1_SIG_BYTES, tc->message, tc->message_len) == 1,
             "DigestVerify succeeds after NULL-key reinit");
 
         EVP_MD_CTX_free(verify_context);
         EVP_MD_CTX_free(sign_context);
         EVP_PKEY_free(pkey);
 
-        D00_CHECK(d00_ed25519_null_key_reinit_control(libctx),
+        ED301V1_CHECK(ed301v1_ed25519_null_key_reinit_control(libctx),
             "built-in Ed25519 accepts the same NULL-key reinit lifecycle");
     }
 
@@ -483,61 +483,61 @@ int main(void)
      */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
         unsigned char changed_message[1] = { 0x01 };
-        unsigned char malformed[D00_SIG_BYTES];
-        unsigned char overlong[D00_SIG_BYTES + 1];
+        unsigned char malformed[ED301V1_SIG_BYTES];
+        unsigned char overlong[ED301V1_SIG_BYTES + 1];
         int result;
 
         ERR_clear_error();
         result = pkey == NULL ? -1
-            : d00_digest_verify_result(libctx, pkey,
+            : ed301v1_digest_verify_result(libctx, pkey,
                 changed_message, sizeof(changed_message),
-                tc->signature, D00_SIG_BYTES);
-        D00_CHECK(result == 0,
+                tc->signature, ED301V1_SIG_BYTES);
+        ED301V1_CHECK(result == 0,
             "cryptographic non-match returns exactly zero");
 
         memset(malformed, 0xff, sizeof(malformed));
         ERR_clear_error();
         result = pkey == NULL ? -1
-            : d00_digest_verify_result(libctx, pkey,
+            : ed301v1_digest_verify_result(libctx, pkey,
                 tc->message, tc->message_len,
                 malformed, sizeof(malformed));
-        D00_CHECK(result == 0,
+        ED301V1_CHECK(result == 0,
             "noncanonical signature returns exactly zero");
 
-        /* S3 -- Draft signature encoding is exactly 76 bytes. */
+        /* S3 -- Ed301-v1 signature encoding is exactly 76 bytes. */
         ERR_clear_error();
         result = pkey == NULL ? -1
-            : d00_digest_verify_result(libctx, pkey,
+            : ed301v1_digest_verify_result(libctx, pkey,
                 tc->message, tc->message_len,
-                tc->signature, D00_SIG_BYTES - 1);
-        D00_CHECK(result == 0,
+                tc->signature, ED301V1_SIG_BYTES - 1);
+        ED301V1_CHECK(result == 0,
             "75-byte signature returns exactly zero");
 
-        memcpy(overlong, tc->signature, D00_SIG_BYTES);
-        overlong[D00_SIG_BYTES] = 0;
+        memcpy(overlong, tc->signature, ED301V1_SIG_BYTES);
+        overlong[ED301V1_SIG_BYTES] = 0;
         ERR_clear_error();
         result = pkey == NULL ? -1
-            : d00_digest_verify_result(libctx, pkey,
+            : ed301v1_digest_verify_result(libctx, pkey,
                 tc->message, tc->message_len,
                 overlong, sizeof(overlong));
-        D00_CHECK(result == 0,
+        ED301V1_CHECK(result == 0,
             "77-byte signature returns exactly zero");
 
         ERR_clear_error();
         result = pkey == NULL ? 0
-            : d00_digest_verify_result(libctx, pkey,
+            : ed301v1_digest_verify_result(libctx, pkey,
                 tc->message, tc->message_len,
-                NULL, D00_SIG_BYTES);
-        D00_CHECK(result < 0 && ERR_peek_error() != 0,
+                NULL, ED301V1_SIG_BYTES);
+        ED301V1_CHECK(result < 0 && ERR_peek_error() != 0,
             "NULL signature buffer returns negative with provider error");
         ERR_clear_error();
 
         result = pkey == NULL ? 0
-            : d00_digest_verify_result(libctx, pkey,
-                NULL, 1, tc->signature, D00_SIG_BYTES);
-        D00_CHECK(result < 0 && ERR_peek_error() != 0,
+            : ed301v1_digest_verify_result(libctx, pkey,
+                NULL, 1, tc->signature, ED301V1_SIG_BYTES);
+        ED301V1_CHECK(result < 0 && ERR_peek_error() != 0,
             "NULL message buffer returns negative with provider error");
         ERR_clear_error();
         EVP_PKEY_free(pkey);
@@ -547,46 +547,46 @@ int main(void)
      * forms a slice, using a one-byte pointer as the bounded storage. */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
         EVP_PKEY_CTX *pctx = NULL;
-        unsigned char output[D00_SIG_BYTES];
-        unsigned char canary[D00_SIG_BYTES];
+        unsigned char output[ED301V1_SIG_BYTES];
+        unsigned char canary[ED301V1_SIG_BYTES];
         unsigned char one_byte = 0x5a;
         const size_t oversized = (size_t)INTPTR_MAX + 1;
         size_t sig_len = sizeof(output);
         int sign_failed = 0;
         int verify_failed = 0;
 
-        D00_CHECK(pkey != NULL, "oversized-message: key");
+        ED301V1_CHECK(pkey != NULL, "oversized-message: key");
         memset(output, 0xa5, sizeof(output));
         memcpy(canary, output, sizeof(canary));
 
         pctx = pkey == NULL ? NULL
-            : EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        if (pctx != NULL && d00_sign_message_init(libctx, pctx, NULL))
+            : EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        if (pctx != NULL && ed301v1_sign_message_init(libctx, pctx, NULL))
             sign_failed = EVP_PKEY_sign(pctx, output, &sig_len,
                 &one_byte, oversized) != 1
                 && memcmp(output, canary, sizeof(output)) == 0;
-        D00_CHECK(sign_failed,
+        ED301V1_CHECK(sign_failed,
             "oversized-message: EVP_PKEY_sign fails closed above isize::MAX");
         EVP_PKEY_CTX_free(pctx);
 
         pctx = pkey == NULL ? NULL
-            : EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        if (pctx != NULL && d00_verify_message_init(libctx, pctx, NULL))
+            : EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        if (pctx != NULL && ed301v1_verify_message_init(libctx, pctx, NULL))
             verify_failed = EVP_PKEY_verify(pctx, tc->signature,
-                D00_SIG_BYTES, &one_byte, oversized) < 0;
-        D00_CHECK(verify_failed,
+                ED301V1_SIG_BYTES, &one_byte, oversized) < 0;
+        ED301V1_CHECK(verify_failed,
             "oversized-message: EVP_PKEY_verify returns an operational error");
         EVP_PKEY_CTX_free(pctx);
 
         memset(output, 0, sizeof(output));
-        D00_CHECK(pkey != NULL
-                && d00_digest_sign(libctx, pkey, tc->message,
+        ED301V1_CHECK(pkey != NULL
+                && ed301v1_digest_sign(libctx, pkey, tc->message,
                     tc->message_len, output)
-                && memcmp(output, tc->signature, D00_SIG_BYTES) == 0
-                && d00_digest_verify(libctx, pkey, tc->message,
-                    tc->message_len, output, D00_SIG_BYTES),
+                && memcmp(output, tc->signature, ED301V1_SIG_BYTES) == 0
+                && ed301v1_digest_verify(libctx, pkey, tc->message,
+                    tc->message_len, output, ED301V1_SIG_BYTES),
             "oversized-message: normal sign and verify recover");
         EVP_PKEY_free(pkey);
     }
@@ -594,10 +594,10 @@ int main(void)
     /* 14 point cases: provider public-key policy surface. */
     for (index = 0; index < 14; index++) {
         const POINT_CASE *tc = &POINT_CASES[index];
-        EVP_PKEY *pkey = d00_key_from_public(
+        EVP_PKEY *pkey = ed301v1_key_from_public(
             libctx, tc->encoding, tc->encoding_len);
 
-        D00_CHECK((pkey != NULL)
+        ED301V1_CHECK((pkey != NULL)
                 == (tc->expect_public_key_policy_accept ^ invert),
             "point %s: public-key policy (%s expected)", tc->id,
             tc->expect_public_key_policy_accept ? "accept" : "reject");
@@ -613,13 +613,13 @@ int main(void)
          */
         {
             unsigned char forged[80];
-            size_t forged_len = tc->encoding_len + D00_SEED_BYTES;
+            size_t forged_len = tc->encoding_len + ED301V1_SEED_BYTES;
 
             memcpy(forged, tc->encoding, tc->encoding_len);
             memcpy(forged + tc->encoding_len,
                 POSITIVE_CASES[0].signature + 38, 38);
-            D00_CHECK(!d00_triple_accepts(libctx,
-                    POSITIVE_CASES[0].public_key, D00_PUB_BYTES,
+            ED301V1_CHECK(!ed301v1_triple_accepts(libctx,
+                    POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES,
                     POSITIVE_CASES[0].message,
                     POSITIVE_CASES[0].message_len,
                     forged, forged_len),
@@ -635,8 +635,8 @@ int main(void)
 
         memcpy(forged, POSITIVE_CASES[0].signature, 38);
         memcpy(forged + 38, tc->encoding, tc->encoding_len);
-        D00_CHECK(!d00_triple_accepts(libctx,
-                POSITIVE_CASES[0].public_key, D00_PUB_BYTES,
+        ED301V1_CHECK(!ed301v1_triple_accepts(libctx,
+                POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES,
                 POSITIVE_CASES[0].message, POSITIVE_CASES[0].message_len,
                 forged, forged_len),
             "scalar %s (syntax %s): S substitution fails closed",
@@ -646,12 +646,12 @@ int main(void)
     /* 22 verification edge cases. */
     for (index = 0; index < 22; index++) {
         const VERIFICATION_CASE *tc = &VERIFICATION_CASES[index];
-        int accepted = d00_triple_accepts(libctx,
+        int accepted = ed301v1_triple_accepts(libctx,
             tc->public_key, tc->public_key_len,
             tc->message, tc->message_len,
             tc->signature, tc->signature_len);
 
-        D00_CHECK(accepted == (tc->expect_accept ^ invert),
+        ED301V1_CHECK(accepted == (tc->expect_accept ^ invert),
             "verification %s: expected %s", tc->id,
             tc->expect_accept ? "accept" : "reject");
     }
@@ -672,12 +672,12 @@ int main(void)
                 / sizeof(POLICY_COMMITMENT_CASES[0]);
             index++) {
         const POLICY_COMMITMENT_CASE *tc = &POLICY_COMMITMENT_CASES[index];
-        int accepted = d00_triple_accepts(libctx,
-            tc->public_key, D00_PUB_BYTES,
+        int accepted = ed301v1_triple_accepts(libctx,
+            tc->public_key, ED301V1_PUB_BYTES,
             tc->message, tc->message_len,
             tc->signature, tc->signature_len);
 
-        D00_CHECK(accepted == (tc->expect_accept ^ invert),
+        ED301V1_CHECK(accepted == (tc->expect_accept ^ invert),
             "commitment policy %s: expected %s", tc->id,
             tc->expect_accept ? "accept" : "reject");
     }
@@ -691,13 +691,13 @@ int main(void)
             int accepted;
 
             if (tc->kind == NEGATIVE_NULL_MESSAGE) {
-                accepted = d00_triple_accepts(libctx,
+                accepted = ed301v1_triple_accepts(libctx,
                     tc->public_key, tc->public_key_len,
                     NULL, tc->message_len,
                     tc->signature, tc->signature_len);
             } else if (tc->kind == NEGATIVE_WRONG_PARAM_TYPE) {
                 EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(
-                    libctx, D00_ALG, D00_PROP);
+                    libctx, ED301V1_ALG, ED301V1_PROP);
                 OSSL_PARAM params[2];
                 EVP_PKEY *pkey = NULL;
 
@@ -713,45 +713,45 @@ int main(void)
                 EVP_PKEY_CTX_free(ctx);
                 ERR_clear_error();
             } else {
-                accepted = d00_triple_accepts(libctx,
+                accepted = ed301v1_triple_accepts(libctx,
                     tc->public_key, tc->public_key_len,
                     tc->message, tc->message_len,
                     tc->signature, tc->signature_len);
             }
             if (!accepted)
                 rejected_count++;
-            D00_CHECK(!accepted, "negative %zu (%s) must be rejected",
+            ED301V1_CHECK(!accepted, "negative %zu (%s) must be rejected",
                 index, tc->label);
         }
-        D00_CHECK(rejected_count == 77,
+        ED301V1_CHECK(rejected_count == 77,
             "all 77 reference-lane mutations rejected (%d)",
             rejected_count);
     }
 
     /* S + L malleability. */
-    D00_CHECK(!d00_triple_accepts(libctx,
-            POSITIVE_CASES[0].public_key, D00_PUB_BYTES,
+    ED301V1_CHECK(!ed301v1_triple_accepts(libctx,
+            POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES,
             POSITIVE_CASES[0].message, POSITIVE_CASES[0].message_len,
             S_PLUS_L_SIGNATURE, sizeof(S_PLUS_L_SIGNATURE)),
         "S + L malleability is rejected");
 
     /* Historical Ed301-Sig-v1 material does not verify. */
     {
-        EVP_PKEY *v1_key = d00_key_from_seed(
+        EVP_PKEY *v1_key = ed301v1_key_from_seed(
             libctx, POSITIVE_CASES[0].seed);
 
-        D00_CHECK(memcmp(HISTORICAL_PUBLIC_KEY,
-                POSITIVE_CASES[0].public_key, D00_PUB_BYTES) != 0,
+        ED301V1_CHECK(memcmp(HISTORICAL_PUBLIC_KEY,
+                POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES) != 0,
             "same seed yields different Ed301-EdDSA-v1 and Ed301-Sig-v1 "
             "public keys");
-        D00_CHECK(!d00_triple_accepts(libctx,
-                HISTORICAL_PUBLIC_KEY, D00_PUB_BYTES,
+        ED301V1_CHECK(!ed301v1_triple_accepts(libctx,
+                HISTORICAL_PUBLIC_KEY, ED301V1_PUB_BYTES,
             NULL, 0,
             HISTORICAL_SIGNATURE, sizeof(HISTORICAL_SIGNATURE)),
             "historical signature under historical public key does not "
             "verify as Ed301-EdDSA-v1");
-        D00_CHECK(v1_key != NULL
-                && !d00_digest_verify(libctx, v1_key, NULL, 0,
+        ED301V1_CHECK(v1_key != NULL
+                && !ed301v1_digest_verify(libctx, v1_key, NULL, 0,
                     HISTORICAL_SIGNATURE, sizeof(HISTORICAL_SIGNATURE)),
             "historical signature under the v1 key does not verify");
         ERR_clear_error();
@@ -760,7 +760,7 @@ int main(void)
 
     /* Mode rejections. */
     {
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
         EVP_MD_CTX *mctx;
         EVP_PKEY_CTX *pctx = NULL;
         unsigned char sig[76];
@@ -768,7 +768,7 @@ int main(void)
         static const unsigned char probe[] = "mode probe";
 
         /*
-         * S5 -- Draft pure-EdDSA contract and OpenSSL
+         * S5 -- Ed301-v1 pure-EdDSA contract and OpenSSL
          * providers/implementations/signature/eddsa_sig.c
          * ed25519_digest_signverify_init(): non-NULL digest names are invalid.
          * Fetch each
@@ -789,12 +789,12 @@ int main(void)
                 const char *digest_name = digest_names[digest_index];
                 EVP_MD *digest = EVP_MD_fetch(libctx, digest_name, NULL);
 
-                D00_CHECK(digest != NULL,
+                ED301V1_CHECK(digest != NULL,
                     "%s is available for the external-digest rejection gate",
                     digest_name);
 
                 mctx = EVP_MD_CTX_new();
-                D00_CHECK(pkey != NULL && digest != NULL && mctx != NULL
+                ED301V1_CHECK(pkey != NULL && digest != NULL && mctx != NULL
                         && EVP_DigestSignInit_ex(mctx, NULL, digest_name,
                             libctx, NULL, pkey, NULL) != 1,
                     "%s rejected at DigestSignInit", digest_name);
@@ -802,7 +802,7 @@ int main(void)
                 EVP_MD_CTX_free(mctx);
 
                 mctx = EVP_MD_CTX_new();
-                D00_CHECK(pkey != NULL && digest != NULL && mctx != NULL
+                ED301V1_CHECK(pkey != NULL && digest != NULL && mctx != NULL
                         && EVP_DigestVerifyInit_ex(mctx, NULL, digest_name,
                             libctx, NULL, pkey, NULL) != 1,
                     "%s rejected at DigestVerifyInit", digest_name);
@@ -817,9 +817,9 @@ int main(void)
          * exposes one-shot EdDSA semantics; Update must fail on both sides.
          */
         mctx = EVP_MD_CTX_new();
-        D00_CHECK(pkey != NULL && mctx != NULL
+        ED301V1_CHECK(pkey != NULL && mctx != NULL
                 && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                    D00_PROP, pkey, NULL) == 1
+                    ED301V1_PROP, pkey, NULL) == 1
                 && EVP_DigestSignUpdate(mctx, probe,
                     sizeof(probe) - 1) != 1,
             "streaming DigestSignUpdate rejected");
@@ -827,9 +827,9 @@ int main(void)
         EVP_MD_CTX_free(mctx);
 
         mctx = EVP_MD_CTX_new();
-        D00_CHECK(pkey != NULL && mctx != NULL
+        ED301V1_CHECK(pkey != NULL && mctx != NULL
                 && EVP_DigestVerifyInit_ex(mctx, NULL, NULL, libctx,
-                    D00_PROP, pkey, NULL) == 1
+                    ED301V1_PROP, pkey, NULL) == 1
                 && EVP_DigestVerifyUpdate(mctx, probe,
                     sizeof(probe) - 1) != 1,
             "streaming DigestVerifyUpdate rejected");
@@ -852,79 +852,79 @@ int main(void)
                 (void *)context_value, 0);
             empty_params[1] = OSSL_PARAM_construct_end();
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, NULL)
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_sign_message_init(libctx, pctx, NULL)
                     && EVP_PKEY_CTX_set_params(pctx, params) == 1,
                 "context string accepted via set_params after message init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, params),
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_sign_message_init(libctx, pctx, params),
                 "context string accepted at message-sign init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_verify_message_init(libctx, pctx, params),
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_verify_message_init(libctx, pctx, params),
                 "context string accepted at message-verify init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             mctx = EVP_MD_CTX_new();
-            D00_CHECK(pkey != NULL && mctx != NULL
+            ED301V1_CHECK(pkey != NULL && mctx != NULL
                     && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                        D00_PROP, pkey, params) == 1,
+                        ED301V1_PROP, pkey, params) == 1,
                 "context string accepted at DigestSignInit params");
             ERR_clear_error();
             EVP_MD_CTX_free(mctx);
 
             /* Explicit empty context is the default Ed301-EdDSA-v1 domain. */
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, NULL)
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_sign_message_init(libctx, pctx, NULL)
                     && EVP_PKEY_CTX_set_params(pctx, empty_params) == 1,
                 "empty context string accepted via sign set_params");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, empty_params),
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_sign_message_init(libctx, pctx, empty_params),
                 "empty context string accepted at message-sign init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_verify_message_init(libctx, pctx, NULL)
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_verify_message_init(libctx, pctx, NULL)
                     && EVP_PKEY_CTX_set_params(pctx, empty_params) == 1,
                 "empty context string accepted via verify set_params");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_verify_message_init(libctx, pctx, empty_params),
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_verify_message_init(libctx, pctx, empty_params),
                 "empty context string accepted at message-verify init");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
             mctx = EVP_MD_CTX_new();
-            D00_CHECK(pkey != NULL && mctx != NULL
+            ED301V1_CHECK(pkey != NULL && mctx != NULL
                     && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                        D00_PROP, pkey, empty_params) == 1,
+                        ED301V1_PROP, pkey, empty_params) == 1,
                 "empty context string accepted at DigestSignInit params");
             ERR_clear_error();
             EVP_MD_CTX_free(mctx);
 
             mctx = EVP_MD_CTX_new();
-            D00_CHECK(pkey != NULL && mctx != NULL
+            ED301V1_CHECK(pkey != NULL && mctx != NULL
                     && EVP_DigestVerifyInit_ex(mctx, NULL, NULL, libctx,
-                        D00_PROP, pkey, empty_params) == 1,
+                        ED301V1_PROP, pkey, empty_params) == 1,
                 "empty context string accepted at DigestVerifyInit params");
             ERR_clear_error();
             EVP_MD_CTX_free(mctx);
@@ -944,12 +944,12 @@ int main(void)
                 OSSL_SIGNATURE_PARAM_DIGEST, digest_value, 0);
             bad_params[1] = OSSL_PARAM_construct_end();
 
-            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
             memset(stale_sig, 0xa5, sizeof(stale_sig));
             memcpy(canary, stale_sig, sizeof(canary));
             stale_sig_len = sizeof(stale_sig);
-            D00_CHECK(state_ctx != NULL
-                    && d00_sign_message_init(libctx, state_ctx, NULL)
+            ED301V1_CHECK(state_ctx != NULL
+                    && ed301v1_sign_message_init(libctx, state_ctx, NULL)
                     && EVP_PKEY_CTX_set_params(state_ctx, bad_params) != 1
                     && EVP_PKEY_sign(state_ctx, stale_sig, &stale_sig_len,
                         probe, sizeof(probe) - 1) != 1
@@ -958,13 +958,13 @@ int main(void)
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
-            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
             memset(stale_sig, 0xa5, sizeof(stale_sig));
             memcpy(canary, stale_sig, sizeof(canary));
             stale_sig_len = sizeof(stale_sig);
-            D00_CHECK(state_ctx != NULL
-                    && d00_sign_message_init(libctx, state_ctx, NULL)
-                    && !d00_sign_message_init(
+            ED301V1_CHECK(state_ctx != NULL
+                    && ed301v1_sign_message_init(libctx, state_ctx, NULL)
+                    && !ed301v1_sign_message_init(
                         libctx, state_ctx, bad_params)
                     && EVP_PKEY_sign(state_ctx, stale_sig, &stale_sig_len,
                         probe, sizeof(probe) - 1) != 1
@@ -973,25 +973,25 @@ int main(void)
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
-            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(state_ctx != NULL
-                    && d00_verify_message_init(libctx, state_ctx, NULL)
+            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(state_ctx != NULL
+                    && ed301v1_verify_message_init(libctx, state_ctx, NULL)
                     && EVP_PKEY_CTX_set_params(state_ctx, bad_params) != 1
                     && EVP_PKEY_verify(state_ctx,
-                        POSITIVE_CASES[0].signature, D00_SIG_BYTES,
+                        POSITIVE_CASES[0].signature, ED301V1_SIG_BYTES,
                         POSITIVE_CASES[0].message,
                         POSITIVE_CASES[0].message_len) != 1,
                 "rejected verify set_params invalidates prior operation");
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
-            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(state_ctx != NULL
-                    && d00_verify_message_init(libctx, state_ctx, NULL)
-                    && !d00_verify_message_init(
+            state_ctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(state_ctx != NULL
+                    && ed301v1_verify_message_init(libctx, state_ctx, NULL)
+                    && !ed301v1_verify_message_init(
                         libctx, state_ctx, bad_params)
                     && EVP_PKEY_verify(state_ctx,
-                        POSITIVE_CASES[0].signature, D00_SIG_BYTES,
+                        POSITIVE_CASES[0].signature, ED301V1_SIG_BYTES,
                         POSITIVE_CASES[0].message,
                         POSITIVE_CASES[0].message_len) != 1,
                 "rejected verify reinit invalidates prior operation");
@@ -1002,11 +1002,11 @@ int main(void)
                 EVP_MD_CTX *digest_ctx = EVP_MD_CTX_new();
 
                 stale_sig_len = sizeof(stale_sig);
-                D00_CHECK(digest_ctx != NULL
+                ED301V1_CHECK(digest_ctx != NULL
                         && EVP_DigestSignInit_ex(digest_ctx, NULL, NULL,
-                            libctx, D00_PROP, pkey, NULL) == 1
+                            libctx, ED301V1_PROP, pkey, NULL) == 1
                         && EVP_DigestSignInit_ex(digest_ctx, NULL,
-                            "SHA256", libctx, D00_PROP, pkey, NULL) != 1
+                            "SHA256", libctx, ED301V1_PROP, pkey, NULL) != 1
                         && EVP_DigestSign(digest_ctx, stale_sig,
                             &stale_sig_len, probe,
                             sizeof(probe) - 1) != 1,
@@ -1019,13 +1019,13 @@ int main(void)
             {
                 EVP_MD_CTX *digest_ctx = EVP_MD_CTX_new();
 
-                D00_CHECK(digest_ctx != NULL
+                ED301V1_CHECK(digest_ctx != NULL
                         && EVP_DigestVerifyInit_ex(digest_ctx, NULL, NULL,
-                            libctx, D00_PROP, pkey, NULL) == 1
+                            libctx, ED301V1_PROP, pkey, NULL) == 1
                         && EVP_DigestVerifyInit_ex(digest_ctx, NULL,
-                            "SHA256", libctx, D00_PROP, pkey, NULL) != 1
+                            "SHA256", libctx, ED301V1_PROP, pkey, NULL) != 1
                         && EVP_DigestVerify(digest_ctx,
-                            POSITIVE_CASES[0].signature, D00_SIG_BYTES,
+                            POSITIVE_CASES[0].signature, ED301V1_SIG_BYTES,
                             POSITIVE_CASES[0].message,
                             POSITIVE_CASES[0].message_len) != 1,
                     "rejected digest verify reinit invalidates prior "
@@ -1036,9 +1036,9 @@ int main(void)
         }
 
         /* S5 -- The equivalent high-level set_signature_md path rejects too. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL
-                && d00_sign_message_init(libctx, pctx, NULL)
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL
+                && ed301v1_sign_message_init(libctx, pctx, NULL)
                 && EVP_PKEY_CTX_set_signature_md(pctx,
                     EVP_sha256()) != 1,
             "set_signature_md rejected");
@@ -1055,17 +1055,17 @@ int main(void)
                 OSSL_SIGNATURE_PARAM_DIGEST, digest_name, 0);
             params[1] = OSSL_PARAM_construct_end();
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, NULL)
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_sign_message_init(libctx, pctx, NULL)
                     && EVP_PKEY_CTX_set_params(pctx, params) != 1,
                 "digest set_params rejected for signing");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_verify_message_init(libctx, pctx, NULL)
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_verify_message_init(libctx, pctx, NULL)
                     && EVP_PKEY_CTX_set_params(pctx, params) != 1,
                 "digest set_params rejected for verification");
             ERR_clear_error();
@@ -1083,13 +1083,13 @@ int main(void)
             params[0] = OSSL_PARAM_construct_utf8_string(
                 OSSL_SIGNATURE_PARAM_DIGEST, digest_value, 0);
             params[1] = OSSL_PARAM_construct_end();
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
             rejected = pctx != NULL
-                && d00_sign_message_init(libctx, pctx, NULL)
+                && ed301v1_sign_message_init(libctx, pctx, NULL)
                 && EVP_PKEY_CTX_set_params(pctx, params) != 1;
             error = ERR_peek_last_error();
             reason = error == 0 ? NULL : ERR_reason_error_string(error);
-            D00_CHECK(rejected && ERR_GET_REASON(error) == 7
+            ED301V1_CHECK(rejected && ERR_GET_REASON(error) == 7
                     && reason != NULL
                     && strcmp(reason, "unsupported mode") == 0,
                 "provider reason 7 resolves to unsupported mode");
@@ -1100,14 +1100,14 @@ int main(void)
         /* The advertised algorithm-id parameter is exact parameterless DER. */
         {
             unsigned char algorithm_id[
-                sizeof(D00_EXPECTED_ALGORITHM_ID)] = { 0 };
+                sizeof(ED301V1_EXPECTED_ALGORITHM_ID)] = { 0 };
             char wrong_type[25] = { 0 };
             OSSL_PARAM octets[2];
             OSSL_PARAM utf8[2];
             int octets_ok;
             int utf8_rejected;
 
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
             octets[0] = OSSL_PARAM_construct_octet_string(
                 OSSL_SIGNATURE_PARAM_ALGORITHM_ID,
                 algorithm_id, sizeof(algorithm_id));
@@ -1117,16 +1117,16 @@ int main(void)
                 wrong_type, sizeof(wrong_type));
             utf8[1] = OSSL_PARAM_construct_end();
             octets_ok = pctx != NULL
-                && d00_sign_message_init(libctx, pctx, NULL)
+                && ed301v1_sign_message_init(libctx, pctx, NULL)
                 && EVP_PKEY_CTX_get_params(pctx, octets) == 1
                 && octets[0].return_size == sizeof(algorithm_id)
-                && memcmp(algorithm_id, D00_EXPECTED_ALGORITHM_ID,
+                && memcmp(algorithm_id, ED301V1_EXPECTED_ALGORITHM_ID,
                     sizeof(algorithm_id)) == 0;
             utf8_rejected = pctx != NULL
                 && EVP_PKEY_CTX_get_params(pctx, utf8) != 1;
-            D00_CHECK(octets_ok,
+            ED301V1_CHECK(octets_ok,
                 "algorithm-id is exact 15-byte parameterless DER");
-            D00_CHECK(utf8_rejected,
+            ED301V1_CHECK(utf8_rejected,
                 "algorithm-id UTF8 query is rejected");
             ERR_clear_error();
             EVP_PKEY_CTX_free(pctx);
@@ -1140,9 +1140,9 @@ int main(void)
             params[0] = OSSL_PARAM_construct_uint(
                 OSSL_SIGNATURE_PARAM_NONCE_TYPE, &nonce_type);
             params[1] = OSSL_PARAM_construct_end();
-            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-            D00_CHECK(pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, NULL)
+            pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+            ED301V1_CHECK(pctx != NULL
+                    && ed301v1_sign_message_init(libctx, pctx, NULL)
                     && EVP_PKEY_CTX_set_params(pctx, params) != 1,
                 "randomized-signing option rejected");
             ERR_clear_error();
@@ -1150,7 +1150,7 @@ int main(void)
         }
 
         /*
-         * S7 -- Draft/provider pure-only contract.  OpenSSL 4.0
+         * S7 -- Ed301-v1/provider pure-only contract.  OpenSSL 4.0
          * providers/implementations/signature/eddsa_sig.c
          * eddsa_set_ctx_params_internal() names the ph/ctx instance classes;
          * neither class is an Ed301-EdDSA-v1 mode.
@@ -1171,18 +1171,18 @@ int main(void)
                     OSSL_SIGNATURE_PARAM_INSTANCE,
                     (char *)instance_names[instance_index], 0);
                 params[1] = OSSL_PARAM_construct_end();
-                pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-                D00_CHECK(pctx != NULL
-                        && d00_sign_message_init(libctx, pctx, NULL)
+                pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+                ED301V1_CHECK(pctx != NULL
+                        && ed301v1_sign_message_init(libctx, pctx, NULL)
                         && EVP_PKEY_CTX_set_params(pctx, params) != 1,
                     "%s instance rejected for signing",
                     instance_names[instance_index]);
                 ERR_clear_error();
                 EVP_PKEY_CTX_free(pctx);
 
-                pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-                D00_CHECK(pctx != NULL
-                        && d00_verify_message_init(libctx, pctx, NULL)
+                pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+                ED301V1_CHECK(pctx != NULL
+                        && ed301v1_verify_message_init(libctx, pctx, NULL)
                         && EVP_PKEY_CTX_set_params(pctx, params) != 1,
                     "%s instance rejected for verification",
                     instance_names[instance_index]);
@@ -1193,15 +1193,15 @@ int main(void)
 
         /* Sign with a public-only key fails. */
         {
-            EVP_PKEY *public_only = d00_key_from_public(
-                libctx, POSITIVE_CASES[0].public_key, D00_PUB_BYTES);
+            EVP_PKEY *public_only = ed301v1_key_from_public(
+                libctx, POSITIVE_CASES[0].public_key, ED301V1_PUB_BYTES);
 
             pctx = public_only == NULL ? NULL
                 : EVP_PKEY_CTX_new_from_pkey(libctx, public_only,
-                    D00_PROP);
+                    ED301V1_PROP);
             sig_len = sizeof(sig);
-            D00_CHECK(pctx != NULL
-                    && (!d00_sign_message_init(libctx, pctx, NULL)
+            ED301V1_CHECK(pctx != NULL
+                    && (!ed301v1_sign_message_init(libctx, pctx, NULL)
                         || EVP_PKEY_sign(pctx, sig, &sig_len,
                             probe, sizeof(probe) - 1) != 1),
                 "signing with a public-only key fails");
@@ -1222,7 +1222,7 @@ int main(void)
      */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, tc->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
         EVP_PKEY_CTX *pctx = NULL;
         OSSL_PARAM params[3];
         int tls13 = 0x0304;
@@ -1236,17 +1236,17 @@ int main(void)
         unsigned char tls13_wide[8] = { 0 };
         short tls13_short = 0x0304;
 
-        D00_CHECK(pkey != NULL, "tls-version: key");
+        ED301V1_CHECK(pkey != NULL, "tls-version: key");
 
         /* The 4.0 list adds signed-int TLS metadata beside native context. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
         {
             const OSSL_PARAM *settable = NULL;
             const OSSL_PARAM *tls_entry = NULL;
             const OSSL_PARAM *context_entry = NULL;
 
             if (pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, NULL))
+                    && ed301v1_sign_message_init(libctx, pctx, NULL))
                 settable = EVP_PKEY_CTX_settable_params(pctx);
             if (settable != NULL)
                 tls_entry = OSSL_PARAM_locate_const(settable,
@@ -1254,7 +1254,7 @@ int main(void)
             if (settable != NULL)
                 context_entry = OSSL_PARAM_locate_const(settable,
                     OSSL_SIGNATURE_PARAM_CONTEXT_STRING);
-            D00_CHECK(tls_entry != NULL
+            ED301V1_CHECK(tls_entry != NULL
                     && tls_entry->data_type == OSSL_PARAM_INTEGER
                     && context_entry != NULL
                     && context_entry->data_type == OSSL_PARAM_OCTET_STRING
@@ -1270,42 +1270,42 @@ int main(void)
         params[1] = OSSL_PARAM_construct_end();
 
         /* Message-sign init accepts TLS 1.3 metadata; KAT stays byte-exact. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
         sig_len = sizeof(sig);
-        D00_CHECK(pctx != NULL
-                && d00_sign_message_init(libctx, pctx, params)
+        ED301V1_CHECK(pctx != NULL
+                && ed301v1_sign_message_init(libctx, pctx, params)
                 && EVP_PKEY_sign(pctx, sig, &sig_len, tc->message,
                     tc->message_len) == 1
-                && sig_len == D00_SIG_BYTES
-                && memcmp(sig, tc->signature, D00_SIG_BYTES) == 0,
+                && sig_len == ED301V1_SIG_BYTES
+                && memcmp(sig, tc->signature, ED301V1_SIG_BYTES) == 0,
             "tls-version: message-sign init accepts, KAT byte-exact");
         EVP_PKEY_CTX_free(pctx);
 
         /* The libssl-style call order: set_params after message init. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
         {
-            size_t d00_i;
+            size_t ed301v1_i;
 
-            for (d00_i = 0; d00_i < sizeof(sig); d00_i++)
-                sig[d00_i] = (unsigned char)
-                    (tc->signature[d00_i % D00_SIG_BYTES] ^ 0xff);
+            for (ed301v1_i = 0; ed301v1_i < sizeof(sig); ed301v1_i++)
+                sig[ed301v1_i] = (unsigned char)
+                    (tc->signature[ed301v1_i % ED301V1_SIG_BYTES] ^ 0xff);
         }
         sig_len = sizeof(sig);
-        D00_CHECK(pctx != NULL
-                && d00_sign_message_init(libctx, pctx, NULL)
+        ED301V1_CHECK(pctx != NULL
+                && ed301v1_sign_message_init(libctx, pctx, NULL)
                 && EVP_PKEY_CTX_set_params(pctx, params) == 1
                 && EVP_PKEY_sign(pctx, sig, &sig_len, tc->message,
                     tc->message_len) == 1
-                && sig_len == D00_SIG_BYTES
-                && memcmp(sig, tc->signature, D00_SIG_BYTES) == 0,
+                && sig_len == ED301V1_SIG_BYTES
+                && memcmp(sig, tc->signature, ED301V1_SIG_BYTES) == 0,
             "tls-version: set_params after message init, KAT byte-exact");
         EVP_PKEY_CTX_free(pctx);
 
         /* Message-verify init accepts TLS 1.3 metadata. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
-        D00_CHECK(pctx != NULL
-                && d00_verify_message_init(libctx, pctx, params)
-                && EVP_PKEY_verify(pctx, tc->signature, D00_SIG_BYTES,
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
+        ED301V1_CHECK(pctx != NULL
+                && ed301v1_verify_message_init(libctx, pctx, params)
+                && EVP_PKEY_verify(pctx, tc->signature, ED301V1_SIG_BYTES,
                     tc->message, tc->message_len) == 1,
             "tls-version: message-verify init accepts, vector verifies");
         EVP_PKEY_CTX_free(pctx);
@@ -1313,32 +1313,32 @@ int main(void)
         /* One-shot DigestSign with init params; byte-exact. */
         mctx = EVP_MD_CTX_new();
         sig_len = sizeof(sig);
-        D00_CHECK(mctx != NULL
+        ED301V1_CHECK(mctx != NULL
                 && EVP_DigestSignInit_ex(mctx, NULL, NULL, libctx,
-                    D00_PROP, pkey, params) == 1
+                    ED301V1_PROP, pkey, params) == 1
                 && EVP_DigestSign(mctx, sig, &sig_len, tc->message,
                     tc->message_len) == 1
-                && sig_len == D00_SIG_BYTES
-                && memcmp(sig, tc->signature, D00_SIG_BYTES) == 0,
+                && sig_len == ED301V1_SIG_BYTES
+                && memcmp(sig, tc->signature, ED301V1_SIG_BYTES) == 0,
             "tls-version: one-shot DigestSign accepts, KAT byte-exact");
         EVP_MD_CTX_free(mctx);
 
         /* TLS 1.2 is rejected. */
         params[0] = OSSL_PARAM_construct_int(
             OSSL_SIGNATURE_PARAM_TLS_VERSION, &tls12);
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: TLS 1.2 rejected");
 
         /* Any other value is rejected. */
         params[0] = OSSL_PARAM_construct_int(
             OSSL_SIGNATURE_PARAM_TLS_VERSION, &other);
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: value 0x0505 rejected");
 
         /* The unsigned representation is rejected. */
         params[0] = OSSL_PARAM_construct_uint(
             OSSL_SIGNATURE_PARAM_TLS_VERSION, &tls13_unsigned);
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: unsigned representation rejected");
 
         /* A 64-bit-sized signed representation is rejected. */
@@ -1347,7 +1347,7 @@ int main(void)
             OSSL_SIGNATURE_PARAM_TLS_VERSION, &tls13);
         params[0].data = tls13_wide;
         params[0].data_size = sizeof(tls13_wide);
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: 64-bit-sized representation rejected");
 
         /* Any other size of the signed form is rejected. */
@@ -1355,7 +1355,7 @@ int main(void)
             OSSL_SIGNATURE_PARAM_TLS_VERSION, &tls13);
         params[0].data = &tls13_short;
         params[0].data_size = sizeof(tls13_short);
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: short-sized representation rejected");
 
         /* A duplicated valid tls-version is rejected. */
@@ -1363,25 +1363,25 @@ int main(void)
             OSSL_SIGNATURE_PARAM_TLS_VERSION, &tls13);
         params[1] = params[0];
         params[2] = OSSL_PARAM_construct_end();
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: duplicate rejected");
 
         /* An unknown parameter after a valid tls-version is rejected. */
         params[1] = OSSL_PARAM_construct_int("unknown-param", &other);
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: trailing unknown parameter rejected");
 #else
-        D00_CHECK(pkey != NULL, "tls-version: key");
+        ED301V1_CHECK(pkey != NULL, "tls-version: key");
 
         /* The 3.5 lane advertises native context but no TLS metadata. */
-        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+        pctx = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
         {
             const OSSL_PARAM *settable = NULL;
 
             if (pctx != NULL
-                    && d00_sign_message_init(libctx, pctx, NULL))
+                    && ed301v1_sign_message_init(libctx, pctx, NULL))
                 settable = EVP_PKEY_CTX_settable_params(pctx);
-            D00_CHECK(settable != NULL
+            ED301V1_CHECK(settable != NULL
                     && settable[0].key != NULL
                     && strcmp(settable[0].key,
                         OSSL_SIGNATURE_PARAM_CONTEXT_STRING) == 0
@@ -1394,14 +1394,14 @@ int main(void)
         /* A fabricated tls-version stays unsupported on 3.5. */
         params[0] = OSSL_PARAM_construct_int("tls-version", &tls13);
         params[1] = OSSL_PARAM_construct_end();
-        D00_CHECK(d00_message_sign_init_rejects(libctx, pkey, params),
+        ED301V1_CHECK(ed301v1_message_sign_init_rejects(libctx, pkey, params),
             "tls-version: fabricated tls-version rejected on 3.5");
 #endif
         EVP_PKEY_free(pkey);
     }
 
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
-    return d00_summary("provider_signature");
+    return ed301v1_summary("provider_signature");
 }

@@ -1,5 +1,5 @@
-#ifndef ED301D00_PARAM_HELPERS_H
-#define ED301D00_PARAM_HELPERS_H
+#ifndef ED301V1_PARAM_HELPERS_H
+#define ED301V1_PARAM_HELPERS_H
 
 /*
  * OSSL_PARAM helpers, adapted unchanged in shape from the historical
@@ -15,14 +15,14 @@
  * them.  Present parameters, including size queries with data == NULL, are
  * handled by OpenSSL's public parameter API.
  */
-static inline int ed301d00_param_set_optional_int(
+static inline int ed301v1_param_set_optional_int(
     OSSL_PARAM *parameter,
     int value)
 {
     return parameter == NULL || OSSL_PARAM_set_int(parameter, value) == 1;
 }
 
-static inline int ed301d00_param_set_optional_utf8_ptr(
+static inline int ed301v1_param_set_optional_utf8_ptr(
     OSSL_PARAM *parameter,
     const char *value)
 {
@@ -30,7 +30,7 @@ static inline int ed301d00_param_set_optional_utf8_ptr(
         || OSSL_PARAM_set_utf8_ptr(parameter, value) == 1;
 }
 
-static inline int ed301d00_param_set_optional_utf8_string(
+static inline int ed301v1_param_set_optional_utf8_string(
     OSSL_PARAM *parameter,
     const char *value)
 {
@@ -38,7 +38,7 @@ static inline int ed301d00_param_set_optional_utf8_string(
         || OSSL_PARAM_set_utf8_string(parameter, value) == 1;
 }
 
-static inline int ed301d00_param_set_optional_octet_string(
+static inline int ed301v1_param_set_optional_octet_string(
     OSSL_PARAM *parameter,
     const unsigned char *value,
     size_t value_length)
@@ -56,7 +56,7 @@ static inline int ed301d00_param_set_optional_octet_string(
  * value and an exact profile length, so validate those public representation
  * properties before delegating pointer extraction to OpenSSL.
  */
-static inline int ed301d00_param_get_strict_octet_string(
+static inline int ed301v1_param_get_strict_octet_string(
     const OSSL_PARAM parameters[],
     const char *name,
     const unsigned char **value,

@@ -42,7 +42,7 @@ typedef struct lifecycle_worker_st {
 static void *lifecycle_keygen_worker(void *argument)
 {
     LIFECYCLE_WORKER *worker = argument;
-    EVP_PKEY *key = d00_keygen(worker->libctx);
+    EVP_PKEY *key = ed301v1_keygen(worker->libctx);
 
     worker->keygen_ok = key != NULL;
     EVP_PKEY_free(key);
@@ -247,27 +247,27 @@ static int test_rand_provider_init(
 
 int main(void)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *rand_provider = NULL;
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     EVP_PKEY *key = NULL;
     EVP_PKEY *kat_key = NULL;
     EVP_PKEY *weak_key = NULL;
     EVP_PKEY *failed_key = NULL;
     EVP_PKEY *recovered_key = NULL;
-    unsigned char expected[D00_SEED_BYTES];
-    static const unsigned char expected_public[D00_PUB_BYTES] = {
+    unsigned char expected[ED301V1_SEED_BYTES];
+    static const unsigned char expected_public[ED301V1_PUB_BYTES] = {
         0xca, 0x69, 0x43, 0x21, 0xce, 0x6f, 0xce, 0x86,
         0xde, 0xfe, 0x10, 0x84, 0xfb, 0x49, 0xb8, 0xb7,
         0x0f, 0xbf, 0xd5, 0xd2, 0x8c, 0xa2, 0x16, 0x80,
         0x32, 0x88, 0x08, 0x08, 0xf6, 0xa5, 0xfc, 0x68,
         0xba, 0x53, 0x10, 0xae, 0x0a, 0x90
     };
-    unsigned char actual[D00_SEED_BYTES];
-    unsigned char actual_public[D00_PUB_BYTES];
-    unsigned char deterministic_signature[D00_SIG_BYTES];
+    unsigned char actual[ED301V1_SEED_BYTES];
+    unsigned char actual_public[ED301V1_PUB_BYTES];
+    unsigned char deterministic_signature[ED301V1_SIG_BYTES];
     size_t actual_length = 0;
     size_t actual_public_length = 0;
     size_t index;
@@ -283,24 +283,24 @@ int main(void)
     for (index = 0; index < sizeof(expected); index++)
         expected[index] = (unsigned char)(0xa0U + (index % 0x40U));
 
-    D00_CHECK(libctx != NULL, "parent library context");
-    D00_CHECK(libctx != NULL
+    ED301V1_CHECK(libctx != NULL, "parent library context");
+    ED301V1_CHECK(libctx != NULL
             && OSSL_PROVIDER_add_builtin(
                 libctx, TEST_RAND_PROVIDER, test_rand_provider_init) == 1,
         "application installs its test RAND provider");
     if (libctx != NULL)
         rand_provider = OSSL_PROVIDER_load(libctx, TEST_RAND_PROVIDER);
-    D00_CHECK(rand_provider != NULL, "application test RAND provider loads");
-    D00_CHECK(libctx != NULL
+    ED301V1_CHECK(rand_provider != NULL, "application test RAND provider loads");
+    ED301V1_CHECK(libctx != NULL
             && EVP_set_default_properties(libctx, TEST_RAND_PROPERTY) == 1,
         "application RAND property policy configured");
 
     if (libctx != NULL)
-        draft = d00_load(libctx, &deflt);
-    D00_CHECK(draft != NULL,
+        v1 = ed301v1_load(libctx, &deflt);
+    ED301V1_CHECK(v1 != NULL,
         "Ed301 provider loads with a mirrored child library context");
-    if (draft != NULL)
-        key = d00_keygen(libctx);
+    if (v1 != NULL)
+        key = ed301v1_keygen(libctx);
     /*
      * R2 -- OpenSSL ECX keygen contract.
      * Source: providers/implementations/keymgmt/ecx_kmgmt.c, whose Ed25519
@@ -309,20 +309,20 @@ int main(void)
      * by both provider-tests/oracle/ed301_eddsa/reference.py and the frozen
      * blind-0c482948 oracle; it is not read back from provider behaviour.
      */
-    D00_CHECK(key != NULL && test_rand_generate_calls > 0,
+    ED301V1_CHECK(key != NULL && test_rand_generate_calls > 0,
         "keygen reaches the application-selected OpenSSL RAND provider");
-    D00_CHECK(key != NULL && test_rand_generate_strength >= 149U,
+    ED301V1_CHECK(key != NULL && test_rand_generate_strength >= 149U,
         "keygen generate request carries at least 149-bit strength "
         "(instantiate=%u, generate=%u)",
         test_rand_instantiate_strength, test_rand_generate_strength);
-    D00_CHECK(key != NULL
+    ED301V1_CHECK(key != NULL
             && EVP_PKEY_get_octet_string_param(
                 key, OSSL_PKEY_PARAM_PRIV_KEY, actual, sizeof(actual),
                 &actual_length) == 1
             && actual_length == sizeof(actual)
             && memcmp(actual, expected, sizeof(actual)) == 0,
         "generated Ed301 seed is byte-exact from application RAND");
-    D00_CHECK(key != NULL
+    ED301V1_CHECK(key != NULL
             && EVP_PKEY_get_octet_string_param(
                 key, OSSL_PKEY_PARAM_PUB_KEY,
                 actual_public, sizeof(actual_public),
@@ -341,18 +341,18 @@ int main(void)
      * makes any accidental call fail while the exact counter proves zero
      * generate() invocations.
      */
-    kat_key = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    kat_key = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     calls_before_failure = test_rand_generate_calls;
     test_rand_fail = 1;
-    D00_CHECK(kat_key != NULL
-            && d00_digest_sign(libctx, kat_key,
+    ED301V1_CHECK(kat_key != NULL
+            && ed301v1_digest_sign(libctx, kat_key,
                 POSITIVE_CASES[0].message,
                 POSITIVE_CASES[0].message_len,
                 deterministic_signature)
             && memcmp(deterministic_signature,
                 POSITIVE_CASES[0].signature,
                 sizeof(deterministic_signature)) == 0
-            && d00_digest_verify(libctx, kat_key,
+            && ed301v1_digest_verify(libctx, kat_key,
                 POSITIVE_CASES[0].message,
                 POSITIVE_CASES[0].message_len,
                 deterministic_signature,
@@ -363,8 +363,8 @@ int main(void)
 
     test_rand_advertised_strength = 128U;
     calls_before_failure = test_rand_generate_calls;
-    weak_key = d00_keygen(libctx);
-    D00_CHECK(weak_key == NULL
+    weak_key = ed301v1_keygen(libctx);
+    ED301V1_CHECK(weak_key == NULL
             && test_rand_generate_calls >= calls_before_failure,
         "sub-149-bit application RAND makes Ed301 keygen fail closed");
     ERR_clear_error();
@@ -378,17 +378,17 @@ int main(void)
      */
     calls_before_failure = test_rand_generate_calls;
     test_rand_fail = 1;
-    failed_key = d00_keygen(libctx);
-    D00_CHECK(failed_key == NULL
+    failed_key = ed301v1_keygen(libctx);
+    ED301V1_CHECK(failed_key == NULL
             && test_rand_generate_calls > calls_before_failure,
         "application RAND failure makes Ed301 keygen fail closed");
     ERR_clear_error();
 
     test_rand_fail = 0;
-    recovered_key = d00_keygen(libctx);
+    recovered_key = ed301v1_keygen(libctx);
     actual_length = 0;
     actual_public_length = 0;
-    D00_CHECK(recovered_key != NULL
+    ED301V1_CHECK(recovered_key != NULL
             && EVP_PKEY_get_octet_string_param(
                 recovered_key, OSSL_PKEY_PARAM_PRIV_KEY,
                 actual, sizeof(actual), &actual_length) == 1
@@ -409,19 +409,19 @@ int main(void)
     condition_ready = mutex_ready
         && pthread_cond_init(&worker.condition, NULL) == 0;
     synchronization_ready = mutex_ready && condition_ready;
-    D00_CHECK(synchronization_ready,
+    ED301V1_CHECK(synchronization_ready,
         "cross-thread child-LIBCTX lifecycle synchronization setup");
     if (synchronization_ready)
         worker_started = pthread_create(
             &worker_thread, NULL, lifecycle_keygen_worker, &worker) == 0;
-    D00_CHECK(worker_started,
+    ED301V1_CHECK(worker_started,
         "worker thread performs provider key generation");
     if (worker_started) {
         pthread_mutex_lock(&worker.mutex);
         while (!worker.ready)
             pthread_cond_wait(&worker.condition, &worker.mutex);
         pthread_mutex_unlock(&worker.mutex);
-        D00_CHECK(worker.keygen_ok,
+        ED301V1_CHECK(worker.keygen_ok,
             "worker keygen completes before final provider unload");
 
         EVP_PKEY_free(recovered_key);
@@ -434,9 +434,9 @@ int main(void)
         kat_key = NULL;
         EVP_PKEY_free(key);
         key = NULL;
-        D00_CHECK(OSSL_PROVIDER_unload(draft) == 1,
+        ED301V1_CHECK(OSSL_PROVIDER_unload(v1) == 1,
             "provider unload succeeds while the worker thread remains alive");
-        draft = NULL;
+        v1 = NULL;
         OSSL_PROVIDER_unload(deflt);
         deflt = NULL;
         OSSL_PROVIDER_unload(rand_provider);
@@ -449,7 +449,7 @@ int main(void)
         pthread_cond_signal(&worker.condition);
         pthread_mutex_unlock(&worker.mutex);
         worker_joined = pthread_join(worker_thread, NULL) == 0;
-        D00_CHECK(worker_joined,
+        ED301V1_CHECK(worker_joined,
             "worker exits after child context teardown without stale TLS state");
     }
 
@@ -463,7 +463,7 @@ int main(void)
     EVP_PKEY_free(failed_key);
     EVP_PKEY_free(kat_key);
     EVP_PKEY_free(key);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_PROVIDER_unload(rand_provider);
     OSSL_LIB_CTX_free(libctx);
@@ -471,5 +471,5 @@ int main(void)
         pthread_cond_destroy(&worker.condition);
     if (mutex_ready)
         pthread_mutex_destroy(&worker.mutex);
-    return d00_summary("provider_rand");
+    return ed301v1_summary("provider_rand");
 }

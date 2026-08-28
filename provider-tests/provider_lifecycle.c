@@ -34,13 +34,13 @@ static int lifecycle_sign_verify(
     EVP_PKEY *pkey,
     const POSITIVE_CASE *test_case)
 {
-    unsigned char signature[D00_SIG_BYTES];
+    unsigned char signature[ED301V1_SIG_BYTES];
 
     return libctx != NULL && pkey != NULL && test_case != NULL
-        && d00_digest_sign(libctx, pkey,
+        && ed301v1_digest_sign(libctx, pkey,
             test_case->message, test_case->message_len, signature)
         && memcmp(signature, test_case->signature, sizeof(signature)) == 0
-        && d00_digest_verify(libctx, pkey,
+        && ed301v1_digest_verify(libctx, pkey,
             test_case->message, test_case->message_len,
             signature, sizeof(signature));
 }
@@ -49,21 +49,21 @@ static int lifecycle_cold_cycle(void)
 {
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     EVP_PKEY *pkey = NULL;
     int ok = 0;
 
     if (libctx == NULL)
         goto done;
-    draft = d00_load(libctx, &deflt);
-    if (draft == NULL)
+    v1 = ed301v1_load(libctx, &deflt);
+    if (v1 == NULL)
         goto done;
-    pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     ok = lifecycle_sign_verify(libctx, pkey, &POSITIVE_CASES[0]);
 
 done:
     EVP_PKEY_free(pkey);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
     ERR_clear_error();
@@ -74,17 +74,17 @@ static int lifecycle_key_after_handle_release(void)
 {
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     EVP_PKEY *pkey = NULL;
     int handles_released = 0;
     int ok = 0;
 
     if (libctx == NULL)
         goto done;
-    draft = d00_load(libctx, &deflt);
-    if (draft == NULL)
+    v1 = ed301v1_load(libctx, &deflt);
+    if (v1 == NULL)
         goto done;
-    pkey = d00_key_from_seed(libctx, POSITIVE_CASES[1].seed);
+    pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[1].seed);
     if (pkey == NULL)
         goto done;
 
@@ -93,8 +93,8 @@ static int lifecycle_key_after_handle_release(void)
      * that the DSO is fully unloaded: EVP_PKEY and fetched operations retain
      * the provider references required by the OpenSSL ownership contract.
      */
-    handles_released = OSSL_PROVIDER_unload(draft) == 1;
-    draft = NULL;
+    handles_released = OSSL_PROVIDER_unload(v1) == 1;
+    v1 = NULL;
     handles_released = handles_released
         && OSSL_PROVIDER_unload(deflt) == 1;
     deflt = NULL;
@@ -103,7 +103,7 @@ static int lifecycle_key_after_handle_release(void)
 
 done:
     EVP_PKEY_free(pkey);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
     ERR_clear_error();
@@ -116,20 +116,20 @@ static int lifecycle_two_libctx(void)
     OSSL_LIB_CTX *second = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *first_deflt = NULL;
     OSSL_PROVIDER *second_deflt = NULL;
-    OSSL_PROVIDER *first_draft = NULL;
-    OSSL_PROVIDER *second_draft = NULL;
+    OSSL_PROVIDER *first_v1 = NULL;
+    OSSL_PROVIDER *second_v1 = NULL;
     EVP_PKEY *first_key = NULL;
     EVP_PKEY *second_key = NULL;
     int ok = 0;
 
     if (first == NULL || second == NULL)
         goto done;
-    first_draft = d00_load(first, &first_deflt);
-    second_draft = d00_load(second, &second_deflt);
-    if (first_draft == NULL || second_draft == NULL)
+    first_v1 = ed301v1_load(first, &first_deflt);
+    second_v1 = ed301v1_load(second, &second_deflt);
+    if (first_v1 == NULL || second_v1 == NULL)
         goto done;
-    first_key = d00_key_from_seed(first, POSITIVE_CASES[0].seed);
-    second_key = d00_key_from_seed(second, POSITIVE_CASES[1].seed);
+    first_key = ed301v1_key_from_seed(first, POSITIVE_CASES[0].seed);
+    second_key = ed301v1_key_from_seed(second, POSITIVE_CASES[1].seed);
     if (!lifecycle_sign_verify(first, first_key, &POSITIVE_CASES[0])
             || !lifecycle_sign_verify(
                 second, second_key, &POSITIVE_CASES[1]))
@@ -138,8 +138,8 @@ static int lifecycle_two_libctx(void)
     /* Reverse the load order and prove the surviving context is isolated. */
     EVP_PKEY_free(second_key);
     second_key = NULL;
-    OSSL_PROVIDER_unload(second_draft);
-    second_draft = NULL;
+    OSSL_PROVIDER_unload(second_v1);
+    second_v1 = NULL;
     OSSL_PROVIDER_unload(second_deflt);
     second_deflt = NULL;
     OSSL_LIB_CTX_free(second);
@@ -149,9 +149,9 @@ static int lifecycle_two_libctx(void)
 done:
     EVP_PKEY_free(second_key);
     EVP_PKEY_free(first_key);
-    OSSL_PROVIDER_unload(second_draft);
+    OSSL_PROVIDER_unload(second_v1);
     OSSL_PROVIDER_unload(second_deflt);
-    OSSL_PROVIDER_unload(first_draft);
+    OSSL_PROVIDER_unload(first_v1);
     OSSL_PROVIDER_unload(first_deflt);
     OSSL_LIB_CTX_free(second);
     OSSL_LIB_CTX_free(first);
@@ -162,15 +162,15 @@ done:
 static int lifecycle_sign_once(
     EVP_PKEY_CTX *context,
     const POSITIVE_CASE *test_case,
-    unsigned char signature[D00_SIG_BYTES])
+    unsigned char signature[ED301V1_SIG_BYTES])
 {
-    size_t signature_length = D00_SIG_BYTES;
+    size_t signature_length = ED301V1_SIG_BYTES;
 
     return context != NULL && test_case != NULL
         && EVP_PKEY_sign(context, signature, &signature_length,
             test_case->message, test_case->message_len) == 1
-        && signature_length == D00_SIG_BYTES
-        && memcmp(signature, test_case->signature, D00_SIG_BYTES) == 0;
+        && signature_length == ED301V1_SIG_BYTES
+        && memcmp(signature, test_case->signature, ED301V1_SIG_BYTES) == 0;
 }
 
 static int lifecycle_verify_once(
@@ -179,7 +179,7 @@ static int lifecycle_verify_once(
 {
     return context != NULL && test_case != NULL
         && EVP_PKEY_verify(context,
-            test_case->signature, D00_SIG_BYTES,
+            test_case->signature, ED301V1_SIG_BYTES,
             test_case->message, test_case->message_len) == 1;
 }
 
@@ -193,16 +193,16 @@ static int lifecycle_duplicate_contexts(
     EVP_PKEY_CTX *sign_duplicate = NULL;
     EVP_PKEY_CTX *verify_original = NULL;
     EVP_PKEY_CTX *verify_duplicate = NULL;
-    unsigned char original_signature[D00_SIG_BYTES];
-    unsigned char duplicate_signature[D00_SIG_BYTES];
+    unsigned char original_signature[ED301V1_SIG_BYTES];
+    unsigned char duplicate_signature[ED301V1_SIG_BYTES];
     int first_ok;
     int second_ok;
     int ok = 0;
     const char *failure_stage = "sign context creation";
 
-    sign_original = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+    sign_original = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
     if (sign_original == NULL
-            || !d00_sign_message_init(libctx, sign_original, NULL))
+            || !ed301v1_sign_message_init(libctx, sign_original, NULL))
         goto done;
     failure_stage = "sign context duplication";
     sign_duplicate = EVP_PKEY_CTX_dup(sign_original);
@@ -227,13 +227,13 @@ static int lifecycle_duplicate_contexts(
     }
     if (!first_ok || !second_ok
             || memcmp(original_signature, duplicate_signature,
-                D00_SIG_BYTES) != 0)
+                ED301V1_SIG_BYTES) != 0)
         goto done;
 
     failure_stage = "verify context creation";
-    verify_original = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, D00_PROP);
+    verify_original = EVP_PKEY_CTX_new_from_pkey(libctx, pkey, ED301V1_PROP);
     if (verify_original == NULL
-            || !d00_verify_message_init(libctx, verify_original, NULL))
+            || !ed301v1_verify_message_init(libctx, verify_original, NULL))
         goto done;
     failure_stage = "verify context duplication";
     verify_duplicate = EVP_PKEY_CTX_dup(verify_original);
@@ -358,12 +358,12 @@ int main(void)
 {
     OSSL_LIB_CTX *libctx = NULL;
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     EVP_PKEY *shared_key = NULL;
     int round;
     int load_ok = 1;
 
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
 
     /*
      * L1 -- repeated load/unload.
@@ -377,7 +377,7 @@ int main(void)
             break;
         }
     }
-    D00_CHECK(load_ok,
+    ED301V1_CHECK(load_ok,
         "L1 repeated provider load/use/unload x%d (failed round %d)",
         LIFECYCLE_LOAD_ROUNDS, round);
 
@@ -387,7 +387,7 @@ int main(void)
      * test/threadstest.c:test_multi_shared_pkey_release.  The assertion is
      * intentionally about released caller handles, not forced DSO unload.
      */
-    D00_CHECK(lifecycle_key_after_handle_release(),
+    ED301V1_CHECK(lifecycle_key_after_handle_release(),
         "L2 key remains usable after caller provider handles are released");
 
     /*
@@ -396,15 +396,15 @@ int main(void)
      * Both contexts execute Ed301 operations and are torn down in reverse
      * load order; the survivor is exercised again after the first teardown.
      */
-    D00_CHECK(lifecycle_two_libctx(),
+    ED301V1_CHECK(lifecycle_two_libctx(),
         "L3 two libctx operate independently under reverse teardown");
 
     libctx = OSSL_LIB_CTX_new();
     if (libctx != NULL)
-        draft = d00_load(libctx, &deflt);
-    if (draft != NULL)
-        shared_key = d00_key_from_seed(libctx, POSITIVE_CASES[3].seed);
-    D00_CHECK(libctx != NULL && draft != NULL && shared_key != NULL,
+        v1 = ed301v1_load(libctx, &deflt);
+    if (v1 != NULL)
+        shared_key = ed301v1_key_from_seed(libctx, POSITIVE_CASES[3].seed);
+    ED301V1_CHECK(libctx != NULL && v1 != NULL && shared_key != NULL,
         "lifecycle shared-key fixture");
 
     /*
@@ -415,10 +415,10 @@ int main(void)
      * independently usable under both free orders.  There is no streaming
      * state to clone because Ed301-EdDSA-v1 is pure one-shot EdDSA.
      */
-    D00_CHECK(shared_key != NULL
+    ED301V1_CHECK(shared_key != NULL
             && lifecycle_duplicate_contexts(libctx, shared_key, 1),
         "L4 initialized sign/verify contexts survive original-first free");
-    D00_CHECK(shared_key != NULL
+    ED301V1_CHECK(shared_key != NULL
             && lifecycle_duplicate_contexts(libctx, shared_key, 0),
         "L4 initialized sign/verify contexts survive duplicate-first free");
 
@@ -428,7 +428,7 @@ int main(void)
      * the immutable key while each creates its own EVP context, then perform
      * deterministic sign and verify operations in parallel.
      */
-    D00_CHECK(shared_key != NULL
+    ED301V1_CHECK(shared_key != NULL
             && lifecycle_parallel_shared_key(libctx, shared_key),
         "L5 same EVP_PKEY signs/verifies in %d threads x %d rounds",
         LIFECYCLE_THREADS, LIFECYCLE_THREAD_ROUNDS);
@@ -443,8 +443,8 @@ int main(void)
      */
 
     EVP_PKEY_free(shared_key);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
-    return d00_summary("provider_lifecycle");
+    return ed301v1_summary("provider_lifecycle");
 }

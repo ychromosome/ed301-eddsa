@@ -116,7 +116,7 @@ static int algor_negative_controls(void)
     X509_ALGOR *wrong = X509_ALGOR_new();
     X509_ALGOR *with_null = X509_ALGOR_new();
     X509_ALGOR *missing = X509_ALGOR_new();
-    ASN1_OBJECT *target = OBJ_txt2obj(D00_OID_TEXT, 1);
+    ASN1_OBJECT *target = OBJ_txt2obj(ED301V1_OID_TEXT, 1);
     ASN1_OBJECT *foreign = OBJ_txt2obj("1.3.101.112", 1);
     int ok = wrong != NULL && with_null != NULL && missing != NULL
         && target != NULL && foreign != NULL;
@@ -126,9 +126,9 @@ static int algor_negative_controls(void)
         foreign = NULL;
         X509_ALGOR_set0(with_null, target, V_ASN1_NULL, NULL);
         target = NULL;
-        ok = !d00_pki_algorithm_is_exact(wrong)
-            && !d00_pki_algorithm_is_exact(with_null)
-            && !d00_pki_algorithm_is_exact(missing);
+        ok = !ed301v1_pki_algorithm_is_exact(wrong)
+            && !ed301v1_pki_algorithm_is_exact(with_null)
+            && !ed301v1_pki_algorithm_is_exact(missing);
     }
     ASN1_OBJECT_free(target);
     ASN1_OBJECT_free(foreign);
@@ -233,38 +233,38 @@ static int verify_direct_chain(X509 *trust_anchor, X509 *leaf)
 
 int main(void)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft;
-    d00_property = D00_PKI_PROP;
-    draft = d00_load_named(NULL, &deflt, D00_PKI_PROVIDER);
-    EVP_PKEY *ca_key = d00_keygen(NULL);
-    EVP_PKEY *leaf_key = d00_keygen(NULL);
+    OSSL_PROVIDER *v1;
+    ed301v1_property = ED301V1_PKI_PROP;
+    v1 = ed301v1_load_named(NULL, &deflt, ED301V1_PKI_PROVIDER);
+    EVP_PKEY *ca_key = ed301v1_keygen(NULL);
+    EVP_PKEY *leaf_key = ed301v1_keygen(NULL);
 
-    D00_CHECK(deflt != NULL && draft != NULL,
+    ED301V1_CHECK(deflt != NULL && v1 != NULL,
         "providers in the default context");
-    D00_CHECK(ca_key != NULL && leaf_key != NULL, "test keys");
+    ED301V1_CHECK(ca_key != NULL && leaf_key != NULL, "test keys");
     if (ca_key == NULL || leaf_key == NULL)
-        return d00_summary("provider_pki");
+        return ed301v1_summary("provider_pki");
 
     /*
      * D5 (project OID registry and provider PKI contract): the numeric OID
      * resolves byte-exactly to its no-digest signature identifier.
      */
     {
-        int nid = OBJ_txt2nid(D00_OID_TEXT);
+        int nid = OBJ_txt2nid(ED301V1_OID_TEXT);
         int signature_nid = NID_undef;
         char oid_text[96] = { 0 };
 
-        D00_CHECK(nid != NID_undef
+        ED301V1_CHECK(nid != NID_undef
                 && OBJ_obj2txt(oid_text, sizeof(oid_text),
-                    OBJ_nid2obj(nid), 1) == (int)strlen(D00_OID_TEXT)
-                && strcmp(oid_text, D00_OID_TEXT) == 0,
+                    OBJ_nid2obj(nid), 1) == (int)strlen(ED301V1_OID_TEXT)
+                && strcmp(oid_text, ED301V1_OID_TEXT) == 0,
             "D5 project OID is registered byte-exactly");
-        D00_CHECK(OBJ_find_sigid_by_algs(&signature_nid, NID_undef,
+        ED301V1_CHECK(OBJ_find_sigid_by_algs(&signature_nid, NID_undef,
                 nid) == 1 && signature_nid == nid,
             "sigid maps the algorithm to itself with no digest");
-        D00_CHECK(algor_negative_controls(),
+        ED301V1_CHECK(algor_negative_controls(),
             "wrong, NULL-parameter and missing AlgorithmIdentifiers fail "
             "the application precheck");
     }
@@ -277,24 +277,24 @@ int main(void)
         X509_REQ *req = X509_REQ_new();
         X509_NAME *subject = make_name("Ed301-EdDSA-v1 CSR (test-only)");
 
-        D00_CHECK(req != NULL && subject != NULL
+        ED301V1_CHECK(req != NULL && subject != NULL
                 && X509_REQ_set_version(req, 0) == 1
                 && X509_REQ_set_subject_name(req, subject) == 1
                 && X509_REQ_set_pubkey(req, leaf_key) == 1
                 && X509_REQ_sign(req, leaf_key, NULL) > 0,
             "CSR creation and signing");
-        D00_CHECK(req != NULL && d00_pki_verify_request(req, leaf_key),
+        ED301V1_CHECK(req != NULL && ed301v1_pki_verify_request(req, leaf_key),
             "strict CSR wrapper enforces identifiers and verifies");
 
         if (req != NULL) {
             X509_REQ *der_copy = reparse_request_der(req);
             X509_REQ *pem_copy = reparse_request_pem(req);
 
-            D00_CHECK(der_copy != NULL
-                    && d00_pki_verify_request(der_copy, leaf_key),
+            ED301V1_CHECK(der_copy != NULL
+                    && ed301v1_pki_verify_request(der_copy, leaf_key),
                 "CSR DER reparse round trip preserves the exact profile");
-            D00_CHECK(pem_copy != NULL
-                    && d00_pki_verify_request(pem_copy, leaf_key),
+            ED301V1_CHECK(pem_copy != NULL
+                    && ed301v1_pki_verify_request(pem_copy, leaf_key),
                 "CSR PEM reparse round trip preserves the exact profile");
             X509_REQ_free(der_copy);
             X509_REQ_free(pem_copy);
@@ -305,7 +305,7 @@ int main(void)
             const X509_ALGOR *algorithm = NULL;
 
             X509_REQ_get0_signature(req, &signature, &algorithm);
-            D00_CHECK(signature != NULL
+            ED301V1_CHECK(signature != NULL
                     && ASN1_STRING_length(signature) == 76,
                 "CSR carries a 76-byte Ed301-EdDSA-v1 signature");
             if (algorithm != NULL) {
@@ -313,10 +313,10 @@ int main(void)
 
                 OBJ_obj2txt(oid_text, sizeof(oid_text),
                     algorithm->algorithm, 1);
-                D00_CHECK(strcmp(oid_text, D00_OID_TEXT) == 0,
+                ED301V1_CHECK(strcmp(oid_text, ED301V1_OID_TEXT) == 0,
                     "CSR AlgorithmIdentifier is the ephemeral test OID "
                     "(%s)", oid_text);
-                D00_CHECK(algorithm->parameter == NULL,
+                ED301V1_CHECK(algorithm->parameter == NULL,
                     "CSR AlgorithmIdentifier is parameterless");
             }
             if (signature != NULL && ASN1_STRING_length(signature) > 0) {
@@ -325,7 +325,7 @@ int main(void)
                     (unsigned char *)ASN1_STRING_get0_data(signature);
 
                 bytes[0] ^= 1;
-                D00_CHECK(!d00_pki_verify_request(req, leaf_key),
+                ED301V1_CHECK(!ed301v1_pki_verify_request(req, leaf_key),
                     "strict CSR wrapper rejects a corrupted signature");
                 ERR_clear_error();
                 bytes[0] ^= 1;
@@ -347,12 +347,12 @@ int main(void)
                         &mutated_outer);
                     if (mutated_outer != NULL)
                         X509_ALGOR_set0((X509_ALGOR *)mutated_outer,
-                            OBJ_txt2obj(D00_OID_TEXT, 1),
+                            OBJ_txt2obj(ED301V1_OID_TEXT, 1),
                             V_ASN1_NULL, NULL);
                     ordinary_verify = X509_REQ_verify(mutated, leaf_key);
                 }
-                D00_CHECK(mutated != NULL
-                        && !d00_pki_verify_request(mutated, leaf_key),
+                ED301V1_CHECK(mutated != NULL
+                        && !ed301v1_pki_verify_request(mutated, leaf_key),
                     "strict CSR wrapper rejects NULL parameters");
                 printf("ordinary CSR verify without precheck: %d "
                     "(outside provider enforcement)\n", ordinary_verify);
@@ -364,7 +364,7 @@ int main(void)
             {
                 X509_REQ *mutated = X509_REQ_dup(req);
                 const ASN1_BIT_STRING *mutated_signature = NULL;
-                unsigned char shortened[D00_SIG_BYTES - 1];
+                unsigned char shortened[ED301V1_SIG_BYTES - 1];
                 int set_ok = 0;
 
                 if (mutated != NULL) {
@@ -372,7 +372,7 @@ int main(void)
                         mutated, &mutated_signature, NULL);
                     if (mutated_signature != NULL
                             && ASN1_STRING_length(mutated_signature)
-                                == (int)D00_SIG_BYTES) {
+                                == (int)ED301V1_SIG_BYTES) {
                         memcpy(shortened,
                             ASN1_STRING_get0_data(mutated_signature),
                             sizeof(shortened));
@@ -381,8 +381,8 @@ int main(void)
                             shortened, sizeof(shortened));
                     }
                 }
-                D00_CHECK(mutated != NULL && set_ok == 1
-                        && !d00_pki_verify_request(mutated, leaf_key),
+                ED301V1_CHECK(mutated != NULL && set_ok == 1
+                        && !ed301v1_pki_verify_request(mutated, leaf_key),
                     "strict CSR wrapper rejects a 75-byte signature BIT "
                     "STRING");
                 ERR_clear_error();
@@ -405,8 +405,8 @@ int main(void)
                         OBJ_txt2obj("1.3.101.112", 1),
                         V_ASN1_UNDEF, NULL) == 1;
 
-                D00_CHECK(mutated != NULL && set_ok
-                        && !d00_pki_verify_request(mutated, leaf_key),
+                ED301V1_CHECK(mutated != NULL && set_ok
+                        && !ed301v1_pki_verify_request(mutated, leaf_key),
                     "strict CSR wrapper rejects a foreign embedded SPKI "
                     "algorithm");
                 ERR_clear_error();
@@ -429,21 +429,21 @@ int main(void)
                         && X509_PUBKEY_get0_param(&object, &key_bytes,
                             &key_length, &algorithm, public_key) == 1
                         && key_bytes != NULL
-                        && key_length == (int)D00_PUB_BYTES) {
+                        && key_length == (int)ED301V1_PUB_BYTES) {
                     short_key = OPENSSL_memdup(
-                        key_bytes, D00_PUB_BYTES - 1);
-                    target = OBJ_txt2obj(D00_OID_TEXT, 1);
+                        key_bytes, ED301V1_PUB_BYTES - 1);
+                    target = OBJ_txt2obj(ED301V1_OID_TEXT, 1);
                     if (short_key != NULL && target != NULL
                             && X509_PUBKEY_set0_param(public_key, target,
                                 V_ASN1_UNDEF, NULL, short_key,
-                                (int)D00_PUB_BYTES - 1) == 1) {
+                                (int)ED301V1_PUB_BYTES - 1) == 1) {
                         target = NULL;
                         short_key = NULL;
                         set_ok = 1;
                     }
                 }
-                D00_CHECK(mutated != NULL && set_ok
-                        && !d00_pki_verify_request(mutated, leaf_key),
+                ED301V1_CHECK(mutated != NULL && set_ok
+                        && !ed301v1_pki_verify_request(mutated, leaf_key),
                     "strict CSR wrapper rejects a 37-byte SPKI key");
                 ASN1_OBJECT_free(target);
                 OPENSSL_free(short_key);
@@ -465,15 +465,15 @@ int main(void)
             ca_key, 1, 1);
         X509 *leaf_cert = NULL;
 
-        D00_CHECK(ca_cert != NULL, "self-signed CA certificate");
-        D00_CHECK(ca_cert != NULL
-                && d00_pki_verify_certificate(ca_cert, ca_key),
+        ED301V1_CHECK(ca_cert != NULL, "self-signed CA certificate");
+        ED301V1_CHECK(ca_cert != NULL
+                && ed301v1_pki_verify_certificate(ca_cert, ca_key),
             "strict certificate wrapper verifies the self-signed CA");
         if (ca_cert != NULL) {
             X509 *der_copy = reparse_certificate_der(ca_cert);
 
-            D00_CHECK(der_copy != NULL
-                    && d00_pki_verify_certificate(der_copy, ca_key),
+            ED301V1_CHECK(der_copy != NULL
+                    && ed301v1_pki_verify_certificate(der_copy, ca_key),
                 "P1 self-signed Ed301 certificate DER round trip verifies");
             X509_free(der_copy);
         }
@@ -481,19 +481,19 @@ int main(void)
         if (ca_cert != NULL) {
             leaf_cert = make_cert("Ed301-EdDSA-v1 test leaf",
                 X509_get_subject_name(ca_cert), leaf_key, ca_key, 0, 2);
-            D00_CHECK(leaf_cert != NULL, "CA-signed leaf certificate");
-            D00_CHECK(d00_pki_certificate_is_exact(leaf_cert),
+            ED301V1_CHECK(leaf_cert != NULL, "CA-signed leaf certificate");
+            ED301V1_CHECK(ed301v1_pki_certificate_is_exact(leaf_cert),
                 "leaf identifiers are exact before chain validation");
             if (leaf_cert != NULL) {
                 X509 *der_copy = reparse_certificate_der(leaf_cert);
                 X509 *pem_copy = reparse_certificate_pem(leaf_cert);
 
-                D00_CHECK(der_copy != NULL
-                        && d00_pki_verify_certificate(der_copy, ca_key),
+                ED301V1_CHECK(der_copy != NULL
+                        && ed301v1_pki_verify_certificate(der_copy, ca_key),
                     "certificate DER reparse round trip preserves the "
                     "exact profile");
-                D00_CHECK(pem_copy != NULL
-                        && d00_pki_verify_certificate(pem_copy, ca_key),
+                ED301V1_CHECK(pem_copy != NULL
+                        && ed301v1_pki_verify_certificate(pem_copy, ca_key),
                     "certificate PEM reparse round trip preserves the "
                     "exact profile");
                 X509_free(der_copy);
@@ -505,11 +505,11 @@ int main(void)
             X509_STORE *store = X509_STORE_new();
             X509_STORE_CTX *store_ctx = X509_STORE_CTX_new();
 
-            D00_CHECK(store != NULL && store_ctx != NULL
+            ED301V1_CHECK(store != NULL && store_ctx != NULL
                     && X509_STORE_add_cert(store, ca_cert) == 1
                     && X509_STORE_CTX_init(store_ctx, store, leaf_cert,
                         NULL) == 1
-                    && d00_pki_verify_two_certificate_chain(
+                    && ed301v1_pki_verify_two_certificate_chain(
                         store_ctx, leaf_cert, ca_cert),
                 "P2 strict Ed301 CA-to-Ed301 leaf store verification");
             X509_STORE_CTX_free(store_ctx);
@@ -527,10 +527,10 @@ int main(void)
                         ASN1_STRING_get0_data(signature);
 
                     bytes[10] ^= 1;
-                    D00_CHECK(bad_ctx != NULL
+                    ED301V1_CHECK(bad_ctx != NULL
                             && X509_STORE_CTX_init(bad_ctx, store,
                                 leaf_cert, NULL) == 1
-                            && !d00_pki_verify_two_certificate_chain(
+                            && !ed301v1_pki_verify_two_certificate_chain(
                                 bad_ctx, leaf_cert, ca_cert),
                         "strict chain wrapper rejects a corrupted leaf");
                     ERR_clear_error();
@@ -540,7 +540,7 @@ int main(void)
             }
 
             /* Wrong-key verification fails. */
-            D00_CHECK(!d00_pki_verify_certificate(leaf_cert, leaf_key),
+            ED301V1_CHECK(!ed301v1_pki_verify_certificate(leaf_cert, leaf_key),
                 "strict certificate wrapper rejects the wrong key");
             ERR_clear_error();
 
@@ -560,8 +560,8 @@ int main(void)
                     && X509_set_serialNumber(mutated, serial) == 1
                     && i2d_re_X509_tbs(mutated, &tbs) > 0;
 
-                D00_CHECK(set_ok
-                        && !d00_pki_verify_certificate(mutated, ca_key),
+                ED301V1_CHECK(set_ok
+                        && !ed301v1_pki_verify_certificate(mutated, ca_key),
                     "P4 TBS serial mutation invalidates certificate "
                     "verification");
                 ASN1_INTEGER_free(serial);
@@ -579,8 +579,8 @@ int main(void)
                         OBJ_txt2obj("1.3.101.112", 1),
                         V_ASN1_UNDEF, NULL) == 1;
 
-                D00_CHECK(mutated != NULL && set_ok
-                        && !d00_pki_verify_certificate(mutated, ca_key),
+                ED301V1_CHECK(mutated != NULL && set_ok
+                        && !ed301v1_pki_verify_certificate(mutated, ca_key),
                     "strict certificate wrapper rejects an inner/outer "
                     "signature-algorithm mismatch");
                 ERR_clear_error();
@@ -598,12 +598,12 @@ int main(void)
                         &mutated_outer, mutated);
                     if (mutated_outer != NULL)
                         X509_ALGOR_set0((X509_ALGOR *)mutated_outer,
-                            OBJ_txt2obj(D00_OID_TEXT, 1),
+                            OBJ_txt2obj(ED301V1_OID_TEXT, 1),
                             V_ASN1_NULL, NULL);
                     ordinary_verify = X509_verify(mutated, ca_key);
                 }
-                D00_CHECK(mutated != NULL
-                        && !d00_pki_verify_certificate(mutated, ca_key),
+                ED301V1_CHECK(mutated != NULL
+                        && !ed301v1_pki_verify_certificate(mutated, ca_key),
                     "strict certificate wrapper rejects NULL parameters");
                 printf("ordinary X509 verify without precheck: %d "
                     "(outside provider enforcement)\n", ordinary_verify);
@@ -635,16 +635,16 @@ int main(void)
                     X509_get_subject_name(ca_cert), ec_leaf_key,
                     ca_key, 0, 103);
 
-            D00_CHECK(ec_ca_cert != NULL && ecdsa_to_ed_leaf != NULL
-                    && d00_pki_public_key_is_exact(
+            ED301V1_CHECK(ec_ca_cert != NULL && ecdsa_to_ed_leaf != NULL
+                    && ed301v1_pki_public_key_is_exact(
                         X509_get_X509_PUBKEY(ecdsa_to_ed_leaf))
-                    && !d00_pki_certificate_is_exact(ecdsa_to_ed_leaf)
+                    && !ed301v1_pki_certificate_is_exact(ecdsa_to_ed_leaf)
                     && verify_direct_chain(ec_ca_cert, ecdsa_to_ed_leaf),
                 "P3 classic ECDSA CA-to-Ed301 leaf verifies generically");
-            D00_CHECK(ed_to_ecdsa_leaf != NULL
-                    && !d00_pki_public_key_is_exact(
+            ED301V1_CHECK(ed_to_ecdsa_leaf != NULL
+                    && !ed301v1_pki_public_key_is_exact(
                         X509_get_X509_PUBKEY(ed_to_ecdsa_leaf))
-                    && !d00_pki_certificate_is_exact(ed_to_ecdsa_leaf)
+                    && !ed301v1_pki_certificate_is_exact(ed_to_ecdsa_leaf)
                     && verify_direct_chain(ca_cert, ed_to_ecdsa_leaf),
                 "P3 Ed301 CA-to-classic ECDSA leaf verifies generically");
 
@@ -659,14 +659,14 @@ int main(void)
     }
 
     /*
-     * P6 (draft/provider scope): CRL and OCSP profiles are deliberately not
+     * P6 (v1/provider scope): CRL and OCSP profiles are deliberately not
      * synthesized here; the dated decision and revisit gate are recorded in
      * docs/OPENSSL_PATTERN_DEVIATIONS.md.
      */
 
     EVP_PKEY_free(ca_key);
     EVP_PKEY_free(leaf_key);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
-    return d00_summary("provider_pki");
+    return ed301v1_summary("provider_pki");
 }

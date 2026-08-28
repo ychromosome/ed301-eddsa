@@ -44,19 +44,19 @@ static int contains_ascii_case_insensitive(
 static int printed_text_contains_seed_hex(
     const char *text,
     size_t text_length,
-    const unsigned char seed[D00_SEED_BYTES])
+    const unsigned char seed[ED301V1_SEED_BYTES])
 {
     static const char hex[] = "0123456789abcdef";
-    char compact[D00_SEED_BYTES * 2];
-    char colon_separated[D00_SEED_BYTES * 3 - 1];
+    char compact[ED301V1_SEED_BYTES * 2];
+    char colon_separated[ED301V1_SEED_BYTES * 3 - 1];
     size_t index;
 
-    for (index = 0; index < D00_SEED_BYTES; index++) {
+    for (index = 0; index < ED301V1_SEED_BYTES; index++) {
         compact[index * 2] = hex[seed[index] >> 4];
         compact[index * 2 + 1] = hex[seed[index] & 0x0f];
         colon_separated[index * 3] = compact[index * 2];
         colon_separated[index * 3 + 1] = compact[index * 2 + 1];
-        if (index + 1 < D00_SEED_BYTES)
+        if (index + 1 < ED301V1_SEED_BYTES)
             colon_separated[index * 3 + 2] = ':';
     }
     return contains_ascii_case_insensitive(
@@ -100,8 +100,8 @@ static int exported_material_matches(
     const OSSL_PARAM *parameters,
     int wants_private,
     int wants_public,
-    const unsigned char expected_private[D00_SEED_BYTES],
-    const unsigned char expected_public[D00_PUB_BYTES])
+    const unsigned char expected_private[ED301V1_SEED_BYTES],
+    const unsigned char expected_public[ED301V1_PUB_BYTES])
 {
     const OSSL_PARAM *parameter;
     const OSSL_PARAM *private_parameter;
@@ -127,52 +127,52 @@ static int exported_material_matches(
     if (wants_private
             && (private_parameter->data_type != OSSL_PARAM_OCTET_STRING
                 || private_parameter->data == NULL
-                || private_parameter->data_size != D00_SEED_BYTES
+                || private_parameter->data_size != ED301V1_SEED_BYTES
                 || memcmp(private_parameter->data, expected_private,
-                    D00_SEED_BYTES) != 0))
+                    ED301V1_SEED_BYTES) != 0))
         return 0;
     if (wants_public
             && (public_parameter->data_type != OSSL_PARAM_OCTET_STRING
                 || public_parameter->data == NULL
-                || public_parameter->data_size != D00_PUB_BYTES
+                || public_parameter->data_size != ED301V1_PUB_BYTES
                 || memcmp(public_parameter->data, expected_public,
-                    D00_PUB_BYTES) != 0))
+                    ED301V1_PUB_BYTES) != 0))
         return 0;
     return 1;
 }
 
 int main(void)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = d00_load(libctx, &deflt);
+    OSSL_PROVIDER *v1 = ed301v1_load(libctx, &deflt);
     const POSITIVE_CASE *base = &POSITIVE_CASES[0];
 
-    D00_CHECK(draft != NULL, "provider load");
+    ED301V1_CHECK(v1 != NULL, "provider load");
 
     /* Seed import derives the exact vector public key. */
     {
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, base->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, base->seed);
         unsigned char public_out[38] = { 0 };
         unsigned char seed_out[38] = { 0 };
         size_t out_len = 0;
 
-        D00_CHECK(pkey != NULL, "seed import");
-        D00_CHECK(pkey != NULL
+        ED301V1_CHECK(pkey != NULL, "seed import");
+        ED301V1_CHECK(pkey != NULL
                 && EVP_PKEY_get_octet_string_param(pkey,
                     OSSL_PKEY_PARAM_PUB_KEY, public_out,
                     sizeof(public_out), &out_len) == 1
-                && out_len == D00_PUB_BYTES
+                && out_len == ED301V1_PUB_BYTES
                 && memcmp(public_out, base->public_key,
-                    D00_PUB_BYTES) == 0,
+                    ED301V1_PUB_BYTES) == 0,
             "derived public key matches the frozen key-derivation vector");
-        D00_CHECK(pkey != NULL
+        ED301V1_CHECK(pkey != NULL
                 && EVP_PKEY_get_octet_string_param(pkey,
                     OSSL_PKEY_PARAM_PRIV_KEY, seed_out,
                     sizeof(seed_out), &out_len) == 1
-                && out_len == D00_SEED_BYTES
-                && memcmp(seed_out, base->seed, D00_SEED_BYTES) == 0,
+                && out_len == ED301V1_SEED_BYTES
+                && memcmp(seed_out, base->seed, ED301V1_SEED_BYTES) == 0,
             "seed export is byte-exact");
 
         /* Undersized output: no partial write. */
@@ -183,7 +183,7 @@ int main(void)
             memset(small, 0xa5, sizeof(small));
             memset(canary, 0xa5, sizeof(canary));
             out_len = 0;
-            D00_CHECK(pkey != NULL
+            ED301V1_CHECK(pkey != NULL
                     && EVP_PKEY_get_octet_string_param(pkey,
                         OSSL_PKEY_PARAM_PUB_KEY, small,
                         sizeof(small), &out_len) != 1
@@ -197,16 +197,16 @@ int main(void)
             unsigned char raw[38];
             size_t raw_len = sizeof(raw);
 
-            D00_CHECK(pkey != NULL
+            ED301V1_CHECK(pkey != NULL
                     && EVP_PKEY_get_raw_public_key(pkey, raw, &raw_len) == 1
-                    && raw_len == D00_PUB_BYTES
-                    && memcmp(raw, base->public_key, D00_PUB_BYTES) == 0,
+                    && raw_len == ED301V1_PUB_BYTES
+                    && memcmp(raw, base->public_key, ED301V1_PUB_BYTES) == 0,
                 "raw public getter");
             raw_len = sizeof(raw);
-            D00_CHECK(pkey != NULL
+            ED301V1_CHECK(pkey != NULL
                     && EVP_PKEY_get_raw_private_key(pkey, raw, &raw_len) == 1
-                    && raw_len == D00_SEED_BYTES
-                    && memcmp(raw, base->seed, D00_SEED_BYTES) == 0,
+                    && raw_len == ED301V1_SEED_BYTES
+                    && memcmp(raw, base->seed, ED301V1_SEED_BYTES) == 0,
                 "raw private getter");
         }
 
@@ -216,7 +216,7 @@ int main(void)
             int security_bits = 0;
             int max_size = 0;
 
-            D00_CHECK(pkey != NULL
+            ED301V1_CHECK(pkey != NULL
                     && EVP_PKEY_get_int_param(pkey, OSSL_PKEY_PARAM_BITS,
                         &bits) == 1
                     && bits == 301
@@ -232,27 +232,27 @@ int main(void)
         }
 
         /*
-         * K6 -- Draft public-key policy and OpenSSL
+         * K6 -- Ed301-v1 public-key policy and OpenSSL
          * test/evp_extra_test.c test_EVP_PKEY_check() pattern: valid keypair
          * validation succeeds through check and public_check.
          */
         {
             EVP_PKEY_CTX *check_ctx = EVP_PKEY_CTX_new_from_pkey(
-                libctx, pkey, D00_PROP);
+                libctx, pkey, ED301V1_PROP);
 
-            D00_CHECK(check_ctx != NULL
+            ED301V1_CHECK(check_ctx != NULL
                     && EVP_PKEY_check(check_ctx) == 1,
                 "full key validation");
-            D00_CHECK(check_ctx != NULL
+            ED301V1_CHECK(check_ctx != NULL
                     && EVP_PKEY_public_check(check_ctx) == 1,
                 "public validation");
-            D00_CHECK(check_ctx != NULL
+            ED301V1_CHECK(check_ctx != NULL
                     && EVP_PKEY_public_check_quick(check_ctx) == 1,
                 "quick public validation");
-            D00_CHECK(check_ctx != NULL
+            ED301V1_CHECK(check_ctx != NULL
                     && EVP_PKEY_private_check(check_ctx) == 1,
                 "private validation");
-            D00_CHECK(check_ctx != NULL
+            ED301V1_CHECK(check_ctx != NULL
                     && EVP_PKEY_pairwise_check(check_ctx) == 1,
                 "pairwise validation");
             EVP_PKEY_CTX_free(check_ctx);
@@ -264,27 +264,27 @@ int main(void)
          */
         {
             EVP_PKEY *copy = EVP_PKEY_dup(pkey);
-            EVP_PKEY *public_only = d00_key_from_public(
-                libctx, base->public_key, D00_PUB_BYTES);
-            EVP_PKEY *same_public = d00_key_from_public(
-                libctx, base->public_key, D00_PUB_BYTES);
-            EVP_PKEY *other_public = d00_key_from_public(
-                libctx, POSITIVE_CASES[1].public_key, D00_PUB_BYTES);
-            EVP_PKEY *other_pair = d00_key_from_seed(
+            EVP_PKEY *public_only = ed301v1_key_from_public(
+                libctx, base->public_key, ED301V1_PUB_BYTES);
+            EVP_PKEY *same_public = ed301v1_key_from_public(
+                libctx, base->public_key, ED301V1_PUB_BYTES);
+            EVP_PKEY *other_public = ed301v1_key_from_public(
+                libctx, POSITIVE_CASES[1].public_key, ED301V1_PUB_BYTES);
+            EVP_PKEY *other_pair = ed301v1_key_from_seed(
                 libctx, POSITIVE_CASES[1].seed);
 
-            D00_CHECK(copy != NULL && EVP_PKEY_eq(pkey, copy) == 1,
+            ED301V1_CHECK(copy != NULL && EVP_PKEY_eq(pkey, copy) == 1,
                 "duplicate matches");
-            D00_CHECK(public_only != NULL
+            ED301V1_CHECK(public_only != NULL
                     && EVP_PKEY_eq(pkey, public_only) == 1,
                 "public-only key matches the pair on the public component");
-            D00_CHECK(public_only != NULL && same_public != NULL
+            ED301V1_CHECK(public_only != NULL && same_public != NULL
                     && EVP_PKEY_eq(public_only, same_public) == 1,
                 "equal public-only keys match");
-            D00_CHECK(public_only != NULL && other_public != NULL
+            ED301V1_CHECK(public_only != NULL && other_public != NULL
                     && EVP_PKEY_eq(public_only, other_public) == 0,
                 "different public-only keys do not match");
-            D00_CHECK(other_pair != NULL
+            ED301V1_CHECK(other_pair != NULL
                     && EVP_PKEY_eq(pkey, other_pair) == 0,
                 "deterministic different keypairs do not match");
             EVP_PKEY_free(copy);
@@ -303,7 +303,7 @@ int main(void)
          */
         {
             EVP_PKEY_CTX *from_ctx = EVP_PKEY_CTX_new_from_name(
-                libctx, D00_ALG, D00_PROP);
+                libctx, ED301V1_ALG, ED301V1_PROP);
             const OSSL_PARAM *private_types = from_ctx == NULL ? NULL
                 : EVP_PKEY_fromdata_settable(
                     from_ctx, EVP_PKEY_PRIVATE_KEY);
@@ -316,29 +316,29 @@ int main(void)
             OSSL_PARAM *public_export = NULL;
             OSSL_PARAM *keypair_export = NULL;
 
-            D00_CHECK(descriptor_matches(private_types, 1, 0),
+            ED301V1_CHECK(descriptor_matches(private_types, 1, 0),
                 "private import descriptor is exactly one octet-string seed");
-            D00_CHECK(descriptor_matches(public_types, 0, 1),
+            ED301V1_CHECK(descriptor_matches(public_types, 0, 1),
                 "public import descriptor is exactly one octet-string key");
-            D00_CHECK(descriptor_matches(keypair_types, 1, 1),
+            ED301V1_CHECK(descriptor_matches(keypair_types, 1, 1),
                 "keypair import descriptor declares both octet strings");
-            D00_CHECK(from_ctx != NULL
+            ED301V1_CHECK(from_ctx != NULL
                     && EVP_PKEY_fromdata_settable(from_ctx, 0) == NULL,
                 "empty selection has no import descriptor");
 
-            D00_CHECK(pkey != NULL
+            ED301V1_CHECK(pkey != NULL
                     && EVP_PKEY_todata(pkey, EVP_PKEY_PRIVATE_KEY,
                         &private_export) == 1
                     && exported_material_matches(private_export, 1, 0,
                         base->seed, base->public_key),
                 "private export contains exactly the byte-exact seed");
-            D00_CHECK(pkey != NULL
+            ED301V1_CHECK(pkey != NULL
                     && EVP_PKEY_todata(pkey, EVP_PKEY_PUBLIC_KEY,
                         &public_export) == 1
                     && exported_material_matches(public_export, 0, 1,
                         base->seed, base->public_key),
                 "public export contains exactly the byte-exact public key");
-            D00_CHECK(pkey != NULL
+            ED301V1_CHECK(pkey != NULL
                     && EVP_PKEY_todata(pkey, EVP_PKEY_KEYPAIR,
                         &keypair_export) == 1
                     && exported_material_matches(keypair_export, 1, 1,
@@ -356,13 +356,13 @@ int main(void)
 
     /* Public-only import and validation. */
     {
-        EVP_PKEY *pkey = d00_key_from_public(
-            libctx, base->public_key, D00_PUB_BYTES);
+        EVP_PKEY *pkey = ed301v1_key_from_public(
+            libctx, base->public_key, ED301V1_PUB_BYTES);
         unsigned char seed_out[38];
         size_t out_len = 0;
 
-        D00_CHECK(pkey != NULL, "public-only import");
-        D00_CHECK(pkey != NULL
+        ED301V1_CHECK(pkey != NULL, "public-only import");
+        ED301V1_CHECK(pkey != NULL
                 && EVP_PKEY_get_octet_string_param(pkey,
                     OSSL_PKEY_PARAM_PRIV_KEY, seed_out,
                     sizeof(seed_out), &out_len) != 1,
@@ -384,7 +384,7 @@ int main(void)
             long printed_length = text == NULL
                 ? -1 : BIO_get_mem_data(text, &printed);
 
-            D00_CHECK(text != NULL
+            ED301V1_CHECK(text != NULL
                     && (print_result == 0 || print_result == 1)
                     && printed_length >= 0
                     && (printed_length == 0
@@ -400,27 +400,27 @@ int main(void)
 
     /* A private-only selection requires only the seed and derives public. */
     {
-        EVP_PKEY *pkey = d00_key_from_params(
+        EVP_PKEY *pkey = ed301v1_key_from_params(
             libctx, EVP_PKEY_PRIVATE_KEY,
-            base->seed, D00_SEED_BYTES, NULL, 0);
-        unsigned char public_out[D00_PUB_BYTES] = { 0 };
+            base->seed, ED301V1_SEED_BYTES, NULL, 0);
+        unsigned char public_out[ED301V1_PUB_BYTES] = { 0 };
         size_t public_length = 0;
 
-        D00_CHECK(pkey != NULL,
+        ED301V1_CHECK(pkey != NULL,
             "private-only import derives a complete internal key");
-        D00_CHECK(pkey != NULL
+        ED301V1_CHECK(pkey != NULL
                 && EVP_PKEY_get_octet_string_param(pkey,
                     OSSL_PKEY_PARAM_PUB_KEY, public_out,
                     sizeof(public_out), &public_length) == 1
-                && public_length == D00_PUB_BYTES
+                && public_length == ED301V1_PUB_BYTES
                 && memcmp(public_out, base->public_key,
-                    D00_PUB_BYTES) == 0,
+                    ED301V1_PUB_BYTES) == 0,
             "private-only import derives the byte-exact public key");
         EVP_PKEY_free(pkey);
     }
 
     /*
-     * K6 -- Draft canonical-prime-subgroup policy.  Unlike generic OpenSSL
+     * K6 -- Ed301-v1 canonical-prime-subgroup policy.  Unlike generic OpenSSL
      * test/evp_extra_test.c test_EVP_PKEY_check() fixtures, this provider
      * validates public material atomically during import.  Torsion and mixed-
      * order encodings therefore fail before an EVP_PKEY exists to check.
@@ -435,10 +435,10 @@ int main(void)
                 point_index++) {
             const POINT_CASE *point =
                 &POINT_CASES[invalid_point_indices[point_index]];
-            EVP_PKEY *invalid = d00_key_from_public(
+            EVP_PKEY *invalid = ed301v1_key_from_public(
                 libctx, point->encoding, point->encoding_len);
 
-            D00_CHECK(invalid == NULL,
+            ED301V1_CHECK(invalid == NULL,
                 "K6 %s rejected before public_check", point->id);
             ERR_clear_error();
             EVP_PKEY_free(invalid);
@@ -447,81 +447,81 @@ int main(void)
 
     /* Keypair import with matching public key. */
     {
-        EVP_PKEY *pkey = d00_key_from_params(
+        EVP_PKEY *pkey = ed301v1_key_from_params(
             libctx, EVP_PKEY_KEYPAIR,
-            base->seed, D00_SEED_BYTES,
-            base->public_key, D00_PUB_BYTES);
+            base->seed, ED301V1_SEED_BYTES,
+            base->public_key, ED301V1_PUB_BYTES);
 
-        D00_CHECK(pkey != NULL, "matching keypair import");
+        ED301V1_CHECK(pkey != NULL, "matching keypair import");
         EVP_PKEY_free(pkey);
     }
 
     /*
      * K1/K2 -- OpenSSL test/evp_extra_test.c
-     * test_set_get_raw_keys_int() pattern plus the draft's exact 38-byte raw
+     * test_set_get_raw_keys_int() pattern plus the v1's exact 38-byte raw
      * key contract: _ex constructors round-trip exactly and all adjacent
      * lengths, including zero, are rejected.
      */
     {
         EVP_PKEY *raw_private = EVP_PKEY_new_raw_private_key_ex(
-            libctx, D00_ALG, D00_PROP, base->seed, D00_SEED_BYTES);
+            libctx, ED301V1_ALG, ED301V1_PROP, base->seed, ED301V1_SEED_BYTES);
         EVP_PKEY *raw_public = EVP_PKEY_new_raw_public_key_ex(
-            libctx, D00_ALG, D00_PROP,
-            base->public_key, D00_PUB_BYTES);
-        unsigned char private_input[D00_SEED_BYTES + 1];
-        unsigned char public_input[D00_PUB_BYTES + 1];
-        unsigned char output[D00_SEED_BYTES];
+            libctx, ED301V1_ALG, ED301V1_PROP,
+            base->public_key, ED301V1_PUB_BYTES);
+        unsigned char private_input[ED301V1_SEED_BYTES + 1];
+        unsigned char public_input[ED301V1_PUB_BYTES + 1];
+        unsigned char output[ED301V1_SEED_BYTES];
         static const size_t invalid_lengths[] = { 0, 37, 39 };
         size_t output_length = 0;
         size_t length_index;
 
-        memcpy(private_input, base->seed, D00_SEED_BYTES);
-        memcpy(public_input, base->public_key, D00_PUB_BYTES);
-        private_input[D00_SEED_BYTES] = 0;
-        public_input[D00_PUB_BYTES] = 0;
+        memcpy(private_input, base->seed, ED301V1_SEED_BYTES);
+        memcpy(public_input, base->public_key, ED301V1_PUB_BYTES);
+        private_input[ED301V1_SEED_BYTES] = 0;
+        public_input[ED301V1_PUB_BYTES] = 0;
 
-        D00_CHECK(raw_private != NULL
+        ED301V1_CHECK(raw_private != NULL
                 && EVP_PKEY_get_raw_private_key(
                     raw_private, NULL, &output_length) == 1
-                && output_length == D00_SEED_BYTES,
+                && output_length == ED301V1_SEED_BYTES,
             "raw-private length query returns exactly 38");
         output_length = sizeof(output);
-        D00_CHECK(raw_private != NULL
+        ED301V1_CHECK(raw_private != NULL
                 && EVP_PKEY_get_raw_private_key(
                     raw_private, output, &output_length) == 1
-                && output_length == D00_SEED_BYTES
-                && memcmp(output, base->seed, D00_SEED_BYTES) == 0,
+                && output_length == ED301V1_SEED_BYTES
+                && memcmp(output, base->seed, ED301V1_SEED_BYTES) == 0,
             "raw-private bytes round-trip exactly");
 
         output_length = 0;
-        D00_CHECK(raw_private != NULL
+        ED301V1_CHECK(raw_private != NULL
                 && EVP_PKEY_get_raw_public_key(
                     raw_private, NULL, &output_length) == 1
-                && output_length == D00_PUB_BYTES,
+                && output_length == ED301V1_PUB_BYTES,
             "raw-private key derives a 38-byte public length");
         output_length = sizeof(output);
-        D00_CHECK(raw_private != NULL
+        ED301V1_CHECK(raw_private != NULL
                 && EVP_PKEY_get_raw_public_key(
                     raw_private, output, &output_length) == 1
-                && output_length == D00_PUB_BYTES
-                && memcmp(output, base->public_key, D00_PUB_BYTES) == 0,
+                && output_length == ED301V1_PUB_BYTES
+                && memcmp(output, base->public_key, ED301V1_PUB_BYTES) == 0,
             "raw-private key derives the byte-exact public key");
 
         output_length = 0;
-        D00_CHECK(raw_public != NULL
+        ED301V1_CHECK(raw_public != NULL
                 && EVP_PKEY_get_raw_public_key(
                     raw_public, NULL, &output_length) == 1
-                && output_length == D00_PUB_BYTES,
+                && output_length == ED301V1_PUB_BYTES,
             "raw-public length query returns exactly 38");
         output_length = sizeof(output);
-        D00_CHECK(raw_public != NULL
+        ED301V1_CHECK(raw_public != NULL
                 && EVP_PKEY_get_raw_public_key(
                     raw_public, output, &output_length) == 1
-                && output_length == D00_PUB_BYTES
-                && memcmp(output, base->public_key, D00_PUB_BYTES) == 0,
+                && output_length == ED301V1_PUB_BYTES
+                && memcmp(output, base->public_key, ED301V1_PUB_BYTES) == 0,
             "raw-public bytes round-trip exactly");
         output_length = 0;
-        D00_CHECK(raw_public != NULL
+        ED301V1_CHECK(raw_public != NULL
                 && EVP_PKEY_get_raw_private_key(
                     raw_public, NULL, &output_length) != 1,
             "raw-public key exposes no private length or seed");
@@ -533,13 +533,13 @@ int main(void)
                 length_index++) {
             const size_t length = invalid_lengths[length_index];
             EVP_PKEY *bad_private = EVP_PKEY_new_raw_private_key_ex(
-                libctx, D00_ALG, D00_PROP, private_input, length);
+                libctx, ED301V1_ALG, ED301V1_PROP, private_input, length);
             EVP_PKEY *bad_public = EVP_PKEY_new_raw_public_key_ex(
-                libctx, D00_ALG, D00_PROP, public_input, length);
+                libctx, ED301V1_ALG, ED301V1_PROP, public_input, length);
 
-            D00_CHECK(bad_private == NULL,
+            ED301V1_CHECK(bad_private == NULL,
                 "raw-private length %zu is rejected", length);
-            D00_CHECK(bad_public == NULL,
+            ED301V1_CHECK(bad_public == NULL,
                 "raw-public length %zu is rejected", length);
             ERR_clear_error();
             EVP_PKEY_free(bad_private);
@@ -561,35 +561,35 @@ int main(void)
         memcpy(wrong_public, POSITIVE_CASES[1].public_key,
             sizeof(wrong_public));
         memcpy(short_seed, base->seed, sizeof(short_seed));
-        memcpy(long_seed, base->seed, D00_SEED_BYTES);
+        memcpy(long_seed, base->seed, ED301V1_SEED_BYTES);
         long_seed[38] = 0;
 
         /*
          * K7 -- Provider atomic-keypair contract: a seed plus a different,
-         * individually valid draft public key is rejected during import, so
+         * individually valid v1 public key is rejected during import, so
          * no inconsistent EVP_PKEY can reach EVP_PKEY_check().
          */
-        bad = d00_key_from_params(libctx, EVP_PKEY_KEYPAIR,
-            base->seed, D00_SEED_BYTES, wrong_public, D00_PUB_BYTES);
-        D00_CHECK(bad == NULL, "mismatched keypair import is rejected");
+        bad = ed301v1_key_from_params(libctx, EVP_PKEY_KEYPAIR,
+            base->seed, ED301V1_SEED_BYTES, wrong_public, ED301V1_PUB_BYTES);
+        ED301V1_CHECK(bad == NULL, "mismatched keypair import is rejected");
         ERR_clear_error();
 
-        bad = d00_key_from_params(libctx, EVP_PKEY_KEYPAIR,
+        bad = ed301v1_key_from_params(libctx, EVP_PKEY_KEYPAIR,
             short_seed, sizeof(short_seed), NULL, 0);
-        D00_CHECK(bad == NULL, "37-byte seed is rejected");
+        ED301V1_CHECK(bad == NULL, "37-byte seed is rejected");
         ERR_clear_error();
 
-        bad = d00_key_from_params(libctx, EVP_PKEY_KEYPAIR,
+        bad = ed301v1_key_from_params(libctx, EVP_PKEY_KEYPAIR,
             long_seed, sizeof(long_seed), NULL, 0);
-        D00_CHECK(bad == NULL, "39-byte seed is rejected");
+        ED301V1_CHECK(bad == NULL, "39-byte seed is rejected");
         ERR_clear_error();
 
-        bad = d00_key_from_public(libctx, base->public_key, 37);
-        D00_CHECK(bad == NULL, "37-byte public key is rejected");
+        bad = ed301v1_key_from_public(libctx, base->public_key, 37);
+        ED301V1_CHECK(bad == NULL, "37-byte public key is rejected");
         ERR_clear_error();
 
-        bad = d00_key_from_public(libctx, base->public_key, 39);
-        D00_CHECK(bad == NULL,
+        bad = ed301v1_key_from_public(libctx, base->public_key, 39);
+        ED301V1_CHECK(bad == NULL,
             "39-byte public key length is rejected");
         ERR_clear_error();
 
@@ -598,15 +598,15 @@ int main(void)
          * KEYPAIR selection.  Match the built-in Ed25519/Ed448 KEYMGMT
          * contract without inventing a private component.
          */
-        bad = d00_key_from_params(libctx, EVP_PKEY_KEYPAIR,
-            NULL, 0, base->public_key, D00_PUB_BYTES);
-        D00_CHECK(bad != NULL,
+        bad = ed301v1_key_from_params(libctx, EVP_PKEY_KEYPAIR,
+            NULL, 0, base->public_key, ED301V1_PUB_BYTES);
+        ED301V1_CHECK(bad != NULL,
             "keypair selection accepts a public-only raw key");
         if (bad != NULL) {
             unsigned char seed_out[38];
             size_t out_len = 0;
 
-            D00_CHECK(EVP_PKEY_get_octet_string_param(bad,
+            ED301V1_CHECK(EVP_PKEY_get_octet_string_param(bad,
                     OSSL_PKEY_PARAM_PRIV_KEY, seed_out,
                     sizeof(seed_out), &out_len) != 1,
                 "public-only raw key does not acquire a private seed");
@@ -615,23 +615,23 @@ int main(void)
         EVP_PKEY_free(bad);
 
         /* Missing selection material: empty parameter list. */
-        bad = d00_key_from_params(libctx, EVP_PKEY_KEYPAIR,
+        bad = ed301v1_key_from_params(libctx, EVP_PKEY_KEYPAIR,
             NULL, 0, NULL, 0);
-        D00_CHECK(bad == NULL, "empty import is rejected");
+        ED301V1_CHECK(bad == NULL, "empty import is rejected");
         ERR_clear_error();
 
         /* Malformed parameter type: UTF8 string instead of octets. */
         {
             EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(
-                libctx, D00_ALG, D00_PROP);
+                libctx, ED301V1_ALG, ED301V1_PROP);
             OSSL_PARAM params[2];
             EVP_PKEY *pkey = NULL;
 
             params[0] = OSSL_PARAM_construct_utf8_string(
                 OSSL_PKEY_PARAM_PUB_KEY,
-                (char *)base->public_key, D00_PUB_BYTES);
+                (char *)base->public_key, ED301V1_PUB_BYTES);
             params[1] = OSSL_PARAM_construct_end();
-            D00_CHECK(ctx != NULL
+            ED301V1_CHECK(ctx != NULL
                     && EVP_PKEY_fromdata_init(ctx) == 1
                     && EVP_PKEY_fromdata(ctx, &pkey,
                         EVP_PKEY_PUBLIC_KEY, params) != 1
@@ -648,13 +648,13 @@ int main(void)
      * keypair must not partially replace the already valid key.
      */
     {
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, base->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, base->seed);
         EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(
-            libctx, D00_ALG, D00_PROP);
-        unsigned char wrong_public[D00_PUB_BYTES];
-        unsigned char seed_out[D00_SEED_BYTES] = { 0 };
-        unsigned char public_out[D00_PUB_BYTES] = { 0 };
-        unsigned char signature[D00_SIG_BYTES] = { 0 };
+            libctx, ED301V1_ALG, ED301V1_PROP);
+        unsigned char wrong_public[ED301V1_PUB_BYTES];
+        unsigned char seed_out[ED301V1_SEED_BYTES] = { 0 };
+        unsigned char public_out[ED301V1_PUB_BYTES] = { 0 };
+        unsigned char signature[ED301V1_SIG_BYTES] = { 0 };
         size_t output_length = 0;
         OSSL_PARAM params[3];
         int initialized;
@@ -663,39 +663,39 @@ int main(void)
         memcpy(wrong_public, POSITIVE_CASES[1].public_key,
             sizeof(wrong_public));
         params[0] = OSSL_PARAM_construct_octet_string(
-            OSSL_PKEY_PARAM_PRIV_KEY, (void *)base->seed, D00_SEED_BYTES);
+            OSSL_PKEY_PARAM_PRIV_KEY, (void *)base->seed, ED301V1_SEED_BYTES);
         params[1] = OSSL_PARAM_construct_octet_string(
-            OSSL_PKEY_PARAM_PUB_KEY, wrong_public, D00_PUB_BYTES);
+            OSSL_PKEY_PARAM_PUB_KEY, wrong_public, ED301V1_PUB_BYTES);
         params[2] = OSSL_PARAM_construct_end();
 
         initialized = ctx != NULL && EVP_PKEY_fromdata_init(ctx) == 1;
-        D00_CHECK(pkey != NULL && initialized,
+        ED301V1_CHECK(pkey != NULL && initialized,
             "transactional reimport setup");
         if (pkey != NULL && initialized)
             reimport_result = EVP_PKEY_fromdata(
                 ctx, &pkey, EVP_PKEY_KEYPAIR, params);
-        D00_CHECK(reimport_result != 1,
+        ED301V1_CHECK(reimport_result != 1,
             "mismatched reimport is rejected");
         ERR_clear_error();
 
-        D00_CHECK(pkey != NULL
+        ED301V1_CHECK(pkey != NULL
                 && EVP_PKEY_get_octet_string_param(pkey,
                     OSSL_PKEY_PARAM_PRIV_KEY, seed_out,
                     sizeof(seed_out), &output_length) == 1
-                && output_length == D00_SEED_BYTES
-                && memcmp(seed_out, base->seed, D00_SEED_BYTES) == 0
+                && output_length == ED301V1_SEED_BYTES
+                && memcmp(seed_out, base->seed, ED301V1_SEED_BYTES) == 0
                 && EVP_PKEY_get_octet_string_param(pkey,
                     OSSL_PKEY_PARAM_PUB_KEY, public_out,
                     sizeof(public_out), &output_length) == 1
-                && output_length == D00_PUB_BYTES
+                && output_length == ED301V1_PUB_BYTES
                 && memcmp(public_out, base->public_key,
-                    D00_PUB_BYTES) == 0,
+                    ED301V1_PUB_BYTES) == 0,
             "failed reimport leaves both original components unchanged");
-        D00_CHECK(pkey != NULL
-                && d00_digest_sign(libctx, pkey, base->message,
+        ED301V1_CHECK(pkey != NULL
+                && ed301v1_digest_sign(libctx, pkey, base->message,
                     base->message_len, signature)
                 && memcmp(signature, base->signature,
-                    D00_SIG_BYTES) == 0,
+                    ED301V1_SIG_BYTES) == 0,
             "failed reimport leaves the original signing key usable");
 
         OPENSSL_cleanse(seed_out, sizeof(seed_out));
@@ -705,18 +705,18 @@ int main(void)
 
     /* Encoded-public setter policy. */
     {
-        EVP_PKEY *pkey = d00_key_from_seed(libctx, base->seed);
+        EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, base->seed);
         unsigned char different[38];
 
         memcpy(different, base->public_key, sizeof(different));
         different[1] ^= 1;
-        D00_CHECK(pkey != NULL
+        ED301V1_CHECK(pkey != NULL
                 && EVP_PKEY_set1_encoded_public_key(pkey,
-                    base->public_key, D00_PUB_BYTES) == 1,
+                    base->public_key, ED301V1_PUB_BYTES) == 1,
             "matching encoded public key is accepted");
-        D00_CHECK(pkey != NULL
+        ED301V1_CHECK(pkey != NULL
                 && EVP_PKEY_set1_encoded_public_key(pkey,
-                    different, D00_PUB_BYTES) != 1,
+                    different, ED301V1_PUB_BYTES) != 1,
             "different encoded public key cannot replace the pair");
         ERR_clear_error();
         EVP_PKEY_free(pkey);
@@ -724,7 +724,7 @@ int main(void)
 
     /* Key generation produces a valid, self-consistent pair. */
     {
-        EVP_PKEY *generated = d00_keygen(libctx);
+        EVP_PKEY *generated = ed301v1_keygen(libctx);
         EVP_PKEY *reimported = NULL;
         unsigned char seed_out[38];
         unsigned char public_out[38];
@@ -732,34 +732,34 @@ int main(void)
         size_t out_len = 0;
         static const unsigned char probe[] = "Ed301-EdDSA-v1 keygen probe";
 
-        D00_CHECK(generated != NULL, "key generation");
+        ED301V1_CHECK(generated != NULL, "key generation");
         if (generated != NULL) {
             EVP_PKEY_CTX *check_ctx = EVP_PKEY_CTX_new_from_pkey(
-                libctx, generated, D00_PROP);
+                libctx, generated, ED301V1_PROP);
 
-            D00_CHECK(check_ctx != NULL
+            ED301V1_CHECK(check_ctx != NULL
                     && EVP_PKEY_check(check_ctx) == 1,
                 "generated pair validates");
             EVP_PKEY_CTX_free(check_ctx);
 
-            D00_CHECK(EVP_PKEY_get_octet_string_param(generated,
+            ED301V1_CHECK(EVP_PKEY_get_octet_string_param(generated,
                     OSSL_PKEY_PARAM_PRIV_KEY, seed_out,
                     sizeof(seed_out), &out_len) == 1
-                    && out_len == D00_SEED_BYTES
+                    && out_len == ED301V1_SEED_BYTES
                     && EVP_PKEY_get_octet_string_param(generated,
                         OSSL_PKEY_PARAM_PUB_KEY, public_out,
                         sizeof(public_out), &out_len) == 1
-                    && out_len == D00_PUB_BYTES,
+                    && out_len == ED301V1_PUB_BYTES,
                 "generated components export");
 
-            reimported = d00_key_from_seed(libctx, seed_out);
-            D00_CHECK(reimported != NULL
+            reimported = ed301v1_key_from_seed(libctx, seed_out);
+            ED301V1_CHECK(reimported != NULL
                     && EVP_PKEY_eq(generated, reimported) == 1,
                 "generated seed reimports to an equal key");
 
-            D00_CHECK(d00_digest_sign(libctx, generated, probe,
+            ED301V1_CHECK(ed301v1_digest_sign(libctx, generated, probe,
                     sizeof(probe) - 1, sig)
-                    && d00_digest_verify(libctx, generated, probe,
+                    && ed301v1_digest_verify(libctx, generated, probe,
                         sizeof(probe) - 1, sig, sizeof(sig)),
                 "generated key signs and verifies");
 
@@ -770,10 +770,10 @@ int main(void)
 
     /* Two generated keys are distinct and do not match. */
     {
-        EVP_PKEY *first = d00_keygen(libctx);
-        EVP_PKEY *second = d00_keygen(libctx);
+        EVP_PKEY *first = ed301v1_keygen(libctx);
+        EVP_PKEY *second = ed301v1_keygen(libctx);
 
-        D00_CHECK(first != NULL && second != NULL
+        ED301V1_CHECK(first != NULL && second != NULL
                 && EVP_PKEY_eq(first, second) != 1,
             "independent generated keys do not match");
         ERR_clear_error();
@@ -781,8 +781,8 @@ int main(void)
         EVP_PKEY_free(second);
     }
 
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
-    return d00_summary("provider_keymgmt");
+    return ed301v1_summary("provider_keymgmt");
 }

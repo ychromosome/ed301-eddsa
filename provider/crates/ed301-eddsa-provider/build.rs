@@ -100,16 +100,16 @@ fn main() {
         "provider artifact features are mutually exclusive"
     );
     if failpoint {
-        build.define("ED301D00_TEST_FAILPOINT_ARTIFACT", "1");
+        build.define("ED301V1_TEST_FAILPOINT_ARTIFACT", "1");
     }
     if pki_experiment {
-        build.define("ED301D00_PKI_EXPERIMENT_ARTIFACT", "1");
+        build.define("ED301V1_PKI_EXPERIMENT_ARTIFACT", "1");
     }
     if tls_experiment {
-        build.define("ED301D00_TLS_EXPERIMENT_ARTIFACT", "1");
+        build.define("ED301V1_TLS_EXPERIMENT_ARTIFACT", "1");
     }
     if tls_collider {
-        build.define("ED301D00_TLS_COLLIDER_ARTIFACT", "1");
+        build.define("ED301V1_TLS_COLLIDER_ARTIFACT", "1");
     }
     build
         .compiler("/usr/bin/gcc")

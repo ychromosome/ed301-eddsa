@@ -207,7 +207,7 @@ unsafe impl<T: Send + Sync> Send for Shared<T> {}
 unsafe impl<T: Send + Sync> Sync for Shared<T> {}
 
 #[derive(Clone, Default)]
-pub(crate) struct DraftKey {
+pub(crate) struct V1Key {
     private: Option<PrivateKeyMaterial>,
     public: Option<Shared<VerifyingKey>>,
 }
@@ -221,7 +221,7 @@ enum SignatureOperation {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct DraftSignatureContext {
+pub(crate) struct V1SignatureContext {
     operation: SignatureOperation,
     context: NativeContext,
 }
@@ -361,7 +361,7 @@ fn ffi_pointer(operation: impl FnOnce() -> *mut c_void) -> *mut c_void {
 pub(crate) extern "C" fn key_new() -> *mut c_void {
     ffi_pointer(|| {
         hit_panic_failpoint("key_new");
-        match try_box_at("key_new", DraftKey::default()) {
+        match try_box_at("key_new", V1Key::default()) {
             Some(key) => Box::into_raw(key).cast(),
             None => core::ptr::null_mut(),
         }
@@ -373,7 +373,7 @@ pub(crate) unsafe extern "C" fn key_free(key: *mut c_void) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         if !key.is_null() {
             // SAFETY: The shim returns every Rust-owned key pointer at most once.
-            drop(unsafe { Box::from_raw(key.cast::<DraftKey>()) });
+            drop(unsafe { Box::from_raw(key.cast::<V1Key>()) });
         }
     }));
 }
@@ -389,7 +389,7 @@ pub(crate) unsafe extern "C" fn key_import(
     ffi_int(|| {
         hit_panic_failpoint("key_import");
         // SAFETY: The shim passes a live Rust-owned key object.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_mut() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_mut() }) else {
             return 0;
         };
 
@@ -446,7 +446,7 @@ pub(crate) unsafe extern "C" fn key_import(
             }
             (None, None) => None,
         };
-        *key = DraftKey { private, public };
+        *key = V1Key { private, public };
         1
     })
 }
@@ -459,7 +459,7 @@ pub(crate) unsafe extern "C" fn key_set_encoded_public(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes a live Rust-owned key object.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_mut() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_mut() }) else {
             return 0;
         };
         // SAFETY: Parameter storage is readable for this call.
@@ -510,7 +510,7 @@ pub(crate) unsafe extern "C" fn key_from_seed(seed: *const u8, seed_len: usize) 
             return core::ptr::null_mut();
         };
 
-        let key = DraftKey {
+        let key = V1Key {
             private: Some(private),
             public: Some(public),
         };
@@ -529,7 +529,7 @@ pub(crate) unsafe extern "C" fn key_duplicate(
 ) -> *mut c_void {
     ffi_pointer(|| {
         // SAFETY: The shim passes a live Rust-owned key object.
-        let Some(source) = (unsafe { source.cast::<DraftKey>().as_ref() }) else {
+        let Some(source) = (unsafe { source.cast::<V1Key>().as_ref() }) else {
             return core::ptr::null_mut();
         };
 
@@ -540,7 +540,7 @@ pub(crate) unsafe extern "C" fn key_duplicate(
             .then(|| source.public.clone())
             .flatten();
 
-        match try_box_at("key_duplicate", DraftKey { private, public }) {
+        match try_box_at("key_duplicate", V1Key { private, public }) {
             Some(key) => Box::into_raw(key).cast(),
             None => core::ptr::null_mut(),
         }
@@ -555,7 +555,7 @@ pub(crate) unsafe extern "C" fn key_has(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes a live Rust-owned key object.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
         if require_private != 0 && key.private.is_none()
@@ -576,7 +576,7 @@ pub(crate) unsafe extern "C" fn key_validate(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes a live Rust-owned key object.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
 
@@ -625,11 +625,11 @@ pub(crate) unsafe extern "C" fn key_match(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes two live Rust-owned key objects.
-        let Some(first) = (unsafe { first.cast::<DraftKey>().as_ref() }) else {
+        let Some(first) = (unsafe { first.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
         // SAFETY: Same contract as for first.
-        let Some(second) = (unsafe { second.cast::<DraftKey>().as_ref() }) else {
+        let Some(second) = (unsafe { second.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
 
@@ -664,7 +664,7 @@ pub(crate) unsafe extern "C" fn key_get_private(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes a live Rust-owned key object.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
         let Some(private) = key.private.as_ref() else {
@@ -687,7 +687,7 @@ pub(crate) unsafe extern "C" fn key_get_public(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes a live Rust-owned key object.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
         let Some(public) = key.public.as_ref() else {
@@ -706,7 +706,7 @@ pub(crate) unsafe extern "C" fn key_get_public(
 pub(crate) extern "C" fn signature_new() -> *mut c_void {
     ffi_pointer(|| {
         hit_panic_failpoint("signature_new");
-        match try_box_at("signature_new", DraftSignatureContext::default()) {
+        match try_box_at("signature_new", V1SignatureContext::default()) {
             Some(context) => Box::into_raw(context).cast(),
             None => core::ptr::null_mut(),
         }
@@ -718,7 +718,7 @@ pub(crate) unsafe extern "C" fn signature_free(context: *mut c_void) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         if !context.is_null() {
             // SAFETY: The shim returns every Rust-owned context pointer at most once.
-            drop(unsafe { Box::from_raw(context.cast::<DraftSignatureContext>()) });
+            drop(unsafe { Box::from_raw(context.cast::<V1SignatureContext>()) });
         }
     }));
 }
@@ -727,7 +727,7 @@ pub(crate) unsafe extern "C" fn signature_free(context: *mut c_void) {
 pub(crate) unsafe extern "C" fn signature_reset(context: *mut c_void) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: The shim passes a live Rust-owned signature context.
-        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_mut() }) else {
+        let Some(context) = (unsafe { context.cast::<V1SignatureContext>().as_mut() }) else {
             return;
         };
         context.operation = SignatureOperation::Uninitialized;
@@ -742,7 +742,7 @@ pub(crate) unsafe extern "C" fn signature_set_context(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes a live Rust-owned signature context.
-        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_mut() }) else {
+        let Some(context) = (unsafe { context.cast::<V1SignatureContext>().as_mut() }) else {
             return 0;
         };
         // SAFETY: The shim keeps value_len bytes readable for this call.
@@ -762,7 +762,7 @@ pub(crate) unsafe extern "C" fn signature_get_context(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes a live Rust-owned signature context.
-        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_ref() }) else {
+        let Some(context) = (unsafe { context.cast::<V1SignatureContext>().as_ref() }) else {
             return 0;
         };
         if value_len.is_null() {
@@ -787,7 +787,7 @@ pub(crate) unsafe extern "C" fn signature_get_context(
 pub(crate) unsafe extern "C" fn signature_duplicate(source: *const c_void) -> *mut c_void {
     ffi_pointer(|| {
         // SAFETY: The shim passes a live Rust-owned signature context.
-        let Some(source) = (unsafe { source.cast::<DraftSignatureContext>().as_ref() }) else {
+        let Some(source) = (unsafe { source.cast::<V1SignatureContext>().as_ref() }) else {
             return core::ptr::null_mut();
         };
         match try_box_at("signature_duplicate", source.clone()) {
@@ -804,7 +804,7 @@ pub(crate) unsafe extern "C" fn signature_sign_init(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes live Rust-owned objects.
-        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_mut() }) else {
+        let Some(context) = (unsafe { context.cast::<V1SignatureContext>().as_mut() }) else {
             return 0;
         };
         /*
@@ -826,7 +826,7 @@ pub(crate) unsafe extern "C" fn signature_sign_init(
         context.operation = SignatureOperation::Uninitialized;
         hit_panic_failpoint("signature_sign_init");
         // SAFETY: Same contract as for context.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
         let Some(private) = key.private.as_ref() else {
@@ -850,7 +850,7 @@ pub(crate) unsafe extern "C" fn signature_verify_init(
 ) -> c_int {
     ffi_int(|| {
         // SAFETY: The shim passes live Rust-owned objects.
-        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_mut() }) else {
+        let Some(context) = (unsafe { context.cast::<V1SignatureContext>().as_mut() }) else {
             return 0;
         };
         /* See signature_sign_init(): NULL retains only a matching operation. */
@@ -866,7 +866,7 @@ pub(crate) unsafe extern "C" fn signature_verify_init(
         context.operation = SignatureOperation::Uninitialized;
         hit_panic_failpoint("signature_verify_init");
         // SAFETY: Same contract as for context.
-        let Some(key) = (unsafe { key.cast::<DraftKey>().as_ref() }) else {
+        let Some(key) = (unsafe { key.cast::<V1Key>().as_ref() }) else {
             return 0;
         };
         let Some(public) = key.public.as_ref() else {
@@ -889,7 +889,7 @@ pub(crate) unsafe extern "C" fn signature_sign(
     ffi_int(|| {
         hit_panic_failpoint("signature_sign");
         // SAFETY: The shim passes a live Rust-owned signature context.
-        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_ref() }) else {
+        let Some(context) = (unsafe { context.cast::<V1SignatureContext>().as_ref() }) else {
             return 0;
         };
         let SignatureOperation::Sign(signing_key) = &context.operation else {
@@ -926,7 +926,7 @@ pub(crate) unsafe extern "C" fn signature_verify(
     ffi_verify_int(|| {
         hit_panic_failpoint("signature_verify");
         // SAFETY: The shim passes a live Rust-owned signature context.
-        let Some(context) = (unsafe { context.cast::<DraftSignatureContext>().as_ref() }) else {
+        let Some(context) = (unsafe { context.cast::<V1SignatureContext>().as_ref() }) else {
             return -1;
         };
         let SignatureOperation::Verify(public) = &context.operation else {
@@ -1133,7 +1133,7 @@ mod tests {
     #[test]
     fn key_duplicate_honors_component_selection_exactly() {
         let expanded = shared(expanded_key(0x11));
-        let source = DraftKey {
+        let source = V1Key {
             public: Some(shared(expanded.verifying_key())),
             private: Some(PrivateKeyMaterial {
                 seed: SecretSeed([0x11; SEED_BYTES]),
@@ -1144,14 +1144,14 @@ mod tests {
         for (include_private, include_public) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
             let duplicate = unsafe {
                 key_duplicate(
-                    (&source as *const DraftKey).cast(),
+                    (&source as *const V1Key).cast(),
                     include_private,
                     include_public,
                 )
             };
             assert!(!duplicate.is_null());
             // SAFETY: key_duplicate returned this live Rust-owned object once.
-            let duplicate = unsafe { Box::from_raw(duplicate.cast::<DraftKey>()) };
+            let duplicate = unsafe { Box::from_raw(duplicate.cast::<V1Key>()) };
             assert_eq!(duplicate.private.is_some(), include_private != 0);
             assert_eq!(duplicate.public.is_some(), include_public != 0);
         }
@@ -1160,11 +1160,11 @@ mod tests {
     #[test]
     fn null_key_reinitialization_preserves_only_the_matching_operation() {
         let expanded = shared(expanded_key(0xA5));
-        let mut context = Box::new(DraftSignatureContext {
+        let mut context = Box::new(V1SignatureContext {
             operation: SignatureOperation::Sign(expanded.clone()),
-            ..DraftSignatureContext::default()
+            ..V1SignatureContext::default()
         });
-        let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
+        let context_pointer = (&mut *context as *mut V1SignatureContext).cast();
         assert_eq!(expanded.reference_count(), 2);
         assert_eq!(
             unsafe { signature_sign_init(context_pointer, core::ptr::null()) },
@@ -1213,11 +1213,11 @@ mod tests {
             .sign(message)
             .expect("fixed test signing operation")
             .to_bytes();
-        let mut context = DraftSignatureContext {
+        let mut context = V1SignatureContext {
             operation: SignatureOperation::Verify(shared(expanded.verifying_key())),
-            ..DraftSignatureContext::default()
+            ..V1SignatureContext::default()
         };
-        let context_pointer = (&mut context as *mut DraftSignatureContext).cast();
+        let context_pointer = (&mut context as *mut V1SignatureContext).cast();
 
         assert_eq!(
             unsafe {
@@ -1320,11 +1320,11 @@ mod tests {
             -1
         );
 
-        let uninitialized = DraftSignatureContext::default();
+        let uninitialized = V1SignatureContext::default();
         assert_eq!(
             unsafe {
                 signature_verify(
-                    (&uninitialized as *const DraftSignatureContext).cast(),
+                    (&uninitialized as *const V1SignatureContext).cast(),
                     message.as_ptr(),
                     message.len(),
                     signature.as_ptr(),
@@ -1349,11 +1349,11 @@ mod tests {
 
     #[test]
     fn signature_reset_invalidates_initialized_secret() {
-        let mut context = Box::new(DraftSignatureContext {
+        let mut context = Box::new(V1SignatureContext {
             operation: SignatureOperation::Sign(shared(expanded_key(0x3C))),
-            ..DraftSignatureContext::default()
+            ..V1SignatureContext::default()
         });
-        let context_pointer = (&mut *context as *mut DraftSignatureContext).cast();
+        let context_pointer = (&mut *context as *mut V1SignatureContext).cast();
         unsafe { signature_reset(context_pointer) };
         assert!(matches!(
             context.operation,
@@ -1365,7 +1365,7 @@ mod tests {
     fn signature_contexts_share_prepared_key_state() {
         let expanded = shared(expanded_key(0x27));
         let public = shared(expanded.verifying_key());
-        let key = DraftKey {
+        let key = V1Key {
             private: Some(PrivateKeyMaterial {
                 seed: SecretSeed([0x27; SEED_BYTES]),
                 expanded: expanded.clone(),
@@ -1375,12 +1375,12 @@ mod tests {
         assert_eq!(expanded.reference_count(), 2);
         assert_eq!(public.reference_count(), 2);
 
-        let mut sign_context = DraftSignatureContext::default();
+        let mut sign_context = V1SignatureContext::default();
         assert_eq!(
             unsafe {
                 signature_sign_init(
-                    (&mut sign_context as *mut DraftSignatureContext).cast(),
-                    (&key as *const DraftKey).cast(),
+                    (&mut sign_context as *mut V1SignatureContext).cast(),
+                    (&key as *const V1Key).cast(),
                 )
             },
             1
@@ -1388,26 +1388,26 @@ mod tests {
         assert_eq!(expanded.reference_count(), 3);
 
         let duplicate =
-            unsafe { signature_duplicate((&sign_context as *const DraftSignatureContext).cast()) };
+            unsafe { signature_duplicate((&sign_context as *const V1SignatureContext).cast()) };
         assert!(!duplicate.is_null());
         assert_eq!(expanded.reference_count(), 4);
         unsafe { signature_free(duplicate) };
         assert_eq!(expanded.reference_count(), 3);
-        unsafe { signature_reset((&mut sign_context as *mut DraftSignatureContext).cast()) };
+        unsafe { signature_reset((&mut sign_context as *mut V1SignatureContext).cast()) };
         assert_eq!(expanded.reference_count(), 2);
 
-        let mut verify_context = DraftSignatureContext::default();
+        let mut verify_context = V1SignatureContext::default();
         assert_eq!(
             unsafe {
                 signature_verify_init(
-                    (&mut verify_context as *mut DraftSignatureContext).cast(),
-                    (&key as *const DraftKey).cast(),
+                    (&mut verify_context as *mut V1SignatureContext).cast(),
+                    (&key as *const V1Key).cast(),
                 )
             },
             1
         );
         assert_eq!(public.reference_count(), 3);
-        unsafe { signature_reset((&mut verify_context as *mut DraftSignatureContext).cast()) };
+        unsafe { signature_reset((&mut verify_context as *mut V1SignatureContext).cast()) };
         assert_eq!(public.reference_count(), 2);
     }
 
@@ -1415,8 +1415,8 @@ mod tests {
     fn native_context_is_owned_bounded_and_duplicated() {
         let value = [0xA5_u8; MAX_CONTEXT_BYTES];
         let too_long = [0x5A_u8; MAX_CONTEXT_BYTES + 1];
-        let mut context = DraftSignatureContext::default();
-        let context_pointer = (&mut context as *mut DraftSignatureContext).cast();
+        let mut context = V1SignatureContext::default();
+        let context_pointer = (&mut context as *mut V1SignatureContext).cast();
 
         assert_eq!(
             unsafe { signature_set_context(context_pointer, value.as_ptr(), value.len()) },

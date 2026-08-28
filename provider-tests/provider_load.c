@@ -50,7 +50,7 @@ static int one_cold_load_cycle(void)
 {
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     EVP_SIGNATURE *fetched = NULL;
     EVP_PKEY *pkey = NULL;
     unsigned char sig[76];
@@ -58,16 +58,16 @@ static int one_cold_load_cycle(void)
 
     if (libctx == NULL)
         return 0;
-    draft = d00_load(libctx, &deflt);
-    if (draft == NULL)
+    v1 = ed301v1_load(libctx, &deflt);
+    if (v1 == NULL)
         goto done;
-    fetched = EVP_SIGNATURE_fetch(libctx, D00_ALG, D00_PROP);
+    fetched = EVP_SIGNATURE_fetch(libctx, ED301V1_ALG, ED301V1_PROP);
     if (fetched == NULL)
         goto done;
-    pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     if (pkey == NULL)
         goto done;
-    if (!d00_digest_sign(libctx, pkey, POSITIVE_CASES[0].message,
+    if (!ed301v1_digest_sign(libctx, pkey, POSITIVE_CASES[0].message,
             POSITIVE_CASES[0].message_len, sig))
         goto done;
     if (memcmp(sig, POSITIVE_CASES[0].signature, sizeof(sig)) != 0)
@@ -77,8 +77,8 @@ static int one_cold_load_cycle(void)
 done:
     EVP_PKEY_free(pkey);
     EVP_SIGNATURE_free(fetched);
-    if (draft != NULL)
-        OSSL_PROVIDER_unload(draft);
+    if (v1 != NULL)
+        OSSL_PROVIDER_unload(v1);
     if (deflt != NULL)
         OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
@@ -96,16 +96,16 @@ static int provider_lifetime_cycle(void)
     EVP_PKEY *pkey = NULL;
     const OSSL_PROVIDER *signature_provider;
     const OSSL_PROVIDER *keymgmt_provider;
-    unsigned char value[D00_SIG_BYTES];
+    unsigned char value[ED301V1_SIG_BYTES];
     int ok = 0;
 
     if (libctx == NULL)
         goto done;
-    first = d00_load(libctx, &deflt);
-    second = OSSL_PROVIDER_load(libctx, D00_PROVIDER);
-    signature = EVP_SIGNATURE_fetch(libctx, D00_ALG, D00_PROP);
-    keymgmt = EVP_KEYMGMT_fetch(libctx, D00_ALG, D00_PROP);
-    pkey = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    first = ed301v1_load(libctx, &deflt);
+    second = OSSL_PROVIDER_load(libctx, ED301V1_PROVIDER);
+    signature = EVP_SIGNATURE_fetch(libctx, ED301V1_ALG, ED301V1_PROP);
+    keymgmt = EVP_KEYMGMT_fetch(libctx, ED301V1_ALG, ED301V1_PROP);
+    pkey = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     if (first == NULL || second == NULL || signature == NULL
             || keymgmt == NULL || pkey == NULL)
         goto done;
@@ -122,13 +122,13 @@ static int provider_lifetime_cycle(void)
     OSSL_PROVIDER_unload(deflt);
     deflt = NULL;
 
-    if (strcmp(OSSL_PROVIDER_get0_name(signature_provider), D00_PROVIDER) != 0
-            || !d00_digest_sign(libctx, pkey,
+    if (strcmp(OSSL_PROVIDER_get0_name(signature_provider), ED301V1_PROVIDER) != 0
+            || !ed301v1_digest_sign(libctx, pkey,
                 POSITIVE_CASES[0].message,
                 POSITIVE_CASES[0].message_len, value)
             || memcmp(value, POSITIVE_CASES[0].signature,
-                D00_SIG_BYTES) != 0
-            || !d00_digest_verify(libctx, pkey,
+                ED301V1_SIG_BYTES) != 0
+            || !ed301v1_digest_verify(libctx, pkey,
                 POSITIVE_CASES[0].message,
                 POSITIVE_CASES[0].message_len,
                 value, sizeof(value)))
@@ -168,12 +168,12 @@ static void *worker_main(void *argument)
 
 int main(void)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     /* Fetch by name and property in an isolated context. */
     {
         OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
         OSSL_PROVIDER *deflt = NULL;
-        OSSL_PROVIDER *draft;
+        OSSL_PROVIDER *v1;
         EVP_SIGNATURE *sig_alg;
         EVP_SIGNATURE *by_oid;
         EVP_KEYMGMT *keymgmt;
@@ -181,31 +181,31 @@ int main(void)
         OSSL_DECODER *decoder;
         int registry_nid = NID_undef;
 
-        D00_CHECK(libctx != NULL, "library context");
-        draft = d00_load(libctx, &deflt);
-        D00_CHECK(draft != NULL, "provider load in isolated context");
-        D00_CHECK(!d00_provider_has_dispatch(
-                draft, OSSL_FUNC_PROVIDER_GET_CAPABILITIES),
+        ED301V1_CHECK(libctx != NULL, "library context");
+        v1 = ed301v1_load(libctx, &deflt);
+        ED301V1_CHECK(v1 != NULL, "provider load in isolated context");
+        ED301V1_CHECK(!ed301v1_provider_has_dispatch(
+                v1, OSSL_FUNC_PROVIDER_GET_CAPABILITIES),
             "ordinary provider has no TLS capability dispatch");
-        D00_CHECK(OSSL_PROVIDER_available(libctx, D00_PROVIDER) == 1,
+        ED301V1_CHECK(OSSL_PROVIDER_available(libctx, ED301V1_PROVIDER) == 1,
             "provider availability");
 
-        sig_alg = EVP_SIGNATURE_fetch(libctx, D00_ALG, D00_PROP);
-        D00_CHECK(sig_alg != NULL, "signature fetch by name and property");
-        keymgmt = EVP_KEYMGMT_fetch(libctx, D00_ALG, D00_PROP);
-        D00_CHECK(keymgmt != NULL, "keymgmt fetch by name and property");
-        by_oid = EVP_SIGNATURE_fetch(libctx, D00_OID_TEXT, D00_PROP);
-        D00_CHECK(by_oid == NULL,
+        sig_alg = EVP_SIGNATURE_fetch(libctx, ED301V1_ALG, ED301V1_PROP);
+        ED301V1_CHECK(sig_alg != NULL, "signature fetch by name and property");
+        keymgmt = EVP_KEYMGMT_fetch(libctx, ED301V1_ALG, ED301V1_PROP);
+        ED301V1_CHECK(keymgmt != NULL, "keymgmt fetch by name and property");
+        by_oid = EVP_SIGNATURE_fetch(libctx, ED301V1_OID_TEXT, ED301V1_PROP);
+        ED301V1_CHECK(by_oid == NULL,
             "ordinary provider exposes no OID alias");
         ERR_clear_error();
-        encoder = OSSL_ENCODER_fetch(libctx, D00_ALG, D00_PROP);
-        decoder = OSSL_DECODER_fetch(libctx, D00_ALG, D00_PROP);
-        D00_CHECK(encoder == NULL && decoder == NULL,
+        encoder = OSSL_ENCODER_fetch(libctx, ED301V1_ALG, ED301V1_PROP);
+        decoder = OSSL_DECODER_fetch(libctx, ED301V1_ALG, ED301V1_PROP);
+        ED301V1_CHECK(encoder == NULL && decoder == NULL,
             "ordinary provider exposes no PKI codec operations");
-        D00_CHECK(d00_registry_identity_state(&registry_nid)
-                == D00_REGISTRY_FREE
-                && d00_registry_sigid_state(registry_nid)
-                    == D00_REGISTRY_FREE,
+        ED301V1_CHECK(ed301v1_registry_identity_state(&registry_nid)
+                == ED301V1_REGISTRY_FREE
+                && ed301v1_registry_sigid_state(registry_nid)
+                    == ED301V1_REGISTRY_FREE,
             "ordinary provider leaves the global OID/SIGID registry free");
 
         EVP_SIGNATURE_free(sig_alg);
@@ -219,15 +219,15 @@ int main(void)
          * stay usable after both provider handles are released.
          */
         {
-            EVP_PKEY *pkey = d00_key_from_seed(
+            EVP_PKEY *pkey = ed301v1_key_from_seed(
                 libctx, POSITIVE_CASES[0].seed);
             unsigned char sig[76];
 
-            D00_CHECK(pkey != NULL, "key before unload");
-            OSSL_PROVIDER_unload(draft);
+            ED301V1_CHECK(pkey != NULL, "key before unload");
+            OSSL_PROVIDER_unload(v1);
             OSSL_PROVIDER_unload(deflt);
-            D00_CHECK(pkey != NULL
-                    && d00_digest_sign(libctx, pkey,
+            ED301V1_CHECK(pkey != NULL
+                    && ed301v1_digest_sign(libctx, pkey,
                         POSITIVE_CASES[0].message,
                         POSITIVE_CASES[0].message_len, sig)
                     && memcmp(sig, POSITIVE_CASES[0].signature,
@@ -243,10 +243,10 @@ int main(void)
         OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
         OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(libctx, "default");
         EVP_SIGNATURE *missing =
-            EVP_SIGNATURE_fetch(libctx, D00_ALG, NULL);
+            EVP_SIGNATURE_fetch(libctx, ED301V1_ALG, NULL);
 
-        D00_CHECK(deflt != NULL, "default provider");
-        D00_CHECK(missing == NULL,
+        ED301V1_CHECK(deflt != NULL, "default provider");
+        ED301V1_CHECK(missing == NULL,
             "algorithm invisible while the provider is not loaded");
         ERR_clear_error();
         EVP_SIGNATURE_free(missing);
@@ -260,42 +260,42 @@ int main(void)
         OSSL_LIB_CTX *second = OSSL_LIB_CTX_new();
         OSSL_PROVIDER *first_def = NULL;
         OSSL_PROVIDER *second_def = NULL;
-        OSSL_PROVIDER *first_draft = d00_load(first, &first_def);
-        OSSL_PROVIDER *second_draft = d00_load(second, &second_def);
+        OSSL_PROVIDER *first_v1 = ed301v1_load(first, &first_def);
+        OSSL_PROVIDER *second_v1 = ed301v1_load(second, &second_def);
         EVP_SIGNATURE *first_alg =
-            EVP_SIGNATURE_fetch(first, D00_ALG, D00_PROP);
+            EVP_SIGNATURE_fetch(first, ED301V1_ALG, ED301V1_PROP);
         EVP_SIGNATURE *second_alg =
-            EVP_SIGNATURE_fetch(second, D00_ALG, D00_PROP);
+            EVP_SIGNATURE_fetch(second, ED301V1_ALG, ED301V1_PROP);
 
-        D00_CHECK(first_draft != NULL && second_draft != NULL
+        ED301V1_CHECK(first_v1 != NULL && second_v1 != NULL
                 && first_alg != NULL && second_alg != NULL,
             "independent library contexts");
         {
             int registry_nid = NID_undef;
 
-            D00_CHECK(d00_registry_identity_state(&registry_nid)
-                    == D00_REGISTRY_FREE,
+            ED301V1_CHECK(ed301v1_registry_identity_state(&registry_nid)
+                    == ED301V1_REGISTRY_FREE,
                 "ordinary providers do not populate the global registry");
         }
         EVP_SIGNATURE_free(first_alg);
         EVP_SIGNATURE_free(second_alg);
-        OSSL_PROVIDER_unload(first_draft);
+        OSSL_PROVIDER_unload(first_v1);
         OSSL_PROVIDER_unload(first_def);
         OSSL_LIB_CTX_free(first);
         /* second context torn down after first is already gone */
         EVP_SIGNATURE *again =
-            EVP_SIGNATURE_fetch(second, D00_ALG, D00_PROP);
-        D00_CHECK(again != NULL,
+            EVP_SIGNATURE_fetch(second, ED301V1_ALG, ED301V1_PROP);
+        ED301V1_CHECK(again != NULL,
             "second context unaffected by first teardown");
         {
             int registry_nid = NID_undef;
 
-            D00_CHECK(d00_registry_identity_state(&registry_nid)
-                    == D00_REGISTRY_FREE,
+            ED301V1_CHECK(ed301v1_registry_identity_state(&registry_nid)
+                    == ED301V1_REGISTRY_FREE,
                 "global registry remains untouched after teardown");
         }
         EVP_SIGNATURE_free(again);
-        OSSL_PROVIDER_unload(second_draft);
+        OSSL_PROVIDER_unload(second_v1);
         OSSL_PROVIDER_unload(second_def);
         OSSL_LIB_CTX_free(second);
     }
@@ -311,7 +311,7 @@ int main(void)
                 break;
             }
         }
-        D00_CHECK(ok,
+        ED301V1_CHECK(ok,
             "provider/fetched-object/key lifetime stress x%d (round %d)",
             REPEAT_ROUNDS, round);
     }
@@ -327,7 +327,7 @@ int main(void)
                 break;
             }
         }
-        D00_CHECK(ok, "repeated cold load x%d (failed round %d)",
+        ED301V1_CHECK(ok, "repeated cold load x%d (failed round %d)",
             REPEAT_ROUNDS, round);
     }
 
@@ -379,9 +379,9 @@ int main(void)
             ok = 0;
         pthread_cond_destroy(&gate.condition);
         pthread_mutex_destroy(&gate.mutex);
-        D00_CHECK(ok, "parallel cold load (%d threads x %d rounds)",
+        ED301V1_CHECK(ok, "parallel cold load (%d threads x %d rounds)",
             PARALLEL_THREADS, PARALLEL_ROUNDS);
     }
 
-    return d00_summary("provider_load");
+    return ed301v1_summary("provider_load");
 }

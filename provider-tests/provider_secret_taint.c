@@ -18,7 +18,7 @@
 static int seed_vbits_match(const unsigned char *seed, size_t seed_len,
     int expect_undefined)
 {
-    unsigned char vbits[D00_SEED_BYTES];
+    unsigned char vbits[ED301V1_SEED_BYTES];
     size_t index;
 
     if (seed_len != sizeof(vbits)
@@ -43,18 +43,18 @@ int main(int argc, char **argv)
 {
     OSSL_LIB_CTX *libctx;
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft;
+    OSSL_PROVIDER *v1;
     const POSITIVE_CASE *test_case = &POSITIVE_CASES[0];
-    unsigned char seed[D00_SEED_BYTES];
-    unsigned char public_key[D00_PUB_BYTES];
-    unsigned char signature[D00_SIG_BYTES];
-    unsigned char repeated[D00_SIG_BYTES];
+    unsigned char seed[ED301V1_SEED_BYTES];
+    unsigned char public_key[ED301V1_PUB_BYTES];
+    unsigned char signature[ED301V1_SIG_BYTES];
+    unsigned char repeated[ED301V1_SIG_BYTES];
     size_t public_len = 0;
     EVP_PKEY *pkey;
     int tainted;
     int ok;
 
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     if (RUNNING_ON_VALGRIND == 0) {
         fprintf(stderr, "provider_secret_taint requires Valgrind\n");
         return 2;
@@ -67,8 +67,8 @@ int main(int argc, char **argv)
     }
     tainted = strcmp(argv[1], "tainted") == 0;
     libctx = OSSL_LIB_CTX_new();
-    draft = d00_load(libctx, &deflt);
-    if (draft == NULL) {
+    v1 = ed301v1_load(libctx, &deflt);
+    if (v1 == NULL) {
         fprintf(stderr, "instrumented provider load failed\n");
         return 2;
     }
@@ -86,7 +86,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "provider secret-taint activation check failed\n");
         return 2;
     }
-    pkey = d00_key_from_seed(libctx, seed);
+    pkey = ed301v1_key_from_seed(libctx, seed);
     if (pkey == NULL) {
         fprintf(stderr, "seed import failed\n");
         return 2;
@@ -96,10 +96,10 @@ int main(int argc, char **argv)
             public_key, sizeof(public_key), &public_len) == 1
         && public_len == sizeof(public_key)
         && memcmp(public_key, test_case->public_key, sizeof(public_key)) == 0
-        && d00_digest_sign(libctx, pkey, test_case->message,
+        && ed301v1_digest_sign(libctx, pkey, test_case->message,
             test_case->message_len, signature)
         && memcmp(signature, test_case->signature, sizeof(signature)) == 0
-        && d00_digest_sign(libctx, pkey, test_case->message,
+        && ed301v1_digest_sign(libctx, pkey, test_case->message,
             test_case->message_len, repeated)
         && memcmp(repeated, signature, sizeof(repeated)) == 0;
     VALGRIND_MAKE_MEM_DEFINED(seed, sizeof(seed));
@@ -109,7 +109,7 @@ int main(int argc, char **argv)
     }
 
     EVP_PKEY_free(pkey);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
     printf("provider_secret_taint: mode=%s pass=1\n", argv[1]);

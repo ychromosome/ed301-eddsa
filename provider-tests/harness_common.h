@@ -1,5 +1,5 @@
-#ifndef ED301D00_HARNESS_COMMON_H
-#define ED301D00_HARNESS_COMMON_H
+#ifndef ED301V1_HARNESS_COMMON_H
+#define ED301V1_HARNESS_COMMON_H
 
 /*
  * Shared helpers for the Ed301-EdDSA-v1 provider acceptance
@@ -27,34 +27,34 @@
 #include <openssl/param_build.h>
 #include <openssl/provider.h>
 
-#define D00_ALG "Ed301-EdDSA-v1"
-#define D00_OID_TEXT "1.3.6.1.4.1.66282.301.4"
-#define D00_PROVIDER "ed301_eddsa_v1"
-#define D00_PROP "provider=ed301_eddsa_v1"
-#define D00_FAILPOINT_PROVIDER "ed301_eddsa_v1_failpoint"
-#define D00_FAILPOINT_PROP "provider=ed301_eddsa_v1_failpoint"
-#define D00_PKI_PROVIDER "ed301_eddsa_v1_pki_test"
-#define D00_PKI_PROP "provider=ed301_eddsa_v1_pki_test"
-#define D00_TLS_PROVIDER "ed301_eddsa_v1_tls_test"
-#define D00_TLS_PROP "provider=ed301_eddsa_v1_tls_test"
-#define D00_TLS_COLLIDER_PROVIDER "ed301_eddsa_v1_tls_collider"
-#define D00_TLS_COLLIDER_PROP "provider=ed301_eddsa_v1_tls_collider"
-#define D00_SEED_BYTES ((size_t)38)
-#define D00_PUB_BYTES ((size_t)38)
-#define D00_SIG_BYTES ((size_t)76)
+#define ED301V1_ALG "Ed301-EdDSA-v1"
+#define ED301V1_OID_TEXT "1.3.6.1.4.1.66282.301.4"
+#define ED301V1_PROVIDER "ed301_eddsa_v1"
+#define ED301V1_PROP "provider=ed301_eddsa_v1"
+#define ED301V1_FAILPOINT_PROVIDER "ed301_eddsa_v1_failpoint"
+#define ED301V1_FAILPOINT_PROP "provider=ed301_eddsa_v1_failpoint"
+#define ED301V1_PKI_PROVIDER "ed301_eddsa_v1_pki_test"
+#define ED301V1_PKI_PROP "provider=ed301_eddsa_v1_pki_test"
+#define ED301V1_TLS_PROVIDER "ed301_eddsa_v1_tls_test"
+#define ED301V1_TLS_PROP "provider=ed301_eddsa_v1_tls_test"
+#define ED301V1_TLS_COLLIDER_PROVIDER "ed301_eddsa_v1_tls_collider"
+#define ED301V1_TLS_COLLIDER_PROP "provider=ed301_eddsa_v1_tls_collider"
+#define ED301V1_SEED_BYTES ((size_t)38)
+#define ED301V1_PUB_BYTES ((size_t)38)
+#define ED301V1_SIG_BYTES ((size_t)76)
 
-#define D00_CALLER_SENTINEL_A ((unsigned int)0x2d01)
-#define D00_CALLER_SENTINEL_B ((unsigned int)0x2d02)
-#define D00_ERROR_QUEUE_CAPACITY ((size_t)64)
+#define ED301V1_CALLER_SENTINEL_A ((unsigned int)0x2d01)
+#define ED301V1_CALLER_SENTINEL_B ((unsigned int)0x2d02)
+#define ED301V1_ERROR_QUEUE_CAPACITY ((size_t)64)
 
-static inline void d00_seed_error_sentinel(void)
+static inline void ed301v1_seed_error_sentinel(void)
 {
     ERR_clear_error();
-    ERR_raise(ERR_LIB_USER, D00_CALLER_SENTINEL_A);
-    ERR_raise(ERR_LIB_USER, D00_CALLER_SENTINEL_B);
+    ERR_raise(ERR_LIB_USER, ED301V1_CALLER_SENTINEL_A);
+    ERR_raise(ERR_LIB_USER, ED301V1_CALLER_SENTINEL_B);
 }
 
-static inline size_t d00_drain_error_queue(
+static inline size_t ed301v1_drain_error_queue(
     unsigned long *errors,
     size_t capacity)
 {
@@ -69,20 +69,20 @@ static inline size_t d00_drain_error_queue(
     return count;
 }
 
-static inline int d00_queue_is_sentinel_only(void)
+static inline int ed301v1_queue_is_sentinel_only(void)
 {
-    unsigned long errors[D00_ERROR_QUEUE_CAPACITY];
-    const size_t count = d00_drain_error_queue(
-        errors, D00_ERROR_QUEUE_CAPACITY);
+    unsigned long errors[ED301V1_ERROR_QUEUE_CAPACITY];
+    const size_t count = ed301v1_drain_error_queue(
+        errors, ED301V1_ERROR_QUEUE_CAPACITY);
 
     return count == 2
         && ERR_GET_LIB(errors[0]) == ERR_LIB_USER
-        && ERR_GET_REASON(errors[0]) == D00_CALLER_SENTINEL_A
+        && ERR_GET_REASON(errors[0]) == ED301V1_CALLER_SENTINEL_A
         && ERR_GET_LIB(errors[1]) == ERR_LIB_USER
-        && ERR_GET_REASON(errors[1]) == D00_CALLER_SENTINEL_B;
+        && ERR_GET_REASON(errors[1]) == ED301V1_CALLER_SENTINEL_B;
 }
 
-static inline int d00_provider_has_dispatch(
+static inline int ed301v1_provider_has_dispatch(
     const OSSL_PROVIDER *provider,
     int function_id)
 {
@@ -98,53 +98,53 @@ static inline int d00_provider_has_dispatch(
     return 0;
 }
 
-static inline int d00_provider_has_reason_dispatch(
+static inline int ed301v1_provider_has_reason_dispatch(
     const OSSL_PROVIDER *provider)
 {
-    return d00_provider_has_dispatch(
+    return ed301v1_provider_has_dispatch(
         provider, OSSL_FUNC_PROVIDER_GET_REASON_STRINGS);
 }
 
-enum d00_registry_state {
-    D00_REGISTRY_CONFLICT = -1,
-    D00_REGISTRY_FREE = 0,
-    D00_REGISTRY_EXACT = 1
+enum ed301v1_registry_state {
+    ED301V1_REGISTRY_CONFLICT = -1,
+    ED301V1_REGISTRY_FREE = 0,
+    ED301V1_REGISTRY_EXACT = 1
 };
 
-static inline enum d00_registry_state d00_registry_identity_state(
+static inline enum ed301v1_registry_state ed301v1_registry_identity_state(
     int *nid_out)
 {
     char numeric_oid[96];
-    int nid = OBJ_txt2nid(D00_OID_TEXT);
-    int short_nid = OBJ_sn2nid(D00_ALG);
-    int long_nid = OBJ_ln2nid(D00_ALG);
+    int nid = OBJ_txt2nid(ED301V1_OID_TEXT);
+    int short_nid = OBJ_sn2nid(ED301V1_ALG);
+    int long_nid = OBJ_ln2nid(ED301V1_ALG);
     ASN1_OBJECT *object;
     const char *short_name;
     const char *long_name;
 
     if (nid_out == NULL)
-        return D00_REGISTRY_CONFLICT;
+        return ED301V1_REGISTRY_CONFLICT;
     *nid_out = NID_undef;
     if (nid == NID_undef && short_nid == NID_undef
             && long_nid == NID_undef)
-        return D00_REGISTRY_FREE;
+        return ED301V1_REGISTRY_FREE;
     if (nid == NID_undef || short_nid != nid || long_nid != nid)
-        return D00_REGISTRY_CONFLICT;
+        return ED301V1_REGISTRY_CONFLICT;
     object = OBJ_nid2obj(nid);
     short_name = OBJ_nid2sn(nid);
     long_name = OBJ_nid2ln(nid);
     if (object == NULL || short_name == NULL || long_name == NULL
-            || strcmp(short_name, D00_ALG) != 0
-            || strcmp(long_name, D00_ALG) != 0
+            || strcmp(short_name, ED301V1_ALG) != 0
+            || strcmp(long_name, ED301V1_ALG) != 0
             || OBJ_obj2txt(numeric_oid, sizeof(numeric_oid), object, 1)
-                != (int)strlen(D00_OID_TEXT)
-            || strcmp(numeric_oid, D00_OID_TEXT) != 0)
-        return D00_REGISTRY_CONFLICT;
+                != (int)strlen(ED301V1_OID_TEXT)
+            || strcmp(numeric_oid, ED301V1_OID_TEXT) != 0)
+        return ED301V1_REGISTRY_CONFLICT;
     *nid_out = nid;
-    return D00_REGISTRY_EXACT;
+    return ED301V1_REGISTRY_EXACT;
 }
 
-static inline enum d00_registry_state d00_registry_sigid_state(int nid)
+static inline enum ed301v1_registry_state ed301v1_registry_sigid_state(int nid)
 {
     int digest_nid = NID_undef;
     int public_key_nid = NID_undef;
@@ -154,10 +154,10 @@ static inline enum d00_registry_state d00_registry_sigid_state(int nid)
     int found = 0;
 
     if (nid == NID_undef)
-        return D00_REGISTRY_FREE;
+        return ED301V1_REGISTRY_FREE;
     next_nid = OBJ_new_nid(0);
     if (next_nid == NID_undef)
-        return D00_REGISTRY_CONFLICT;
+        return ED301V1_REGISTRY_CONFLICT;
     for (signature_nid = 1; signature_nid < next_nid; signature_nid++) {
         if (OBJ_find_sigid_algs(
                 signature_nid, &digest_nid, &public_key_nid) != 1)
@@ -167,68 +167,68 @@ static inline enum d00_registry_state d00_registry_sigid_state(int nid)
             continue;
         if (signature_nid != nid || digest_nid != NID_undef
                 || public_key_nid != nid || found)
-            return D00_REGISTRY_CONFLICT;
+            return ED301V1_REGISTRY_CONFLICT;
         found = 1;
     }
     if (!found)
-        return D00_REGISTRY_FREE;
+        return ED301V1_REGISTRY_FREE;
     if (OBJ_find_sigid_by_algs(&reverse_nid, NID_undef, nid) != 1
             || reverse_nid != nid)
-        return D00_REGISTRY_CONFLICT;
-    return D00_REGISTRY_EXACT;
+        return ED301V1_REGISTRY_CONFLICT;
+    return ED301V1_REGISTRY_EXACT;
 }
 
-static inline int d00_registry_preflight_ok(void)
+static inline int ed301v1_registry_preflight_ok(void)
 {
     int nid = NID_undef;
-    enum d00_registry_state identity = d00_registry_identity_state(&nid);
-    enum d00_registry_state sigid;
+    enum ed301v1_registry_state identity = ed301v1_registry_identity_state(&nid);
+    enum ed301v1_registry_state sigid;
 
-    if (identity == D00_REGISTRY_CONFLICT)
+    if (identity == ED301V1_REGISTRY_CONFLICT)
         return 0;
-    sigid = d00_registry_sigid_state(nid);
-    return sigid != D00_REGISTRY_CONFLICT
-        && ((identity == D00_REGISTRY_FREE && sigid == D00_REGISTRY_FREE)
-            || (identity == D00_REGISTRY_EXACT
-                && sigid == D00_REGISTRY_EXACT));
+    sigid = ed301v1_registry_sigid_state(nid);
+    return sigid != ED301V1_REGISTRY_CONFLICT
+        && ((identity == ED301V1_REGISTRY_FREE && sigid == ED301V1_REGISTRY_FREE)
+            || (identity == ED301V1_REGISTRY_EXACT
+                && sigid == ED301V1_REGISTRY_EXACT));
 }
 
-static inline int d00_registry_is_exact(void)
+static inline int ed301v1_registry_is_exact(void)
 {
     int nid = NID_undef;
 
-    return d00_registry_identity_state(&nid) == D00_REGISTRY_EXACT
-        && d00_registry_sigid_state(nid) == D00_REGISTRY_EXACT;
+    return ed301v1_registry_identity_state(&nid) == ED301V1_REGISTRY_EXACT
+        && ed301v1_registry_sigid_state(nid) == ED301V1_REGISTRY_EXACT;
 }
 
-static inline int d00_registry_ensure_exact(void)
+static inline int ed301v1_registry_ensure_exact(void)
 {
     int nid = NID_undef;
-    enum d00_registry_state identity = d00_registry_identity_state(&nid);
-    enum d00_registry_state sigid;
+    enum ed301v1_registry_state identity = ed301v1_registry_identity_state(&nid);
+    enum ed301v1_registry_state sigid;
 
-    if (identity == D00_REGISTRY_CONFLICT)
+    if (identity == ED301V1_REGISTRY_CONFLICT)
         return 0;
-    sigid = d00_registry_sigid_state(nid);
-    if (sigid == D00_REGISTRY_CONFLICT)
+    sigid = ed301v1_registry_sigid_state(nid);
+    if (sigid == ED301V1_REGISTRY_CONFLICT)
         return 0;
-    if (identity == D00_REGISTRY_EXACT || sigid == D00_REGISTRY_EXACT)
-        return identity == D00_REGISTRY_EXACT
-            && sigid == D00_REGISTRY_EXACT;
+    if (identity == ED301V1_REGISTRY_EXACT || sigid == ED301V1_REGISTRY_EXACT)
+        return identity == ED301V1_REGISTRY_EXACT
+            && sigid == ED301V1_REGISTRY_EXACT;
 
-    nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
+    nid = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG);
     if (nid == NID_undef || OBJ_add_sigid(nid, NID_undef, nid) != 1)
         return 0;
-    return d00_registry_is_exact();
+    return ed301v1_registry_is_exact();
 }
 
-static inline int d00_provider_requires_test_registry(
+static inline int ed301v1_provider_requires_test_registry(
     const char *provider_name)
 {
     return provider_name != NULL
-        && (strcmp(provider_name, D00_PKI_PROVIDER) == 0
-            || strcmp(provider_name, D00_TLS_PROVIDER) == 0
-            || strcmp(provider_name, D00_TLS_COLLIDER_PROVIDER) == 0);
+        && (strcmp(provider_name, ED301V1_PKI_PROVIDER) == 0
+            || strcmp(provider_name, ED301V1_TLS_PROVIDER) == 0
+            || strcmp(provider_name, ED301V1_TLS_COLLIDER_PROVIDER) == 0);
 }
 
 /*
@@ -236,16 +236,16 @@ static inline int d00_provider_requires_test_registry(
  * repoints this at the separately named failpoint artifact for its
  * injected-panic lane; everything else uses the ordinary module.
  */
-static const char *d00_property = D00_PROP;
+static const char *ed301v1_property = ED301V1_PROP;
 
-static int d00_pass_count;
-static int d00_fail_count;
-static CRYPTO_ONCE d00_registry_once = CRYPTO_ONCE_STATIC_INIT;
-static CRYPTO_RWLOCK *d00_registry_lock;
+static int ed301v1_pass_count;
+static int ed301v1_fail_count;
+static CRYPTO_ONCE ed301v1_registry_once = CRYPTO_ONCE_STATIC_INIT;
+static CRYPTO_RWLOCK *ed301v1_registry_lock;
 
-static void d00_registry_lock_init(void)
+static void ed301v1_registry_lock_init(void)
 {
-    d00_registry_lock = CRYPTO_THREAD_lock_new();
+    ed301v1_registry_lock = CRYPTO_THREAD_lock_new();
 }
 
 /*
@@ -253,7 +253,7 @@ static void d00_registry_lock_init(void)
  * matching ABI major.  The DSO provenance check below still requires the
  * configured lane directory.
  */
-static inline int d00_runtime_is_compatible(void)
+static inline int ed301v1_runtime_is_compatible(void)
 {
     const unsigned long runtime = OpenSSL_version_num();
     const unsigned int major = (unsigned int)((runtime >> 28) & 0xfUL);
@@ -271,18 +271,18 @@ static inline int d00_runtime_is_compatible(void)
 #endif
 }
 
-static inline const char *d00_dso_basename(const char *path)
+static inline const char *ed301v1_dso_basename(const char *path)
 {
     const char *slash = strrchr(path, '/');
 
     return slash == NULL ? path : slash + 1;
 }
 
-static inline int d00_dso_name_matches(
+static inline int ed301v1_dso_name_matches(
     const char *path,
     const char *name)
 {
-    const char *base = d00_dso_basename(path);
+    const char *base = ed301v1_dso_basename(path);
     const size_t name_len = strlen(name);
 
     return strncmp(base, name, name_len) == 0
@@ -297,12 +297,12 @@ static inline int d00_dso_name_matches(
  * lookalikes.  The basename check also prevents a same-directory shim from
  * satisfying the libcrypto/libssl check under an unrelated DSO name.
  */
-static inline int d00_runtime_dso_bound(
+static inline int ed301v1_runtime_dso_bound(
     const char *symbol,
     const char *dso_name,
     const char *label)
 {
-    const char *expected = getenv("D00_EXPECT_OPENSSL_PREFIX");
+    const char *expected = getenv("ED301V1_EXPECT_OPENSSL_PREFIX");
     char canonical_prefix[PATH_MAX];
     char expected_lib[PATH_MAX];
     char canonical_lib[PATH_MAX];
@@ -314,7 +314,7 @@ static inline int d00_runtime_dso_bound(
 
     if (expected == NULL || expected[0] == '\0') {
         fprintf(stderr,
-            "FATAL: %s resolved without D00_EXPECT_OPENSSL_PREFIX\n",
+            "FATAL: %s resolved without ED301V1_EXPECT_OPENSSL_PREFIX\n",
             label);
         return 0;
     }
@@ -349,7 +349,7 @@ static inline int d00_runtime_dso_bound(
             label, symbol);
         return 0;
     }
-    if (!d00_dso_name_matches(canonical_dso, dso_name)) {
+    if (!ed301v1_dso_name_matches(canonical_dso, dso_name)) {
         fprintf(stderr,
             "FATAL: %s resolved to '%s', expected genuine %s DSO\n",
             label, info.dli_fname, dso_name);
@@ -372,43 +372,43 @@ static inline int d00_runtime_dso_bound(
     return 1;
 }
 
-static inline int d00_runtime_library_bound(void)
+static inline int ed301v1_runtime_library_bound(void)
 {
-    return d00_runtime_dso_bound(
+    return ed301v1_runtime_dso_bound(
         "OpenSSL_version", "libcrypto.so", "libcrypto");
 }
 
-static inline int d00_runtime_tls_library_bound(void)
+static inline int ed301v1_runtime_tls_library_bound(void)
 {
-    return d00_runtime_dso_bound(
+    return ed301v1_runtime_dso_bound(
         "SSL_version", "libssl.so", "libssl");
 }
 
-#define D00_REQUIRE_RUNTIME_BINDING()                                    \
+#define ED301V1_REQUIRE_RUNTIME_BINDING()                                    \
     do {                                                                 \
-        if (!d00_runtime_is_compatible()) {                              \
+        if (!ed301v1_runtime_is_compatible()) {                              \
             fprintf(stderr,                                              \
                 "FATAL: runtime OpenSSL '%s' is not compatible with "    \
                 "the compile-time headers '%s'\n",                       \
                 OpenSSL_version(OPENSSL_VERSION), OPENSSL_VERSION_TEXT); \
             return 3;                                                    \
         }                                                                \
-        if (!d00_runtime_library_bound())                                \
+        if (!ed301v1_runtime_library_bound())                                \
             return 3;                                                    \
     } while (0)
 
-#define D00_REQUIRE_TLS_RUNTIME_BINDING()                                \
+#define ED301V1_REQUIRE_TLS_RUNTIME_BINDING()                                \
     do {                                                                 \
-        if (!d00_runtime_tls_library_bound())                             \
+        if (!ed301v1_runtime_tls_library_bound())                             \
             return 3;                                                    \
     } while (0)
 
-#define D00_CHECK(condition, ...)                                        \
+#define ED301V1_CHECK(condition, ...)                                        \
     do {                                                                 \
         if (condition) {                                                 \
-            d00_pass_count++;                                            \
+            ed301v1_pass_count++;                                            \
         } else {                                                         \
-            d00_fail_count++;                                            \
+            ed301v1_fail_count++;                                            \
             fprintf(stderr, "FAIL %s:%d: ", __FILE__, __LINE__);         \
             fprintf(stderr, __VA_ARGS__);                                \
             fprintf(stderr, "\n");                                       \
@@ -417,23 +417,23 @@ static inline int d00_runtime_tls_library_bound(void)
         ERR_clear_error();                                               \
     } while (0)
 
-static inline int d00_summary(const char *name)
+static inline int ed301v1_summary(const char *name)
 {
-    printf("%s: %d passed, %d failed\n", name, d00_pass_count,
-        d00_fail_count);
-    return d00_fail_count == 0 ? 0 : 1;
+    printf("%s: %d passed, %d failed\n", name, ed301v1_pass_count,
+        ed301v1_fail_count);
+    return ed301v1_fail_count == 0 ? 0 : 1;
 }
 
 /* Load the default provider and an Ed301-EdDSA-v1 module into a context. */
-static inline OSSL_PROVIDER *d00_load_named(
+static inline OSSL_PROVIDER *ed301v1_load_named(
     OSSL_LIB_CTX *libctx,
     OSSL_PROVIDER **defp,
     const char *provider_name)
 {
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     const int requires_registry =
-        d00_provider_requires_test_registry(provider_name);
+        ed301v1_provider_requires_test_registry(provider_name);
 
     if (defp != NULL)
         *defp = NULL;
@@ -443,23 +443,23 @@ static inline OSSL_PROVIDER *d00_load_named(
      * postflight sequence using OpenSSL's portable thread primitive.  It is
      * not claimed to coordinate unrelated providers or processes.
      */
-    if (CRYPTO_THREAD_run_once(&d00_registry_once,
-            d00_registry_lock_init) != 1
-            || d00_registry_lock == NULL
-            || CRYPTO_THREAD_write_lock(d00_registry_lock) != 1)
+    if (CRYPTO_THREAD_run_once(&ed301v1_registry_once,
+            ed301v1_registry_lock_init) != 1
+            || ed301v1_registry_lock == NULL
+            || CRYPTO_THREAD_write_lock(ed301v1_registry_lock) != 1)
         return NULL;
-    if (requires_registry && !d00_registry_preflight_ok())
+    if (requires_registry && !ed301v1_registry_preflight_ok())
         goto done;
-    if (requires_registry && !d00_registry_ensure_exact())
+    if (requires_registry && !ed301v1_registry_ensure_exact())
         goto done;
     deflt = OSSL_PROVIDER_load(libctx, "default");
     if (deflt == NULL)
         goto done;
-    draft = OSSL_PROVIDER_load(libctx, provider_name);
-    if (draft == NULL
-            || (requires_registry && !d00_registry_is_exact())) {
-        OSSL_PROVIDER_unload(draft);
-        draft = NULL;
+    v1 = OSSL_PROVIDER_load(libctx, provider_name);
+    if (v1 == NULL
+            || (requires_registry && !ed301v1_registry_is_exact())) {
+        OSSL_PROVIDER_unload(v1);
+        v1 = NULL;
         OSSL_PROVIDER_unload(deflt);
         deflt = NULL;
         goto done;
@@ -469,16 +469,16 @@ static inline OSSL_PROVIDER *d00_load_named(
     else
         OSSL_PROVIDER_unload(deflt);
 done:
-    CRYPTO_THREAD_unlock(d00_registry_lock);
-    return draft;
+    CRYPTO_THREAD_unlock(ed301v1_registry_lock);
+    return v1;
 }
 
-static inline OSSL_PROVIDER *d00_load(OSSL_LIB_CTX *libctx, OSSL_PROVIDER **defp)
+static inline OSSL_PROVIDER *ed301v1_load(OSSL_LIB_CTX *libctx, OSSL_PROVIDER **defp)
 {
-    return d00_load_named(libctx, defp, D00_PROVIDER);
+    return ed301v1_load_named(libctx, defp, ED301V1_PROVIDER);
 }
 
-static inline EVP_PKEY *d00_key_from_params(
+static inline EVP_PKEY *ed301v1_key_from_params(
     OSSL_LIB_CTX *libctx,
     int selection,
     const unsigned char *seed,
@@ -487,7 +487,7 @@ static inline EVP_PKEY *d00_key_from_params(
     size_t public_len)
 {
     EVP_PKEY_CTX *ctx =
-        EVP_PKEY_CTX_new_from_name(libctx, D00_ALG, d00_property);
+        EVP_PKEY_CTX_new_from_name(libctx, ED301V1_ALG, ed301v1_property);
     OSSL_PARAM params[3];
     size_t count = 0;
     EVP_PKEY *pkey = NULL;
@@ -509,27 +509,27 @@ static inline EVP_PKEY *d00_key_from_params(
     return pkey;
 }
 
-static inline EVP_PKEY *d00_key_from_seed(
+static inline EVP_PKEY *ed301v1_key_from_seed(
     OSSL_LIB_CTX *libctx,
     const unsigned char seed[38])
 {
-    return d00_key_from_params(
-        libctx, EVP_PKEY_KEYPAIR, seed, D00_SEED_BYTES, NULL, 0);
+    return ed301v1_key_from_params(
+        libctx, EVP_PKEY_KEYPAIR, seed, ED301V1_SEED_BYTES, NULL, 0);
 }
 
-static inline EVP_PKEY *d00_key_from_public(
+static inline EVP_PKEY *ed301v1_key_from_public(
     OSSL_LIB_CTX *libctx,
     const unsigned char *public_key,
     size_t public_len)
 {
-    return d00_key_from_params(
+    return ed301v1_key_from_params(
         libctx, EVP_PKEY_PUBLIC_KEY, NULL, 0, public_key, public_len);
 }
 
-static inline EVP_PKEY *d00_keygen(OSSL_LIB_CTX *libctx)
+static inline EVP_PKEY *ed301v1_keygen(OSSL_LIB_CTX *libctx)
 {
     EVP_PKEY_CTX *ctx =
-        EVP_PKEY_CTX_new_from_name(libctx, D00_ALG, d00_property);
+        EVP_PKEY_CTX_new_from_name(libctx, ED301V1_ALG, ed301v1_property);
     EVP_PKEY *pkey = NULL;
 
     if (ctx == NULL)
@@ -546,13 +546,13 @@ static inline EVP_PKEY *d00_keygen(OSSL_LIB_CTX *libctx)
  * fetch is required by EVP_PKEY_{sign,verify}_message_init(); the EVP context
  * retains its own reference after a successful initialization.
  */
-static inline int d00_sign_message_init(
+static inline int ed301v1_sign_message_init(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY_CTX *pctx,
     const OSSL_PARAM *params)
 {
     EVP_SIGNATURE *algorithm =
-        EVP_SIGNATURE_fetch(libctx, D00_ALG, d00_property);
+        EVP_SIGNATURE_fetch(libctx, ED301V1_ALG, ed301v1_property);
     int ok = algorithm != NULL
         && EVP_PKEY_sign_message_init(pctx, algorithm, params) == 1;
 
@@ -560,13 +560,13 @@ static inline int d00_sign_message_init(
     return ok;
 }
 
-static inline int d00_verify_message_init(
+static inline int ed301v1_verify_message_init(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY_CTX *pctx,
     const OSSL_PARAM *params)
 {
     EVP_SIGNATURE *algorithm =
-        EVP_SIGNATURE_fetch(libctx, D00_ALG, d00_property);
+        EVP_SIGNATURE_fetch(libctx, ED301V1_ALG, ed301v1_property);
     int ok = algorithm != NULL
         && EVP_PKEY_verify_message_init(pctx, algorithm, params) == 1;
 
@@ -575,7 +575,7 @@ static inline int d00_verify_message_init(
 }
 
 /* One-shot EVP_DigestSign; returns 1 and fills sig[76] on success. */
-static inline int d00_digest_sign(
+static inline int ed301v1_digest_sign(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY *pkey,
     const unsigned char *message,
@@ -583,21 +583,21 @@ static inline int d00_digest_sign(
     unsigned char sig[76])
 {
     EVP_MD_CTX *mctx = EVP_MD_CTX_new();
-    size_t sig_len = D00_SIG_BYTES;
+    size_t sig_len = ED301V1_SIG_BYTES;
     int ok = 0;
 
     if (mctx == NULL)
         return 0;
     ok = EVP_DigestSignInit_ex(
-             mctx, NULL, NULL, libctx, d00_property, pkey, NULL) == 1
+             mctx, NULL, NULL, libctx, ed301v1_property, pkey, NULL) == 1
         && EVP_DigestSign(mctx, sig, &sig_len, message, message_len) == 1
-        && sig_len == D00_SIG_BYTES;
+        && sig_len == ED301V1_SIG_BYTES;
     EVP_MD_CTX_free(mctx);
     return ok;
 }
 
 /* One-shot EVP_DigestVerify with the complete OpenSSL tri-state result. */
-static inline int d00_digest_verify_result(
+static inline int ed301v1_digest_verify_result(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY *pkey,
     const unsigned char *message,
@@ -611,7 +611,7 @@ static inline int d00_digest_verify_result(
     if (mctx == NULL)
         return -1;
     if (EVP_DigestVerifyInit_ex(
-            mctx, NULL, NULL, libctx, d00_property, pkey, NULL) == 1)
+            mctx, NULL, NULL, libctx, ed301v1_property, pkey, NULL) == 1)
         result = EVP_DigestVerify(
             mctx, sig, sig_len, message, message_len);
     EVP_MD_CTX_free(mctx);
@@ -619,7 +619,7 @@ static inline int d00_digest_verify_result(
 }
 
 /* One-shot EVP_DigestVerify; returns 1 only on acceptance. */
-static inline int d00_digest_verify(
+static inline int ed301v1_digest_verify(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY *pkey,
     const unsigned char *message,
@@ -627,7 +627,7 @@ static inline int d00_digest_verify(
     const unsigned char *sig,
     size_t sig_len)
 {
-    return d00_digest_verify_result(
+    return ed301v1_digest_verify_result(
         libctx, pkey, message, message_len, sig, sig_len) == 1;
 }
 
@@ -636,7 +636,7 @@ static inline int d00_digest_verify(
  * through the provider: an unimportable public key counts as rejection.
  * message may be NULL with nonzero length for the NULL-message mapping.
  */
-static inline int d00_triple_accepts(
+static inline int ed301v1_triple_accepts(
     OSSL_LIB_CTX *libctx,
     const unsigned char *public_key,
     size_t public_len,
@@ -645,14 +645,14 @@ static inline int d00_triple_accepts(
     const unsigned char *sig,
     size_t sig_len)
 {
-    EVP_PKEY *pkey = d00_key_from_public(libctx, public_key, public_len);
+    EVP_PKEY *pkey = ed301v1_key_from_public(libctx, public_key, public_len);
     int ok;
 
     if (pkey == NULL) {
         ERR_clear_error();
         return 0;
     }
-    ok = d00_digest_verify(libctx, pkey, message, message_len, sig, sig_len);
+    ok = ed301v1_digest_verify(libctx, pkey, message, message_len, sig, sig_len);
     EVP_PKEY_free(pkey);
     ERR_clear_error();
     return ok;

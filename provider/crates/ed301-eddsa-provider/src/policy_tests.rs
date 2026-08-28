@@ -8,7 +8,7 @@
 //! strings through unmodified (covered by the C acceptance harnesses), so
 //! the core's parse behaviour is the provider's parse behaviour.
 //!
-//! Mutation control: with `ED301D00_POLICY_MUTATE=1` in the environment
+//! Mutation control: with `ED301V1_POLICY_MUTATE=1` in the environment
 //! every expected result is inverted and this test MUST fail; the matrix
 //! runner asserts that failure.
 
@@ -17,7 +17,7 @@ use ed301_eddsa::{Signature, validate_public_key};
 use crate::policy_vectors_data::{POINT_POLICY, SCALAR_POLICY, VALID_R, VALID_S};
 
 fn mutate() -> bool {
-    std::env::var("ED301D00_POLICY_MUTATE").is_ok_and(|value| value == "1")
+    std::env::var("ED301V1_POLICY_MUTATE").is_ok_and(|value| value == "1")
 }
 
 #[test]

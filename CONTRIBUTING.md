@@ -15,8 +15,10 @@ Before proposing a change:
 4. run `evidence/curve-provenance/run_curve_checks.sh --full` after any change
    to the curve evidence;
 5. regenerate `SOURCE_MANIFEST.sha256`; and
-6. run `sh scripts/check.sh` and, where Valgrind is available,
-   `sh scripts/check-secret-taint.sh`.
+6. run `sh scripts/check.sh`, `review-tests/run.sh` and
+   `sh scripts/check-secret-taint.sh` from the verified archive snapshot
+   described in `README.md`; and
+7. run both provider lanes after provider or FFI changes.
 
 Do not submit production-readiness, audit, constant-time-completion,
 zeroization-completion or standards claims without corresponding independent

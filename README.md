@@ -7,7 +7,7 @@ elliptic curve.
 - safe Rust
 - one-shot signing and verification with an optional 0--255-byte context
 - locked, vendored and offline builds
-- draft vectors and edge cases included
+- v1 vectors and frozen draft-00 rejection boundaries
 
 ## Curve provenance
 
@@ -32,10 +32,16 @@ ED301_EXPECTED_SOURCE_MANIFEST_SHA256=<trusted-sha256> \
 ```
 
 The same three variables are required by `scripts/check-downstream.sh`,
-`scripts/check-secret-taint.sh`, and `scripts/test-provider.sh`. The manifest
-inside an unauthenticated archive is not its own trust anchor. Git mode exists
-only as a source-verification primitive and additionally requires an external
-exact commit; authoritative build gates do not accept it.
+`scripts/check-secret-taint.sh`, `scripts/test-provider.sh`, and
+`review-tests/run.sh`. The manifest inside an unauthenticated archive is not
+its own trust anchor. Git mode exists only as a source-verification primitive
+and additionally requires an external exact commit; authoritative build gates
+do not accept it.
+
+`review-tests/run.sh` adds the independent v1 transcript/OID oracle, wire
+mutation matrix, public-signature taint test, external-consumer taint test and
+header-version contract. The provider matrix also runs its OpenSSL context
+contract against each lane.
 
 ## Experimental OpenSSL provider
 
@@ -78,8 +84,7 @@ The provider is an integration candidate, not a release.  See
 
 ## Status
 
-Round-2 post-finding-repair candidate awaiting a fresh full-scope deep scan.
-Not production-ready.
+Research and review candidate. Not production-ready.
 
 See `STATUS.md` and `ZEROIZATION_AND_CT_BOUNDARY.md` for the current assurance
 boundary.

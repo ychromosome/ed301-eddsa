@@ -18,9 +18,9 @@
 #include "strict_serialization.h"
 #include "vectors.h"
 
-#define D00_TLS_PKCS8_DECODER_PROP \
+#define ED301V1_TLS_PKCS8_DECODER_PROP \
     "provider=ed301_eddsa_v1_tls_test,input=der,structure=PrivateKeyInfo"
-#define D00_TLS_SPKI_DECODER_PROP \
+#define ED301V1_TLS_SPKI_DECODER_PROP \
     "provider=ed301_eddsa_v1_tls_test,input=der,structure=SubjectPublicKeyInfo"
 
 static unsigned char *make_der(
@@ -28,14 +28,14 @@ static unsigned char *make_der(
     int is_public,
     size_t *der_length)
 {
-    EVP_PKEY *key = d00_key_from_seed(libctx, POSITIVE_CASES[0].seed);
+    EVP_PKEY *key = ed301v1_key_from_seed(libctx, POSITIVE_CASES[0].seed);
     OSSL_ENCODER_CTX *encoder = key == NULL ? NULL
         : OSSL_ENCODER_CTX_new_for_pkey(
             key,
             is_public ? EVP_PKEY_PUBLIC_KEY : EVP_PKEY_KEYPAIR,
             "DER",
             is_public ? "SubjectPublicKeyInfo" : "PrivateKeyInfo",
-            D00_PKI_PROP);
+            ED301V1_PKI_PROP);
     unsigned char *der = NULL;
 
     *der_length = 0;
@@ -58,10 +58,10 @@ static OSSL_DECODER_CTX *tls_decoder_context(
         key,
         "DER",
         is_public ? "SubjectPublicKeyInfo" : "PrivateKeyInfo",
-        D00_ALG,
+        ED301V1_ALG,
         is_public ? EVP_PKEY_PUBLIC_KEY : EVP_PKEY_KEYPAIR,
         libctx,
-        D00_TLS_PROP);
+        ED301V1_TLS_PROP);
 }
 
 static EVP_PKEY *tls_decode_data(
@@ -98,7 +98,7 @@ static int record_construct(
 
     (void)decoder_instance;
     if (constructed == NULL || data_type == NULL || data_type->data == NULL
-            || strcmp(data_type->data, D00_ALG) != 0)
+            || strcmp(data_type->data, ED301V1_ALG) != 0)
         return 0;
     *constructed = 1;
     return 1;
@@ -115,7 +115,7 @@ static int reject_construct(
 
     (void)decoder_instance;
     if (called == NULL || data_type == NULL || data_type->data == NULL
-            || strcmp(data_type->data, D00_ALG) != 0)
+            || strcmp(data_type->data, ED301V1_ALG) != 0)
         return 0;
     *called = 1;
     return 0;
@@ -131,9 +131,9 @@ static OSSL_DECODER_CTX *single_tls_decoder_context_with_construct(
     OSSL_DECODER_CTX *context = OSSL_DECODER_CTX_new();
     OSSL_DECODER *decoder = OSSL_DECODER_fetch(
         libctx,
-        D00_ALG,
-        is_public ? D00_TLS_SPKI_DECODER_PROP
-                  : D00_TLS_PKCS8_DECODER_PROP);
+        ED301V1_ALG,
+        is_public ? ED301V1_TLS_SPKI_DECODER_PROP
+                  : ED301V1_TLS_PKCS8_DECODER_PROP);
 
     *decoder_out = decoder;
     if (context == NULL || decoder == NULL || construct == NULL
@@ -389,11 +389,11 @@ static int generic_decode_is(
 
 int main(void)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_LIB_CTX *reverse_libctx = NULL;
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     OSSL_PROVIDER *tls = NULL;
     OSSL_PROVIDER *reverse_tls = NULL;
     OSSL_PROVIDER *reverse_default = NULL;
@@ -413,34 +413,34 @@ int main(void)
     EVP_PKEY *key = NULL;
     EVP_PKEY *rsa = NULL;
     EVP_PKEY *ec = NULL;
-    unsigned char foreign[D00_PKCS8_DER_BYTES + 1] = { 0 };
+    unsigned char foreign[ED301V1_PKCS8_DER_BYTES + 1] = { 0 };
 
-    d00_property = D00_PKI_PROP;
-    draft = d00_load_named(libctx, &deflt, D00_PKI_PROVIDER);
-    D00_CHECK(libctx != NULL && draft != NULL,
+    ed301v1_property = ED301V1_PKI_PROP;
+    v1 = ed301v1_load_named(libctx, &deflt, ED301V1_PKI_PROVIDER);
+    ED301V1_CHECK(libctx != NULL && v1 != NULL,
         "test-only PKI provider loads through the host integration gate");
 
-    decoder = OSSL_DECODER_fetch(libctx, D00_ALG, D00_PKI_PROP);
-    D00_CHECK(decoder == NULL,
+    decoder = OSSL_DECODER_fetch(libctx, ED301V1_ALG, ED301V1_PKI_PROP);
+    ED301V1_CHECK(decoder == NULL,
         "PKI artifact exposes no provider decoder operation");
     OSSL_DECODER_free(decoder);
     ERR_clear_error();
 
     pkcs8 = make_der(libctx, 0, &pkcs8_length);
     spki = make_der(libctx, 1, &spki_length);
-    D00_CHECK(pkcs8 != NULL && pkcs8_length == D00_PKCS8_DER_BYTES,
+    ED301V1_CHECK(pkcs8 != NULL && pkcs8_length == ED301V1_PKCS8_DER_BYTES,
         "exact PKCS#8 test object produced");
-    D00_CHECK(spki != NULL && spki_length == D00_SPKI_DER_BYTES,
+    ED301V1_CHECK(spki != NULL && spki_length == ED301V1_SPKI_DER_BYTES,
         "exact SPKI test object produced");
 
-    key = d00_strict_der_import(libctx, pkcs8, pkcs8_length, 0);
-    D00_CHECK(key != NULL,
+    key = ed301v1_strict_der_import(libctx, pkcs8, pkcs8_length, 0);
+    ED301V1_CHECK(key != NULL,
         "complete-buffer PKCS#8 import succeeds after explicit selection");
     EVP_PKEY_free(key);
     key = NULL;
 
-    key = d00_strict_der_import(libctx, spki, spki_length, 1);
-    D00_CHECK(key != NULL,
+    key = ed301v1_strict_der_import(libctx, spki, spki_length, 1);
+    ED301V1_CHECK(key != NULL,
         "complete-buffer SPKI import succeeds after explicit selection");
     EVP_PKEY_free(key);
     key = NULL;
@@ -448,68 +448,68 @@ int main(void)
     if (pkcs8 != NULL) {
         memcpy(foreign, pkcs8, pkcs8_length);
         foreign[10] ^= 1;
-        D00_CHECK(d00_strict_der_import(
+        ED301V1_CHECK(ed301v1_strict_der_import(
                 libctx, foreign, pkcs8_length, 0) == NULL,
             "foreign OID is rejected before any key import");
-        D00_CHECK(d00_strict_der_import(
+        ED301V1_CHECK(ed301v1_strict_der_import(
                 libctx, pkcs8, pkcs8_length - 1, 0) == NULL,
             "partial input is rejected without a streaming state");
         foreign[10] ^= 1;
         foreign[pkcs8_length] = 0;
-        D00_CHECK(d00_strict_der_import(
+        ED301V1_CHECK(ed301v1_strict_der_import(
                 libctx, foreign, pkcs8_length + 1, 0) == NULL,
             "trailing bytes are rejected at the complete-buffer boundary");
     }
 
-    tls = d00_load_named(libctx, NULL, D00_TLS_PROVIDER);
-    D00_CHECK(tls != NULL,
+    tls = ed301v1_load_named(libctx, NULL, ED301V1_TLS_PROVIDER);
+    ED301V1_CHECK(tls != NULL,
         "TLS artifact loads after the exact host registry preflight");
-    decoder = OSSL_DECODER_fetch(libctx, D00_ALG, D00_TLS_PROP);
-    D00_CHECK(decoder != NULL,
+    decoder = OSSL_DECODER_fetch(libctx, ED301V1_ALG, ED301V1_TLS_PROP);
+    ED301V1_CHECK(decoder != NULL,
         "only the TLS artifact exposes its transactional DER decoder");
     OSSL_DECODER_free(decoder);
     decoder = OSSL_DECODER_fetch(
-        libctx, D00_ALG, D00_TLS_PKCS8_DECODER_PROP);
-    D00_CHECK(decoder == NULL,
+        libctx, ED301V1_ALG, ED301V1_TLS_PKCS8_DECODER_PROP);
+    ED301V1_CHECK(decoder == NULL,
         "TLS artifact exposes no private-key decoder");
     OSSL_DECODER_free(decoder);
     ERR_clear_error();
 
     if (tls != NULL && pkcs8 != NULL && spki != NULL) {
         key = tls_decode_data(libctx, spki, spki_length, 1);
-        D00_CHECK(key != NULL,
+        ED301V1_CHECK(key != NULL,
             "TLS decoder imports one exact SPKI object");
         EVP_PKEY_free(key);
         key = NULL;
 
-        D00_CHECK(retry_every_split(
+        ED301V1_CHECK(retry_every_split(
                 libctx, spki, spki_length, 1),
             "SPKI retry source remains untouched at every split");
 
         memcpy(foreign, spki, spki_length);
         foreign[8] ^= 1;
-        D00_CHECK(rejected_input_is_unconsumed(
+        ED301V1_CHECK(rejected_input_is_unconsumed(
                 libctx, foreign, spki_length, 1),
             "foreign SPKI OID is a soft non-match without consumption");
-        D00_CHECK(rejected_input_is_unconsumed(
+        ED301V1_CHECK(rejected_input_is_unconsumed(
                 libctx, spki, spki_length - 1, 1),
             "partial SPKI is a soft non-match before consuming its prefix");
 
         memcpy(foreign, spki, spki_length);
         foreign[2] ^= 1;
-        D00_CHECK(hard_failure_is_consumed_and_reported(
+        ED301V1_CHECK(hard_failure_is_consumed_and_reported(
                 libctx, foreign, spki_length),
             "malformed confirmed-OID SPKI is a consuming hard failure");
 
         memcpy(foreign, spki, spki_length);
-        memcpy(foreign + sizeof(D00_SPKI_PREFIX),
-            POINT_CASES[2].encoding, D00_PUB_BYTES); /* identity */
-        D00_CHECK(hard_failure_is_consumed_and_reported(
+        memcpy(foreign + sizeof(ED301V1_SPKI_PREFIX),
+            POINT_CASES[2].encoding, ED301V1_PUB_BYTES); /* identity */
+        ED301V1_CHECK(hard_failure_is_consumed_and_reported(
                 libctx, foreign, spki_length),
             "confirmed-OID SPKI with invalid key material is a consuming "
             "hard failure");
 
-        D00_CHECK(callback_rejection_consumes_reference(
+        ED301V1_CHECK(callback_rejection_consumes_reference(
                 libctx, spki, spki_length),
             "construct-callback rejection consumes the matched object; "
             "Valgrind checks reference release");
@@ -521,13 +521,13 @@ int main(void)
     rsa_spki = encode_foreign_key(rsa, 1, &rsa_spki_length);
     ec_pkcs8 = encode_foreign_key(ec, 0, &ec_pkcs8_length);
     ec_spki = encode_foreign_key(ec, 1, &ec_spki_length);
-    D00_CHECK(rsa_pkcs8 != NULL && rsa_spki != NULL
+    ED301V1_CHECK(rsa_pkcs8 != NULL && rsa_spki != NULL
             && ec_pkcs8 != NULL && ec_spki != NULL,
         "foreign RSA and EC PKCS#8/SPKI controls are available");
 
     if (rsa_pkcs8 != NULL && rsa_spki != NULL
             && ec_pkcs8 != NULL && ec_spki != NULL) {
-        D00_CHECK(generic_decode_is(libctx, rsa_pkcs8,
+        ED301V1_CHECK(generic_decode_is(libctx, rsa_pkcs8,
                 rsa_pkcs8_length, 0, "RSA")
                 && generic_decode_is(libctx, rsa_spki,
                     rsa_spki_length, 1, "RSA")
@@ -539,12 +539,12 @@ int main(void)
 
         reverse_libctx = OSSL_LIB_CTX_new();
         reverse_tls = reverse_libctx == NULL ? NULL
-            : OSSL_PROVIDER_load(reverse_libctx, D00_TLS_PROVIDER);
+            : OSSL_PROVIDER_load(reverse_libctx, ED301V1_TLS_PROVIDER);
         reverse_default = reverse_libctx == NULL ? NULL
             : OSSL_PROVIDER_load(reverse_libctx, "default");
-        D00_CHECK(reverse_tls != NULL && reverse_default != NULL,
+        ED301V1_CHECK(reverse_tls != NULL && reverse_default != NULL,
             "reverse-order TLS/default providers load");
-        D00_CHECK(reverse_tls != NULL && reverse_default != NULL
+        ED301V1_CHECK(reverse_tls != NULL && reverse_default != NULL
                 && generic_decode_is(reverse_libctx, rsa_pkcs8,
                     rsa_pkcs8_length, 0, "RSA")
                 && generic_decode_is(reverse_libctx, rsa_spki,
@@ -568,8 +568,8 @@ int main(void)
     OSSL_PROVIDER_unload(reverse_tls);
     OSSL_LIB_CTX_free(reverse_libctx);
     OSSL_PROVIDER_unload(tls);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
-    return d00_summary("val01_transactional_tls_decoder");
+    return ed301v1_summary("val01_transactional_tls_decoder");
 }

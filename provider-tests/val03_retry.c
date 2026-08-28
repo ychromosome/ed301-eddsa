@@ -55,8 +55,8 @@ static void *competitor_main(void *argument)
     int nid;
 
     if (competitor->conflicting) {
-        nid = OBJ_create(D00_OID_TEXT, "ED301D00-VAL03-COLLIDER",
-            "ED301D00 val03 conflict object");
+        nid = OBJ_create(ED301V1_OID_TEXT, "ED301V1-VAL03-COLLIDER",
+            "ED301V1 val03 conflict object");
         atomic_store_explicit(
             &competitor->prepared, nid != NID_undef, memory_order_release);
         atomic_store_explicit(&competitor->completed,
@@ -65,7 +65,7 @@ static void *competitor_main(void *argument)
             &competitor->finished, 1, memory_order_release);
         return NULL;
     }
-    nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
+    nid = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG);
     if (nid == NID_undef) {
         atomic_store_explicit(
             &competitor->finished, 1, memory_order_release);
@@ -86,7 +86,7 @@ static int run_lane(const char *label, const char *module_dir,
 {
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     COMPETITOR competitor = {
         delay_milliseconds, conflicting,
         ATOMIC_VAR_INIT(0), ATOMIC_VAR_INIT(0), ATOMIC_VAR_INIT(0)
@@ -125,10 +125,10 @@ static int run_lane(const char *label, const char *module_dir,
     sleep_ms(5);
 
     started = now_seconds();
-    d00_seed_error_sentinel();
-    draft = d00_load_named(libctx, NULL, D00_PKI_PROVIDER);
+    ed301v1_seed_error_sentinel();
+    v1 = ed301v1_load_named(libctx, NULL, ED301V1_PKI_PROVIDER);
     elapsed = now_seconds() - started;
-    first_queue_ok = d00_queue_is_sentinel_only();
+    first_queue_ok = ed301v1_queue_is_sentinel_only();
     pthread_join(thread, NULL);
 
     if (!atomic_load_explicit(
@@ -136,24 +136,24 @@ static int run_lane(const char *label, const char *module_dir,
         fprintf(stderr, "%s: competitor failed to finish\n", label);
         goto done;
     }
-    d00_seed_error_sentinel();
-    retry = d00_load_named(libctx, NULL, D00_PKI_PROVIDER);
+    ed301v1_seed_error_sentinel();
+    retry = ed301v1_load_named(libctx, NULL, ED301V1_PKI_PROVIDER);
     printf("%s: unsafe first load %s in %.3f s; explicit retry %s\n",
-        label, draft == NULL ? "blocked" : "unexpectedly succeeded",
+        label, v1 == NULL ? "blocked" : "unexpectedly succeeded",
         elapsed, retry != NULL ? "succeeded" : "blocked");
-    lane_ok = draft == NULL && first_queue_ok && elapsed <= 1.0
-        && d00_queue_is_sentinel_only()
+    lane_ok = v1 == NULL && first_queue_ok && elapsed <= 1.0
+        && ed301v1_queue_is_sentinel_only()
         && (conflicting
             ? retry == NULL
-            : retry != NULL && d00_registry_is_exact());
+            : retry != NULL && ed301v1_registry_is_exact());
     if (!lane_ok)
         fprintf(stderr, "%s: host preflight/retry policy mismatch\n", label);
 
 done:
     if (retry != NULL)
         OSSL_PROVIDER_unload(retry);
-    if (draft != NULL)
-        OSSL_PROVIDER_unload(draft);
+    if (v1 != NULL)
+        OSSL_PROVIDER_unload(v1);
     if (deflt != NULL)
         OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
@@ -165,20 +165,20 @@ int main(int argc, char **argv)
     const char *mode = argc > 1 ? argv[1] : "";
     const char *module_dir = argc > 2 ? argv[2] : NULL;
 
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     if (strcmp(mode, "exact-fast") == 0) {
-        D00_CHECK(run_lane("exact-fast (50 ms)", module_dir, 50, 0),
+        ED301V1_CHECK(run_lane("exact-fast (50 ms)", module_dir, 50, 0),
             "explicit retry succeeds after a fast exact competitor");
     } else if (strcmp(mode, "exact-stalled") == 0) {
-        D00_CHECK(run_lane("exact-stalled (3 s)", module_dir, 3000, 0),
+        ED301V1_CHECK(run_lane("exact-stalled (3 s)", module_dir, 3000, 0),
             "first load does not spin; explicit retry succeeds later");
     } else if (strcmp(mode, "conflict") == 0) {
-        D00_CHECK(run_lane("conflict", module_dir, 0, 1),
+        ED301V1_CHECK(run_lane("conflict", module_dir, 0, 1),
             "persistent foreign conflict remains blocked without waiting");
     } else {
         fprintf(stderr, "usage: val03_retry "
             "exact-fast|exact-stalled|conflict [module-dir]\n");
         return 2;
     }
-    return d00_summary("val03_retry");
+    return ed301v1_summary("val03_retry");
 }

@@ -1,0 +1,24 @@
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "external-profile-taint"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.91"
+publish = false
+
+[dependencies]
+ed301-eddsa = { path = "../../crates/ed301-eddsa", features = ["secret-taint-instrumentation"] }
+ed301-valgrind-client = { path = "../../secret-taint/valgrind-client" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+overflow-checks = true
+
+# Deliberately no package-specific crypto-bigint profile exception. This is
+# the build contract seen by an ordinary external top-level consumer.

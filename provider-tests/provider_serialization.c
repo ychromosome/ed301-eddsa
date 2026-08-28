@@ -53,7 +53,7 @@ static unsigned char *encode(
     size_t *out_len)
 {
     OSSL_ENCODER_CTX *ctx = OSSL_ENCODER_CTX_new_for_pkey(
-        pkey, selection, format, structure, D00_PKI_PROP);
+        pkey, selection, format, structure, ED301V1_PKI_PROP);
     unsigned char *data = NULL;
 
     *out_len = 0;
@@ -82,9 +82,9 @@ static EVP_PKEY *decode(
                 && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0))
         return NULL;
     if (strcmp(format, "DER") == 0)
-        return d00_strict_der_import(libctx, data, data_len, is_public);
+        return ed301v1_strict_der_import(libctx, data, data_len, is_public);
     if (strcmp(format, "PEM") == 0)
-        return d00_strict_pem_import(libctx, data, data_len, is_public);
+        return ed301v1_strict_pem_import(libctx, data, data_len, is_public);
     return NULL;
 }
 
@@ -186,8 +186,8 @@ static size_t make_pkcs8_with_seed_length(
     output[index++] = 0x00;
     output[index++] = 0x30;
     output[index++] = 0x0d;
-    memcpy(output + index, D00_PKCS8_PREFIX + 7, D00_OID_TLV_BYTES);
-    index += D00_OID_TLV_BYTES;
+    memcpy(output + index, ED301V1_PKCS8_PREFIX + 7, ED301V1_OID_TLV_BYTES);
+    index += ED301V1_OID_TLV_BYTES;
     output[index++] = 0x04;
     output[index++] = (unsigned char)(seed_length + 2);
     output[index++] = 0x04;
@@ -199,28 +199,28 @@ static size_t make_pkcs8_with_seed_length(
 
 int main(void)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft;
+    OSSL_PROVIDER *v1;
     const POSITIVE_CASE *base = &POSITIVE_CASES[0];
     EVP_PKEY *pkey;
 
-    d00_property = D00_PKI_PROP;
-    draft = d00_load_named(libctx, &deflt, D00_PKI_PROVIDER);
-    pkey = d00_key_from_seed(libctx, base->seed);
-    D00_CHECK(draft != NULL && pkey != NULL, "provider and key");
+    ed301v1_property = ED301V1_PKI_PROP;
+    v1 = ed301v1_load_named(libctx, &deflt, ED301V1_PKI_PROVIDER);
+    pkey = ed301v1_key_from_seed(libctx, base->seed);
+    ED301V1_CHECK(v1 != NULL && pkey != NULL, "provider and key");
 
     /*
      * D1 (provider serialization contract; OpenSSL endecode_test.c pattern):
      * DER -> PEM -> DER is byte-identical for both supported structures.
      */
-    D00_CHECK(pkey != NULL && der_pem_der_is_identical(libctx, pkey,
+    ED301V1_CHECK(pkey != NULL && der_pem_der_is_identical(libctx, pkey,
             OSSL_KEYMGMT_SELECT_PRIVATE_KEY
                 | OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
             "PrivateKeyInfo"),
         "D1 PKCS#8 DER-to-PEM-to-DER is byte-identical");
-    D00_CHECK(pkey != NULL && der_pem_der_is_identical(libctx, pkey,
+    ED301V1_CHECK(pkey != NULL && der_pem_der_is_identical(libctx, pkey,
             OSSL_KEYMGMT_SELECT_PUBLIC_KEY, "SubjectPublicKeyInfo"),
         "D1 SPKI DER-to-PEM-to-DER is byte-identical");
 
@@ -233,10 +233,10 @@ int main(void)
             "DER", "PrivateKeyInfo", &der_len);
         EVP_PKEY *decoded;
 
-        D00_CHECK(der != NULL && der_len == D00_PKCS8_DER_BYTES
-                && memcmp(der, D00_PKCS8_PREFIX,
-                    sizeof(D00_PKCS8_PREFIX)) == 0
-                && memcmp(der + sizeof(D00_PKCS8_PREFIX), base->seed,
+        ED301V1_CHECK(der != NULL && der_len == ED301V1_PKCS8_DER_BYTES
+                && memcmp(der, ED301V1_PKCS8_PREFIX,
+                    sizeof(ED301V1_PKCS8_PREFIX)) == 0
+                && memcmp(der + sizeof(ED301V1_PKCS8_PREFIX), base->seed,
                     38) == 0,
             "PKCS#8 DER is the exact 62-byte profile encoding");
 
@@ -245,7 +245,7 @@ int main(void)
          * AlgorithmIdentifier parameters are absent and the assigned OID
          * bytes are exact before the private-key OCTET STRING.
          */
-        D00_CHECK(der != NULL && der_len == D00_PKCS8_DER_BYTES
+        ED301V1_CHECK(der != NULL && der_len == ED301V1_PKCS8_DER_BYTES
                 && der[5] == 0x30 && der[6] == 0x0d
                 && der[7] == 0x06 && der[20] == 0x04,
             "D4/D5 PKCS#8 has exact OID and absent parameters");
@@ -254,25 +254,25 @@ int main(void)
             : decode(libctx, der, der_len, "DER", "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY
                     | OSSL_KEYMGMT_SELECT_PUBLIC_KEY);
-        D00_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
+        ED301V1_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
             "PKCS#8 DER round trip");
         EVP_PKEY_free(decoded);
 
         /* Negative shapes derived from the valid DER. */
-        if (der != NULL && der_len == D00_PKCS8_DER_BYTES) {
+        if (der != NULL && der_len == ED301V1_PKCS8_DER_BYTES) {
             unsigned char mutated[80];
             unsigned char nonminimal[80];
             unsigned char indefinite[80];
             static const size_t truncation_boundaries[] = {
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-                20, 21, 22, 23, 24, D00_PKCS8_DER_BYTES - 1
+                20, 21, 22, 23, 24, ED301V1_PKCS8_DER_BYTES - 1
             };
 
             /*
              * D3 (provider complete-buffer contract; endecode_test.c):
              * every ASN.1 structural boundary and a short value reject.
              */
-            D00_CHECK(all_truncations_rejected(libctx, der, der_len,
+            ED301V1_CHECK(all_truncations_rejected(libctx, der, der_len,
                     "PrivateKeyInfo", OSSL_KEYMGMT_SELECT_PRIVATE_KEY,
                     truncation_boundaries,
                     sizeof(truncation_boundaries)
@@ -282,7 +282,7 @@ int main(void)
             /* D2 (provider complete-buffer contract): trailing data rejects. */
             memcpy(mutated, der, der_len);
             mutated[der_len] = 0x00;
-            D00_CHECK(decode(libctx, mutated, der_len + 1, "DER",
+            ED301V1_CHECK(decode(libctx, mutated, der_len + 1, "DER",
                     "PrivateKeyInfo",
                     OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
                 "trailing data after PKCS#8 is rejected");
@@ -293,7 +293,7 @@ int main(void)
             nonminimal[1] = 0x81;
             nonminimal[2] = der[1];
             memcpy(nonminimal + 3, der + 2, der_len - 2);
-            D00_CHECK(decode(libctx, nonminimal, der_len + 1, "DER",
+            ED301V1_CHECK(decode(libctx, nonminimal, der_len + 1, "DER",
                     "PrivateKeyInfo",
                     OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
                 "PKCS#8 with non-minimal outer length is rejected");
@@ -304,7 +304,7 @@ int main(void)
             memcpy(indefinite + 2, der + 2, der_len - 2);
             indefinite[der_len] = 0x00;
             indefinite[der_len + 1] = 0x00;
-            D00_CHECK(decode(libctx, indefinite, der_len + 2, "DER",
+            ED301V1_CHECK(decode(libctx, indefinite, der_len + 2, "DER",
                     "PrivateKeyInfo",
                     OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
                 "PKCS#8 with indefinite outer length is rejected");
@@ -313,19 +313,19 @@ int main(void)
             /* D5 (project OID registry): a foreign OID never aliases Ed301. */
             memcpy(mutated, der, der_len);
             mutated[10] ^= 1;
-            D00_CHECK(decode(libctx, mutated, der_len, "DER",
+            ED301V1_CHECK(decode(libctx, mutated, der_len, "DER",
                     "PrivateKeyInfo",
                     OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
                 "wrong OID is rejected");
             ERR_clear_error();
 
             /*
-             * D7 (draft 38-byte seed contract; OpenSSL ECX nested-octet
+             * D7 (v1 38-byte seed contract; OpenSSL ECX nested-octet
              * pattern): the inner seed must be exactly 38 bytes.
              */
             memcpy(mutated, der, der_len);
             mutated[22] = 0x03;
-            D00_CHECK(decode(libctx, mutated, der_len, "DER",
+            ED301V1_CHECK(decode(libctx, mutated, der_len, "DER",
                     "PrivateKeyInfo",
                     OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
                 "PKCS#8 with a BIT STRING in place of the nested OCTET "
@@ -333,30 +333,30 @@ int main(void)
             ERR_clear_error();
 
             {
-                unsigned char seed39[D00_SEED_BYTES + 1];
+                unsigned char seed39[ED301V1_SEED_BYTES + 1];
                 unsigned char short_seed_der[80];
                 unsigned char long_seed_der[80];
                 size_t short_seed_der_length;
                 size_t long_seed_der_length;
 
-                memcpy(seed39, base->seed, D00_SEED_BYTES);
-                seed39[D00_SEED_BYTES] = 0x00;
+                memcpy(seed39, base->seed, ED301V1_SEED_BYTES);
+                seed39[ED301V1_SEED_BYTES] = 0x00;
                 short_seed_der_length = make_pkcs8_with_seed_length(
                     short_seed_der, sizeof(short_seed_der), base->seed,
-                    D00_SEED_BYTES - 1);
+                    ED301V1_SEED_BYTES - 1);
                 long_seed_der_length = make_pkcs8_with_seed_length(
                     long_seed_der, sizeof(long_seed_der), seed39,
-                    D00_SEED_BYTES + 1);
+                    ED301V1_SEED_BYTES + 1);
 
-                D00_CHECK(short_seed_der_length
-                        == D00_PKCS8_DER_BYTES - 1
+                ED301V1_CHECK(short_seed_der_length
+                        == ED301V1_PKCS8_DER_BYTES - 1
                         && decode(libctx, short_seed_der,
                             short_seed_der_length, "DER", "PrivateKeyInfo",
                             OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
                     "D7 well-formed PKCS#8 with a 37-byte seed is rejected");
                 ERR_clear_error();
-                D00_CHECK(long_seed_der_length
-                        == D00_PKCS8_DER_BYTES + 1
+                ED301V1_CHECK(long_seed_der_length
+                        == ED301V1_PKCS8_DER_BYTES + 1
                         && decode(libctx, long_seed_der,
                             long_seed_der_length, "DER", "PrivateKeyInfo",
                             OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
@@ -372,7 +372,7 @@ int main(void)
      * encoding pattern): decoder rejects NULL and all explicit parameters.
      */
     {
-        unsigned char with_null[D00_PKCS8_DER_BYTES + 2];
+        unsigned char with_null[ED301V1_PKCS8_DER_BYTES + 2];
         size_t index = 0;
 
         /* SEQ(62+2) { INTEGER 0, SEQ { OID, NULL }, OCTET... } */
@@ -383,9 +383,9 @@ int main(void)
         with_null[index++] = 0x00;
         with_null[index++] = 0x30;
         with_null[index++] = 0x0f;
-        memcpy(with_null + index, D00_PKCS8_PREFIX + 7,
-            D00_OID_TLV_BYTES);
-        index += D00_OID_TLV_BYTES;
+        memcpy(with_null + index, ED301V1_PKCS8_PREFIX + 7,
+            ED301V1_OID_TLV_BYTES);
+        index += ED301V1_OID_TLV_BYTES;
         with_null[index++] = 0x05; /* NULL */
         with_null[index++] = 0x00;
         with_null[index++] = 0x04;
@@ -394,8 +394,8 @@ int main(void)
         with_null[index++] = 0x26;
         memcpy(with_null + index, base->seed, 38);
         index += 38;
-        D00_CHECK(index == sizeof(with_null), "NULL-variant layout");
-        D00_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
+        ED301V1_CHECK(index == sizeof(with_null), "NULL-variant layout");
+        ED301V1_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
                 "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
             "AlgorithmIdentifier with ASN.1 NULL parameters is rejected");
@@ -403,7 +403,7 @@ int main(void)
 
         /* No other explicit parameter type is permitted either. */
         with_null[20] = 0x04; /* empty OCTET STRING instead of NULL */
-        D00_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
+        ED301V1_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
                 "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
             "AlgorithmIdentifier with explicit non-NULL parameters is "
@@ -419,17 +419,17 @@ int main(void)
      * already derives, and KEYMGMT validates, the unique public key.
     */
     {
-        unsigned char version_one[D00_PKCS8_DER_BYTES] = {0};
+        unsigned char version_one[ED301V1_PKCS8_DER_BYTES] = {0};
         unsigned char one_asymmetric_key[128] = {0};
         size_t private_key_info_length;
         size_t index = 0;
 
         private_key_info_length = make_pkcs8_with_seed_length(
-            version_one, sizeof(version_one), base->seed, D00_SEED_BYTES);
-        D00_CHECK(private_key_info_length == sizeof(version_one),
+            version_one, sizeof(version_one), base->seed, ED301V1_SEED_BYTES);
+        ED301V1_CHECK(private_key_info_length == sizeof(version_one),
             "D6 canonical PrivateKeyInfo source layout");
         version_one[4] = 0x01;
-        D00_CHECK(private_key_info_length == sizeof(version_one)
+        ED301V1_CHECK(private_key_info_length == sizeof(version_one)
                 && decode(libctx, version_one, sizeof(version_one), "DER",
                 "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
@@ -440,17 +440,17 @@ int main(void)
         one_asymmetric_key[index++] = 0x65;
         /* Copy from the complete canonical object, never the prefix array. */
         memcpy(one_asymmetric_key + index, version_one + 2,
-            D00_PKCS8_DER_BYTES - 2);
-        index += D00_PKCS8_DER_BYTES - 2;
+            ED301V1_PKCS8_DER_BYTES - 2);
+        index += ED301V1_PKCS8_DER_BYTES - 2;
         one_asymmetric_key[4] = 0x01;
         one_asymmetric_key[index++] = 0x81; /* [1] IMPLICIT BIT STRING */
         one_asymmetric_key[index++] = 0x27;
         one_asymmetric_key[index++] = 0x00;
         memcpy(one_asymmetric_key + index,
-            base->public_key, D00_PUB_BYTES);
-        index += D00_PUB_BYTES;
-        D00_CHECK(index == 103, "OneAsymmetricKey v2 layout");
-        D00_CHECK(decode(libctx, one_asymmetric_key, index, "DER",
+            base->public_key, ED301V1_PUB_BYTES);
+        index += ED301V1_PUB_BYTES;
+        ED301V1_CHECK(index == 103, "OneAsymmetricKey v2 layout");
+        ED301V1_CHECK(decode(libctx, one_asymmetric_key, index, "DER",
                 "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
             "OneAsymmetricKey v2 with embedded publicKey is rejected");
@@ -459,14 +459,14 @@ int main(void)
 
     /* Historical OID encodings are rejected. */
     {
-        unsigned char historical_p8[D00_PKCS8_DER_BYTES];
-        unsigned char historical_spki[D00_SPKI_DER_BYTES];
+        unsigned char historical_p8[ED301V1_PKCS8_DER_BYTES];
+        unsigned char historical_spki[ED301V1_SPKI_DER_BYTES];
 
         memcpy(historical_p8, HISTORICAL_PKCS8_PREFIX,
             sizeof(HISTORICAL_PKCS8_PREFIX));
         memcpy(historical_p8 + sizeof(HISTORICAL_PKCS8_PREFIX),
             base->seed, 38);
-        D00_CHECK(decode(libctx, historical_p8, sizeof(historical_p8),
+        ED301V1_CHECK(decode(libctx, historical_p8, sizeof(historical_p8),
                 "DER", "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
             "historical Ed301-Sig-v1 PKCS#8 OID is rejected");
@@ -476,7 +476,7 @@ int main(void)
             sizeof(HISTORICAL_SPKI_PREFIX));
         memcpy(historical_spki + sizeof(HISTORICAL_SPKI_PREFIX),
             base->public_key, 38);
-        D00_CHECK(decode(libctx, historical_spki,
+        ED301V1_CHECK(decode(libctx, historical_spki,
                 sizeof(historical_spki), "DER", "SubjectPublicKeyInfo",
                 OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
             "historical Ed301-Sig-v1 SPKI OID is rejected");
@@ -485,12 +485,12 @@ int main(void)
 
     /* The adjacent X301 assignment is not accepted as Ed301-EdDSA. */
     {
-        unsigned char x301_p8[D00_PKCS8_DER_BYTES];
-        unsigned char x301_spki[D00_SPKI_DER_BYTES];
+        unsigned char x301_p8[ED301V1_PKCS8_DER_BYTES];
+        unsigned char x301_spki[ED301V1_SPKI_DER_BYTES];
 
         memcpy(x301_p8, X301_PKCS8_PREFIX, sizeof(X301_PKCS8_PREFIX));
         memcpy(x301_p8 + sizeof(X301_PKCS8_PREFIX), base->seed, 38);
-        D00_CHECK(decode(libctx, x301_p8, sizeof(x301_p8), "DER",
+        ED301V1_CHECK(decode(libctx, x301_p8, sizeof(x301_p8), "DER",
                 "PrivateKeyInfo", OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == NULL,
             "X301 PKCS#8 OID is rejected by Ed301-EdDSA import");
         ERR_clear_error();
@@ -498,7 +498,7 @@ int main(void)
         memcpy(x301_spki, X301_SPKI_PREFIX, sizeof(X301_SPKI_PREFIX));
         memcpy(x301_spki + sizeof(X301_SPKI_PREFIX),
             base->public_key, 38);
-        D00_CHECK(decode(libctx, x301_spki, sizeof(x301_spki), "DER",
+        ED301V1_CHECK(decode(libctx, x301_spki, sizeof(x301_spki), "DER",
                 "SubjectPublicKeyInfo",
                 OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
             "X301 SPKI OID is rejected by Ed301-EdDSA import");
@@ -513,15 +513,15 @@ int main(void)
             "DER", "SubjectPublicKeyInfo", &der_len);
         EVP_PKEY *decoded;
 
-        D00_CHECK(der != NULL && der_len == D00_SPKI_DER_BYTES
-                && memcmp(der, D00_SPKI_PREFIX,
-                    sizeof(D00_SPKI_PREFIX)) == 0
-                && memcmp(der + sizeof(D00_SPKI_PREFIX), base->public_key,
+        ED301V1_CHECK(der != NULL && der_len == ED301V1_SPKI_DER_BYTES
+                && memcmp(der, ED301V1_SPKI_PREFIX,
+                    sizeof(ED301V1_SPKI_PREFIX)) == 0
+                && memcmp(der + sizeof(ED301V1_SPKI_PREFIX), base->public_key,
                     38) == 0,
             "SPKI DER is the exact 58-byte profile encoding");
 
         /* D4/D5: exact project OID, absent parameters, then BIT STRING. */
-        D00_CHECK(der != NULL && der_len == D00_SPKI_DER_BYTES
+        ED301V1_CHECK(der != NULL && der_len == ED301V1_SPKI_DER_BYTES
                 && der[2] == 0x30 && der[3] == 0x0d
                 && der[4] == 0x06 && der[17] == 0x03,
             "D4/D5 SPKI has exact OID and absent parameters");
@@ -529,31 +529,31 @@ int main(void)
         decoded = der == NULL ? NULL
             : decode(libctx, der, der_len, "DER", "SubjectPublicKeyInfo",
                 OSSL_KEYMGMT_SELECT_PUBLIC_KEY);
-        D00_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
+        ED301V1_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
             "SPKI DER round trip (public component)");
         EVP_PKEY_free(decoded);
 
         /* Malformed embedded public key: identity point. */
-        if (der != NULL && der_len == D00_SPKI_DER_BYTES) {
+        if (der != NULL && der_len == ED301V1_SPKI_DER_BYTES) {
             unsigned char malformed[80];
             unsigned char nonminimal[80];
             unsigned char indefinite[80];
             static const size_t truncation_boundaries[] = {
                 0, 1, 2, 3, 4, 5, 6, 17, 18, 19, 20,
-                D00_SPKI_DER_BYTES - 1
+                ED301V1_SPKI_DER_BYTES - 1
             };
 
             memcpy(malformed, der, der_len);
-            memcpy(malformed + sizeof(D00_SPKI_PREFIX),
+            memcpy(malformed + sizeof(ED301V1_SPKI_PREFIX),
                 POINT_CASES[2].encoding, 38); /* identity */
-            D00_CHECK(decode(libctx, malformed, der_len, "DER",
+            ED301V1_CHECK(decode(libctx, malformed, der_len, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "SPKI with an identity public key is rejected");
             ERR_clear_error();
 
             /* D3 (complete-buffer/endecode pattern): all boundaries reject. */
-            D00_CHECK(all_truncations_rejected(libctx, der, der_len,
+            ED301V1_CHECK(all_truncations_rejected(libctx, der, der_len,
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
                     truncation_boundaries,
@@ -564,7 +564,7 @@ int main(void)
             /* D2: SPKI also rejects one trailing octet. */
             memcpy(malformed, der, der_len);
             malformed[der_len] = 0x00;
-            D00_CHECK(decode(libctx, malformed, der_len + 1, "DER",
+            ED301V1_CHECK(decode(libctx, malformed, der_len + 1, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "trailing data after SPKI is rejected");
@@ -574,7 +574,7 @@ int main(void)
             nonminimal[1] = 0x81;
             nonminimal[2] = der[1];
             memcpy(nonminimal + 3, der + 2, der_len - 2);
-            D00_CHECK(decode(libctx, nonminimal, der_len + 1, "DER",
+            ED301V1_CHECK(decode(libctx, nonminimal, der_len + 1, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "SPKI with non-minimal outer length is rejected");
@@ -585,7 +585,7 @@ int main(void)
             memcpy(indefinite + 2, der + 2, der_len - 2);
             indefinite[der_len] = 0x00;
             indefinite[der_len + 1] = 0x00;
-            D00_CHECK(decode(libctx, indefinite, der_len + 2, "DER",
+            ED301V1_CHECK(decode(libctx, indefinite, der_len + 2, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "SPKI with indefinite outer length is rejected");
@@ -593,7 +593,7 @@ int main(void)
 
             memcpy(malformed, der, der_len);
             malformed[17] = 0x04;
-            D00_CHECK(decode(libctx, malformed, der_len, "DER",
+            ED301V1_CHECK(decode(libctx, malformed, der_len, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "SPKI with an OCTET STRING in place of the BIT STRING is "
@@ -602,7 +602,7 @@ int main(void)
 
             memcpy(malformed, der, der_len);
             malformed[18] = 0x26;
-            D00_CHECK(decode(libctx, malformed, der_len, "DER",
+            ED301V1_CHECK(decode(libctx, malformed, der_len, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "SPKI with a 37-byte public-key BIT STRING is rejected");
@@ -610,7 +610,7 @@ int main(void)
 
             memcpy(malformed, der, der_len);
             malformed[19] = 0x01;
-            D00_CHECK(decode(libctx, malformed, der_len, "DER",
+            ED301V1_CHECK(decode(libctx, malformed, der_len, "DER",
                     "SubjectPublicKeyInfo",
                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
                 "SPKI with nonzero unused BIT STRING bits is rejected");
@@ -621,25 +621,25 @@ int main(void)
 
     /* D4: SPKI decoder rejects NULL and all explicit parameters. */
     {
-        unsigned char with_null[D00_SPKI_DER_BYTES + 2];
+        unsigned char with_null[ED301V1_SPKI_DER_BYTES + 2];
         size_t index = 0;
 
         with_null[index++] = 0x30;
         with_null[index++] = 0x3a;
         with_null[index++] = 0x30;
         with_null[index++] = 0x0f;
-        memcpy(with_null + index, D00_SPKI_PREFIX + 4,
-            D00_OID_TLV_BYTES);
-        index += D00_OID_TLV_BYTES;
+        memcpy(with_null + index, ED301V1_SPKI_PREFIX + 4,
+            ED301V1_OID_TLV_BYTES);
+        index += ED301V1_OID_TLV_BYTES;
         with_null[index++] = 0x05;
         with_null[index++] = 0x00;
         with_null[index++] = 0x03;
         with_null[index++] = 0x27;
         with_null[index++] = 0x00;
-        memcpy(with_null + index, base->public_key, D00_PUB_BYTES);
-        index += D00_PUB_BYTES;
-        D00_CHECK(index == sizeof(with_null), "SPKI NULL-variant layout");
-        D00_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
+        memcpy(with_null + index, base->public_key, ED301V1_PUB_BYTES);
+        index += ED301V1_PUB_BYTES;
+        ED301V1_CHECK(index == sizeof(with_null), "SPKI NULL-variant layout");
+        ED301V1_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
                 "SubjectPublicKeyInfo",
                 OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
             "SPKI AlgorithmIdentifier with ASN.1 NULL parameters is "
@@ -647,7 +647,7 @@ int main(void)
         ERR_clear_error();
 
         with_null[17] = 0x04; /* empty OCTET STRING instead of NULL */
-        D00_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
+        ED301V1_CHECK(decode(libctx, with_null, sizeof(with_null), "DER",
                 "SubjectPublicKeyInfo",
                 OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == NULL,
             "SPKI AlgorithmIdentifier with explicit non-NULL parameters is "
@@ -664,27 +664,27 @@ int main(void)
             "PEM", "PrivateKeyInfo", &pem_len);
         EVP_PKEY *decoded;
 
-        D00_CHECK(pem != NULL && pem_len >= 27
+        ED301V1_CHECK(pem != NULL && pem_len >= 27
                 && memcmp(pem, "-----BEGIN PRIVATE KEY-----", 27) == 0,
             "PKCS#8 PEM armor");
         decoded = pem == NULL ? NULL
             : decode(libctx, pem, pem_len, "PEM", "PrivateKeyInfo",
                 OSSL_KEYMGMT_SELECT_PRIVATE_KEY
                     | OSSL_KEYMGMT_SELECT_PUBLIC_KEY);
-        D00_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
+        ED301V1_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
             "PKCS#8 PEM round trip");
         EVP_PKEY_free(decoded);
         OPENSSL_free(pem);
 
         pem = encode(pkey, OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
             "PEM", "SubjectPublicKeyInfo", &pem_len);
-        D00_CHECK(pem != NULL && pem_len >= 26
+        ED301V1_CHECK(pem != NULL && pem_len >= 26
                 && memcmp(pem, "-----BEGIN PUBLIC KEY-----", 26) == 0,
             "SPKI PEM armor");
         decoded = pem == NULL ? NULL
             : decode(libctx, pem, pem_len, "PEM", "SubjectPublicKeyInfo",
                 OSSL_KEYMGMT_SELECT_PUBLIC_KEY);
-        D00_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
+        ED301V1_CHECK(decoded != NULL && EVP_PKEY_eq(pkey, decoded) == 1,
             "SPKI PEM round trip");
         EVP_PKEY_free(decoded);
         OPENSSL_free(pem);
@@ -698,7 +698,7 @@ int main(void)
                 | OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
             "TEXT", NULL, &text_len);
 
-        D00_CHECK(text == NULL && text_len == 0,
+        ED301V1_CHECK(text == NULL && text_len == 0,
             "provider deliberately exposes no private text/hex encoder");
         ERR_clear_error();
         OPENSSL_free(text);
@@ -710,7 +710,7 @@ int main(void)
             pkey,
             OSSL_KEYMGMT_SELECT_PRIVATE_KEY
                 | OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
-            "DER", "PrivateKeyInfo", D00_PKI_PROP);
+            "DER", "PrivateKeyInfo", ED301V1_PKI_PROP);
         unsigned char *data = NULL;
         size_t data_len = 0;
         int set_ok = 0;
@@ -723,7 +723,7 @@ int main(void)
                 ctx, (const unsigned char *)"secret", 6);
             encode_result = OSSL_ENCODER_to_data(ctx, &data, &data_len);
         }
-        D00_CHECK(ctx != NULL && set_ok != 1 && encode_result != 1,
+        ED301V1_CHECK(ctx != NULL && set_ok != 1 && encode_result != 1,
             "direct encrypted PKCS#8 fails closed (set_ok=%d encode=%d)",
             set_ok, encode_result);
         ERR_clear_error();
@@ -732,8 +732,8 @@ int main(void)
     }
 
     EVP_PKEY_free(pkey);
-    OSSL_PROVIDER_unload(draft);
+    OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
-    return d00_summary("provider_serialization");
+    return ed301v1_summary("provider_serialization");
 }

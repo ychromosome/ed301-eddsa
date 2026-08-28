@@ -67,7 +67,7 @@ static int fresh_gate_wait(FRESH_GATE *gate)
 
 static void print_registry_state(const char *label)
 {
-    int nid = OBJ_txt2nid(D00_OID_TEXT);
+    int nid = OBJ_txt2nid(ED301V1_OID_TEXT);
     int signature_nid = NID_undef;
     int have_sigid = nid != NID_undef
         && OBJ_find_sigid_by_algs(&signature_nid, NID_undef, nid) == 1;
@@ -82,7 +82,7 @@ static void *fresh_worker_main(void *argument)
     FRESH_WORKER *worker = argument;
     OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
     OSSL_PROVIDER *deflt = NULL;
-    OSSL_PROVIDER *draft = NULL;
+    OSSL_PROVIDER *v1 = NULL;
     EVP_SIGNATURE *fetched = NULL;
 
     const int setup_ok = libctx != NULL
@@ -97,27 +97,27 @@ static void *fresh_worker_main(void *argument)
     }
 
     deflt = OSSL_PROVIDER_load(libctx, "default");
-    d00_seed_error_sentinel();
-    draft = d00_load_named(libctx, NULL, D00_PKI_PROVIDER);
+    ed301v1_seed_error_sentinel();
+    v1 = ed301v1_load_named(libctx, NULL, ED301V1_PKI_PROVIDER);
     if (worker->expect_success) {
-        if (deflt == NULL || draft == NULL
-                || !d00_queue_is_sentinel_only()) {
+        if (deflt == NULL || v1 == NULL
+                || !ed301v1_queue_is_sentinel_only()) {
             worker->failed = 1;
             goto done;
         }
-        fetched = EVP_SIGNATURE_fetch(libctx, D00_ALG, D00_PKI_PROP);
+        fetched = EVP_SIGNATURE_fetch(libctx, ED301V1_ALG, ED301V1_PKI_PROP);
         if (fetched == NULL)
             worker->failed = 1;
     } else {
-        if (draft != NULL || !d00_queue_is_sentinel_only())
+        if (v1 != NULL || !ed301v1_queue_is_sentinel_only())
             worker->failed = 1;
     }
 
 done:
     ERR_clear_error();
     EVP_SIGNATURE_free(fetched);
-    if (draft != NULL)
-        OSSL_PROVIDER_unload(draft);
+    if (v1 != NULL)
+        OSSL_PROVIDER_unload(v1);
     if (deflt != NULL)
         OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
@@ -150,8 +150,8 @@ static int child_main(const char *mode, const char *dir_a,
         OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(NULL, "default");
 
         if (deflt == NULL
-                || OBJ_create(D00_OID_TEXT, "ED301D00-FRESH-COLLIDER",
-                    "ED301D00 fresh conflict object") == NID_undef) {
+                || OBJ_create(ED301V1_OID_TEXT, "ED301V1-FRESH-COLLIDER",
+                    "ED301V1 fresh conflict object") == NID_undef) {
             fprintf(stderr, "conflict preparation failed\n");
             OSSL_PROVIDER_unload(deflt);
             return 2;
@@ -199,7 +199,7 @@ static int child_main(const char *mode, const char *dir_a,
 
     print_registry_state("after-race");
 
-    if (expect_success && !d00_registry_is_exact()) {
+    if (expect_success && !ed301v1_registry_is_exact()) {
         fprintf(stderr, "%s: final registry is not exact\n", mode);
         failed = 1;
     }
@@ -230,9 +230,9 @@ static int spawn_child(const char *self, const char *mode,
 
 int main(int argc, char **argv)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     const char *modules = getenv("OPENSSL_MODULES");
-    const char *dir_b = getenv("D00_FRESH_COPY_DIR");
+    const char *dir_b = getenv("ED301V1_FRESH_COPY_DIR");
     char self[4096];
     ssize_t self_length;
     int repeat;
@@ -242,7 +242,7 @@ int main(int argc, char **argv)
 
     if (modules == NULL || dir_b == NULL) {
         fprintf(stderr,
-            "OPENSSL_MODULES and D00_FRESH_COPY_DIR are required\n");
+            "OPENSSL_MODULES and ED301V1_FRESH_COPY_DIR are required\n");
         return 2;
     }
     self_length = readlink("/proc/self/exe", self, sizeof(self) - 1);
@@ -251,14 +251,14 @@ int main(int argc, char **argv)
     self[self_length] = '\0';
 
     for (repeat = 0; repeat < FRESH_REPEATS; repeat++) {
-        D00_CHECK(spawn_child(self, "same-dso", modules, dir_b) == 0,
+        ED301V1_CHECK(spawn_child(self, "same-dso", modules, dir_b) == 0,
             "fresh-process same-DSO first-load race (round %d)", repeat);
-        D00_CHECK(spawn_child(self, "separate-copy", modules, dir_b) == 0,
+        ED301V1_CHECK(spawn_child(self, "separate-copy", modules, dir_b) == 0,
             "fresh-process separate-copy first-load race (round %d)",
             repeat);
     }
-    D00_CHECK(spawn_child(self, "conflict", modules, dir_b) == 0,
+    ED301V1_CHECK(spawn_child(self, "conflict", modules, dir_b) == 0,
         "host preflight blocks a conflicting fresh-process registry");
 
-    return d00_summary("provider_load_fresh");
+    return ed301v1_summary("provider_load_fresh");
 }

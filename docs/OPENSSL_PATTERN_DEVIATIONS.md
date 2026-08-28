@@ -5,7 +5,7 @@ Date: 2026-08-27
 This register records which OpenSSL Ed25519/Ed448 test patterns are adopted
 for the optional Ed301 PKI integration and where the Ed301-EdDSA-v1 contract
 deliberately differs.  OpenSSL test sources are structural precedents, not
-normative Ed301 encodings.  The Ed301 draft and provider byte/API contracts
+normative Ed301 encodings.  The Ed301 v1 specification and provider contracts
 remain authoritative.
 
 Local comparison sources:
@@ -28,7 +28,7 @@ Local comparison sources:
 | D4 | Follow the parameterless ECX AlgorithmIdentifier pattern. Encoders emit absent parameters; decoders reject `NULL` and every explicit parameter type. | Exact encoder bytes plus PKCS#8/SPKI parameter-negative tests. |
 | D5 | The assigned Ed301 OID must be byte-exact and must map to the no-digest SIGID. Historical Ed301-Sig-v1, X301, and other OIDs are foreign. | Serialization OID negatives and the host-registry assertions in `provider_pki.c`. |
 | D6 | **Deliberate deviation:** v1 accepts only PKCS#8 `PrivateKeyInfo` version 0. RFC 5958 `OneAsymmetricKey` version 1, with or without embedded public key, is rejected. The seed uniquely derives the public key and KEYMGMT validates that relation, so accepting a second embedded copy adds mismatch policy without a profile requirement. Revisit only if a later Ed301 PKI profile normatively adopts OneAsymmetricKey. | Explicit version-1 and canonical embedded-public-key rejection tests. No mismatch-acceptance path exists. |
-| D7 | The draft fixes the seed at 38 bytes. The nested private-key OCTET STRING accepts neither 37 nor 39 bytes. | Independently constructed, internally consistent DER objects carry actual 37- and 39-byte seeds in `provider_serialization.c`; both reject. |
+| D7 | Ed301-EdDSA-v1 fixes the seed at 38 bytes. The nested private-key OCTET STRING accepts neither 37 nor 39 bytes. | Independently constructed DER objects carry 37- and 39-byte seeds in `provider_serialization.c`; both reject. |
 
 The ordinary and PKI artifacts deliberately expose no generic private-key
 decoder.  The private-use TLS test artifact exposes only the transactional

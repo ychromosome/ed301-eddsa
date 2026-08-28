@@ -25,10 +25,10 @@
 
 int main(int argc, char **argv)
 {
-    D00_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
     OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(NULL, "default");
     OSSL_PROVIDER *ordinary;
-    OSSL_PROVIDER *draft;
+    OSSL_PROVIDER *v1;
     const char *mode = argc > 1 ? argv[1] : "";
     int expect_load_success = 0;
     int prepared = 0;
@@ -40,13 +40,13 @@ int main(int argc, char **argv)
     }
 
     if (strcmp(mode, "occupied-oid") == 0) {
-        prepared = OBJ_create(D00_OID_TEXT, "ED301D00-COLLIDER",
-            "ED301D00 collision test object") != NID_undef;
+        prepared = OBJ_create(ED301V1_OID_TEXT, "ED301V1-COLLIDER",
+            "ED301V1 collision test object") != NID_undef;
     } else if (strcmp(mode, "occupied-name") == 0) {
-        prepared = OBJ_create("2.25.4242424242424242424242", D00_ALG,
-            D00_ALG) != NID_undef;
+        prepared = OBJ_create("2.25.4242424242424242424242", ED301V1_ALG,
+            ED301V1_ALG) != NID_undef;
     } else if (strcmp(mode, "sigid-conflict") == 0) {
-        int nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
+        int nid = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG);
 
         prepared = nid != NID_undef
             && OBJ_add_sigid(nid, NID_sha256, nid) == 1;
@@ -57,18 +57,18 @@ int main(int argc, char **argv)
          * mapping.  This is a foreign use of the identifier and the
          * provider must fail closed on it.
          */
-        int nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
+        int nid = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG);
         int foreign = OBJ_create("2.25.171717171717171717171717",
-            "ED301D00-DIGEST-SLOT-COLLIDER",
-            "ED301D00 digest-slot collision object");
+            "ED301V1-DIGEST-SLOT-COLLIDER",
+            "ED301V1 digest-slot collision object");
 
         prepared = nid != NID_undef && foreign != NID_undef
             && OBJ_add_sigid(foreign, nid, foreign) == 1;
     } else if (strcmp(mode, "public-slot") == 0) {
-        int nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
+        int nid = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG);
         int foreign = OBJ_create("2.25.181818181818181818181818",
-            "ED301D00-PUBLIC-SLOT-COLLIDER",
-            "ED301D00 public-slot collision object");
+            "ED301V1-PUBLIC-SLOT-COLLIDER",
+            "ED301V1 public-slot collision object");
 
         prepared = nid != NID_undef && foreign != NID_undef
             && OBJ_add_sigid(foreign, NID_sha256, nid) == 1;
@@ -76,10 +76,10 @@ int main(int argc, char **argv)
         prepared = 1;
         expect_load_success = 1;
     } else if (strcmp(mode, "object-only") == 0) {
-        prepared = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG)
+        prepared = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG)
             != NID_undef;
     } else if (strcmp(mode, "exact") == 0) {
-        int nid = OBJ_create(D00_OID_TEXT, D00_ALG, D00_ALG);
+        int nid = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG);
 
         prepared = nid != NID_undef
             && OBJ_add_sigid(nid, NID_undef, nid) == 1;
@@ -99,58 +99,58 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    D00_CHECK(d00_registry_preflight_ok() == expect_load_success,
+    ED301V1_CHECK(ed301v1_registry_preflight_ok() == expect_load_success,
         "%s: host preflight classifies the registry", mode);
 
-    d00_seed_error_sentinel();
-    ordinary = d00_load_named(NULL, NULL, D00_PROVIDER);
-    queue_ok = d00_queue_is_sentinel_only();
-    D00_CHECK(ordinary != NULL,
+    ed301v1_seed_error_sentinel();
+    ordinary = ed301v1_load_named(NULL, NULL, ED301V1_PROVIDER);
+    queue_ok = ed301v1_queue_is_sentinel_only();
+    ED301V1_CHECK(ordinary != NULL,
         "%s: ordinary signature-only provider ignores global OID state",
         mode);
     if (ordinary != NULL) {
         EVP_SIGNATURE *algorithm =
-            EVP_SIGNATURE_fetch(NULL, D00_ALG, D00_PROP);
+            EVP_SIGNATURE_fetch(NULL, ED301V1_ALG, ED301V1_PROP);
 
-        D00_CHECK(algorithm != NULL,
+        ED301V1_CHECK(algorithm != NULL,
             "%s: explicit-name signature fetch remains usable", mode);
-        D00_CHECK(queue_ok,
+        ED301V1_CHECK(queue_ok,
             "%s: ordinary load preserves the caller error queue", mode);
         EVP_SIGNATURE_free(algorithm);
         OSSL_PROVIDER_unload(ordinary);
     }
 
-    d00_seed_error_sentinel();
-    draft = d00_load_named(NULL, NULL, D00_PKI_PROVIDER);
-    queue_ok = d00_queue_is_sentinel_only();
+    ed301v1_seed_error_sentinel();
+    v1 = ed301v1_load_named(NULL, NULL, ED301V1_PKI_PROVIDER);
+    queue_ok = ed301v1_queue_is_sentinel_only();
     if (expect_load_success) {
-        D00_CHECK(draft != NULL,
+        ED301V1_CHECK(v1 != NULL,
             "%s: provider load succeeds after a clean host preflight",
             mode);
-        if (draft != NULL) {
+        if (v1 != NULL) {
             EVP_SIGNATURE *alg =
-                EVP_SIGNATURE_fetch(NULL, D00_ALG, D00_PKI_PROP);
+                EVP_SIGNATURE_fetch(NULL, ED301V1_ALG, ED301V1_PKI_PROP);
 
-            D00_CHECK(alg != NULL, "%s: algorithm fetch", mode);
-            D00_CHECK(queue_ok,
+            ED301V1_CHECK(alg != NULL, "%s: algorithm fetch", mode);
+            ED301V1_CHECK(queue_ok,
                 "%s: caller queue preserved on successful load", mode);
-            D00_CHECK(d00_registry_is_exact(),
+            ED301V1_CHECK(ed301v1_registry_is_exact(),
                 "%s: object and forward/reverse sigid are exact", mode);
-            D00_CHECK(d00_provider_has_reason_dispatch(draft),
+            ED301V1_CHECK(ed301v1_provider_has_reason_dispatch(v1),
                 "%s: provider exports reason-string dispatch", mode);
             EVP_SIGNATURE_free(alg);
-            OSSL_PROVIDER_unload(draft);
+            OSSL_PROVIDER_unload(v1);
         }
     } else {
-        D00_CHECK(draft == NULL,
+        ED301V1_CHECK(v1 == NULL,
             "%s: host preflight blocks the optional PKI test artifact",
             mode);
-        D00_CHECK(queue_ok,
+        ED301V1_CHECK(queue_ok,
             "%s: host preflight preserves the caller error queue", mode);
-        if (draft != NULL)
-            OSSL_PROVIDER_unload(draft);
+        if (v1 != NULL)
+            OSSL_PROVIDER_unload(v1);
     }
 
     OSSL_PROVIDER_unload(deflt);
-    return d00_summary(mode);
+    return ed301v1_summary(mode);
 }

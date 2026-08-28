@@ -1,0 +1,121 @@
+name: core-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.98.0
+          components: clippy,rustfmt
+      - name: Install native test tools
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev valgrind
+      - name: Expose resolved Rust binaries to hermetic gates
+        run: |
+          for tool in cargo rustc rustfmt cargo-fmt cargo-clippy rustdoc; do
+            sudo ln -sf "$(rustup which "$tool")" "/usr/bin/$tool"
+          done
+      - name: Verify core and hostile regressions
+        run: |
+          unset CARGO_HOME CARGO_INCREMENTAL CARGO_TERM_COLOR
+          digest=$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')
+          env ED301_SOURCE_MODE=git \
+            ED301_EXPECTED_GIT_COMMIT="$GITHUB_SHA" \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            sh scripts/verify-source-tree.sh
+          snapshot=$(mktemp -d)
+          trap 'chmod -R u+w "$snapshot"; rm -rf "$snapshot"' EXIT
+          {
+            printf '%s\n' SOURCE_MANIFEST.sha256
+            awk '{ print substr($0, 67) }' SOURCE_MANIFEST.sha256
+          } | tar -cf - -T - | tar -xf - -C "$snapshot"
+          test "$(sha256sum "$snapshot/SOURCE_MANIFEST.sha256" | awk '{ print $1 }')" = "$digest"
+          chmod -R a-w "$snapshot"
+          env ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            sh "$snapshot/scripts/check.sh"
+          env ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            "$snapshot/review-tests/run.sh"
+
+  provider:
+    needs: core
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 3.5.7
+            sha256: a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
+          - version: 4.0.1
+            sha256: 2db3f3a0d6ea4b59e1f094ace2c8cd536dffb87cdc39084c5afa1e6f7f37dd09
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.97.1
+          components: clippy,rustfmt
+      - name: Install provider test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tools gawk jq libclang-rt-dev libssl-dev valgrind
+      - name: Expose resolved Rust binaries to hermetic gates
+        run: |
+          for tool in cargo rustc rustfmt cargo-fmt cargo-clippy rustdoc; do
+            sudo ln -sf "$(rustup which "$tool")" "/usr/bin/$tool"
+          done
+      - name: Build and verify OpenSSL lane
+        env:
+          VERSION: ${{ matrix.version }}
+          TARBALL_SHA256: ${{ matrix.sha256 }}
+        run: |
+          unset CARGO_HOME CARGO_INCREMENTAL CARGO_TERM_COLOR
+          digest=$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')
+          env ED301_SOURCE_MODE=git \
+            ED301_EXPECTED_GIT_COMMIT="$GITHUB_SHA" \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            sh scripts/verify-source-tree.sh
+          snapshot=$(mktemp -d)
+          work=$(mktemp -d)
+          trap 'chmod -R u+w "$snapshot" "$work"; rm -rf "$snapshot" "$work"' EXIT
+          {
+            printf '%s\n' SOURCE_MANIFEST.sha256
+            awk '{ print substr($0, 67) }' SOURCE_MANIFEST.sha256
+          } | tar -cf - -T - | tar -xf - -C "$snapshot"
+          test "$(sha256sum "$snapshot/SOURCE_MANIFEST.sha256" | awk '{ print $1 }')" = "$digest"
+          chmod -R a-w "$snapshot"
+          mkdir "$work/upstream"
+          curl -fL --retry 3 \
+            "https://www.openssl.org/source/openssl-$VERSION.tar.gz" \
+            -o "$work/upstream/openssl-$VERSION.tar.gz"
+          printf '%s  %s\n' "$TARBALL_SHA256" "openssl-$VERSION.tar.gz" \
+            >"$work/upstream/openssl-$VERSION.tar.gz.sha256"
+          env ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            "$snapshot/scripts/build-openssl-provider-lane.sh" \
+              "$VERSION" "$work/upstream" "$work/lane"
+          lane_digest=$(sha256sum \
+            "$work/lane/logs/$VERSION/evidence_manifest.sha256" \
+            | awk '{ print $1 }')
+          env ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            "$snapshot/scripts/test-provider.sh" \
+              "$work/lane" "$VERSION" "$lane_digest"

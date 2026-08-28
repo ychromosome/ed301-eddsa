@@ -43,10 +43,10 @@
 #include "harness_common.h"
 #include "vectors.h"
 
-#define D00_TLS_SIGALG_CODE_POINT 0xfe84U
-#define D00_TLS_SIGALG_IANA_NAME "ed301_eddsa_v1_test"
+#define ED301V1_TLS_SIGALG_CODE_POINT 0xfe84U
+#define ED301V1_TLS_SIGALG_IANA_NAME "ed301_eddsa_v1_test"
 #define SSL3_MT_CERTIFICATE_VERIFY_LOCAL 15
-#define D00_CV_WIRE_BYTES ((size_t)(8 + D00_SIG_BYTES))
+#define ED301V1_CV_WIRE_BYTES ((size_t)(8 + ED301V1_SIG_BYTES))
 
 #define VAL05_MAX_CV_EVENTS 16
 #define VAL05_MAX_ALERTS 16
@@ -111,7 +111,7 @@ typedef struct tls_outcome_st {
     char setup_stage[64];
     char error_text[VAL05_ERROR_BYTES];
     TRACE trace;
-    CAPABILITY_CAPTURE draft_capability;
+    CAPABILITY_CAPTURE v1_capability;
     CAPABILITY_CAPTURE collider_capability;
 } TLS_OUTCOME;
 
@@ -212,7 +212,7 @@ static int inspect_capability(
             capability_callback, capture) != 1)
         return 0;
     return capture->entries == 1
-        && capture->code_point == D00_TLS_SIGALG_CODE_POINT;
+        && capture->code_point == ED301V1_TLS_SIGALG_CODE_POINT;
 }
 
 static int capability_matches(
@@ -220,7 +220,7 @@ static int capability_matches(
     const char *sigalg_name, const char *keytype)
 {
     return capture != NULL && capture->entries == 1
-        && capture->code_point == D00_TLS_SIGALG_CODE_POINT
+        && capture->code_point == ED301V1_TLS_SIGALG_CODE_POINT
         && strcmp(capture->iana_name, iana_name) == 0
         && strcmp(capture->sigalg_name, sigalg_name) == 0
         && strcmp(capture->keytype, keytype) == 0;
@@ -385,13 +385,13 @@ static int exact_certificate_verify(const TRACE *trace)
     first = &trace->cv[0];
     second = &trace->cv[1];
     return first->endpoint == 'S' && first->outgoing
-        && first->scheme == D00_TLS_SIGALG_CODE_POINT
-        && first->signature_length == D00_SIG_BYTES
-        && first->wire_length == D00_CV_WIRE_BYTES
+        && first->scheme == ED301V1_TLS_SIGALG_CODE_POINT
+        && first->signature_length == ED301V1_SIG_BYTES
+        && first->wire_length == ED301V1_CV_WIRE_BYTES
         && second->endpoint == 'C' && !second->outgoing
-        && second->scheme == D00_TLS_SIGALG_CODE_POINT
-        && second->signature_length == D00_SIG_BYTES
-        && second->wire_length == D00_CV_WIRE_BYTES;
+        && second->scheme == ED301V1_TLS_SIGALG_CODE_POINT
+        && second->signature_length == ED301V1_SIG_BYTES
+        && second->wire_length == ED301V1_CV_WIRE_BYTES;
 }
 
 static int fatal_collision_alert(const TRACE *trace)
@@ -514,21 +514,21 @@ static void print_outcome(const char *order, const TLS_OUTCOME *outcome)
         sizeof(alert_fingerprint));
     printf("VAL05_PID pid=%ld\n", (long)getpid());
     printf("VAL05_ORDER %s\n", order);
-    printf("VAL05_CAPABILITY draft=%d collider=%d draft_iana=%s "
-        "draft_name=%s draft_keytype=%s collider_iana=%s "
-        "collider_name=%s collider_keytype=%s draft_cp=0x%04x "
+    printf("VAL05_CAPABILITY v1=%d collider=%d v1_iana=%s "
+        "v1_name=%s v1_keytype=%s collider_iana=%s "
+        "collider_name=%s collider_keytype=%s v1_cp=0x%04x "
         "collider_cp=0x%04x collider_keymgmt_owned=%d\n",
-        capability_matches(&outcome->draft_capability,
-            D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG),
+        capability_matches(&outcome->v1_capability,
+            ED301V1_TLS_SIGALG_IANA_NAME, ED301V1_ALG, ED301V1_ALG),
         capability_matches(&outcome->collider_capability,
-            D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG),
-        outcome->draft_capability.iana_name,
-        outcome->draft_capability.sigalg_name,
-        outcome->draft_capability.keytype,
+            ED301V1_TLS_SIGALG_IANA_NAME, ED301V1_ALG, ED301V1_ALG),
+        outcome->v1_capability.iana_name,
+        outcome->v1_capability.sigalg_name,
+        outcome->v1_capability.keytype,
         outcome->collider_capability.iana_name,
         outcome->collider_capability.sigalg_name,
         outcome->collider_capability.keytype,
-        outcome->draft_capability.code_point,
+        outcome->v1_capability.code_point,
         outcome->collider_capability.code_point,
         outcome->collider_keymgmt_owned);
     print_alerts(outcome);
@@ -557,9 +557,9 @@ static void print_outcome(const char *order, const TLS_OUTCOME *outcome)
 
 static int child_main(const char *order)
 {
-    const int draft_first = strcmp(order, "draft-then-collider") == 0;
+    const int v1_first = strcmp(order, "v1-then-collider") == 0;
     OSSL_PROVIDER *default_provider = NULL;
-    OSSL_PROVIDER *draft_provider = NULL;
+    OSSL_PROVIDER *v1_provider = NULL;
     OSSL_PROVIDER *collider_provider = NULL;
     EVP_KEYMGMT *collider_keymgmt = NULL;
     const OSSL_PROVIDER *keymgmt_owner = NULL;
@@ -580,28 +580,28 @@ static int child_main(const char *order)
 
     memset(&outcome, 0, sizeof(outcome));
     outcome.verify_result = -1;
-    d00_property = D00_TLS_PROP;
-    if (!draft_first && strcmp(order, "collider-then-draft") != 0) {
+    ed301v1_property = ED301V1_TLS_PROP;
+    if (!v1_first && strcmp(order, "collider-then-v1") != 0) {
         snprintf(outcome.setup_stage, sizeof(outcome.setup_stage),
             "bad-order");
         print_outcome(order, &outcome);
-        D00_CHECK(0, "unknown child order '%s'", order);
-        return d00_summary("val05_codepoint-child");
+        ED301V1_CHECK(0, "unknown child order '%s'", order);
+        return ed301v1_summary("val05_codepoint-child");
     }
 
     ERR_clear_error();
     default_provider = OSSL_PROVIDER_load(NULL, "default");
-    if (draft_first) {
-        draft_provider = d00_load_named(NULL, NULL, D00_TLS_PROVIDER);
+    if (v1_first) {
+        v1_provider = ed301v1_load_named(NULL, NULL, ED301V1_TLS_PROVIDER);
         collider_provider =
-            d00_load_named(NULL, NULL, D00_TLS_COLLIDER_PROVIDER);
+            ed301v1_load_named(NULL, NULL, ED301V1_TLS_COLLIDER_PROVIDER);
     } else {
         collider_provider =
-            d00_load_named(NULL, NULL, D00_TLS_COLLIDER_PROVIDER);
-        draft_provider = d00_load_named(NULL, NULL, D00_TLS_PROVIDER);
+            ed301v1_load_named(NULL, NULL, ED301V1_TLS_COLLIDER_PROVIDER);
+        v1_provider = ed301v1_load_named(NULL, NULL, ED301V1_TLS_PROVIDER);
     }
     outcome.provider_load_ok = default_provider != NULL
-        && draft_provider != NULL && collider_provider != NULL;
+        && v1_provider != NULL && collider_provider != NULL;
     if (!outcome.provider_load_ok) {
         snprintf(outcome.setup_stage, sizeof(outcome.setup_stage),
             "provider-load");
@@ -610,12 +610,12 @@ static int child_main(const char *order)
     }
 
     outcome.capability_ok = inspect_capability(
-            draft_provider, &outcome.draft_capability)
+            v1_provider, &outcome.v1_capability)
         && inspect_capability(collider_provider, &outcome.collider_capability)
-        && capability_matches(&outcome.draft_capability,
-            D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG)
+        && capability_matches(&outcome.v1_capability,
+            ED301V1_TLS_SIGALG_IANA_NAME, ED301V1_ALG, ED301V1_ALG)
         && capability_matches(&outcome.collider_capability,
-            D00_TLS_SIGALG_IANA_NAME, D00_ALG, D00_ALG);
+            ED301V1_TLS_SIGALG_IANA_NAME, ED301V1_ALG, ED301V1_ALG);
     if (!outcome.capability_ok) {
         snprintf(outcome.setup_stage, sizeof(outcome.setup_stage),
             "capability-inspection");
@@ -624,23 +624,23 @@ static int child_main(const char *order)
     }
 
     collider_keymgmt = EVP_KEYMGMT_fetch(
-        NULL, D00_ALG, D00_TLS_COLLIDER_PROP);
+        NULL, ED301V1_ALG, ED301V1_TLS_COLLIDER_PROP);
     keymgmt_owner = collider_keymgmt == NULL
         ? NULL : EVP_KEYMGMT_get0_provider(collider_keymgmt);
     if (keymgmt_owner != NULL) {
         const char *owner_name = OSSL_PROVIDER_get0_name(keymgmt_owner);
 
         outcome.collider_keymgmt_owned = owner_name != NULL
-            && strcmp(owner_name, D00_TLS_COLLIDER_PROVIDER) == 0;
+            && strcmp(owner_name, ED301V1_TLS_COLLIDER_PROVIDER) == 0;
     }
     EVP_KEYMGMT_free(collider_keymgmt);
     collider_keymgmt = NULL;
     ERR_clear_error();
 
-    server_key = d00_keygen(NULL);
+    server_key = ed301v1_keygen(NULL);
     if (server_key == NULL) {
         snprintf(outcome.setup_stage, sizeof(outcome.setup_stage),
-            "draft-keygen");
+            "v1-keygen");
         record_error_queue(outcome.error_text, sizeof(outcome.error_text));
         goto done;
     }
@@ -734,7 +734,7 @@ static int child_main(const char *order)
 done:
     accepted = outcome_is_accepted(&outcome);
     print_outcome(order, &outcome);
-    D00_CHECK(accepted,
+    ED301V1_CHECK(accepted,
         "%s: only a fully verified handshake or an explicit clean "
         "signature collision rejection is acceptable", order);
     SSL_free(server);
@@ -748,11 +748,11 @@ done:
     EVP_KEYMGMT_free(collider_keymgmt);
     if (collider_provider != NULL)
         OSSL_PROVIDER_unload(collider_provider);
-    if (draft_provider != NULL)
-        OSSL_PROVIDER_unload(draft_provider);
+    if (v1_provider != NULL)
+        OSSL_PROVIDER_unload(v1_provider);
     if (default_provider != NULL)
         OSSL_PROVIDER_unload(default_provider);
-    return d00_summary("val05_codepoint-child");
+    return ed301v1_summary("val05_codepoint-child");
 }
 
 static int read_child_output(int fd, CHILD_CAPTURE *capture)
@@ -895,13 +895,13 @@ int main(int argc, char **argv)
 {
     char self[PATH_MAX];
     ssize_t self_length;
-    CHILD_CAPTURE draft_first;
+    CHILD_CAPTURE v1_first;
     CHILD_CAPTURE collider_first;
-    int draft_spawned;
+    int v1_spawned;
     int collider_spawned;
 
-    D00_REQUIRE_RUNTIME_BINDING();
-    D00_REQUIRE_TLS_RUNTIME_BINDING();
+    ED301V1_REQUIRE_RUNTIME_BINDING();
+    ED301V1_REQUIRE_TLS_RUNTIME_BINDING();
     if (argc == 3 && strcmp(argv[1], "--child") == 0)
         return child_main(argv[2]);
     if (argc != 1) {
@@ -915,22 +915,22 @@ int main(int argc, char **argv)
     }
     self[self_length] = '\0';
 
-    draft_spawned = spawn_child(self, "draft-then-collider", &draft_first);
-    collider_spawned = spawn_child(self, "collider-then-draft", &collider_first);
-    print_child_capture("draft-then-collider", &draft_first);
-    print_child_capture("collider-then-draft", &collider_first);
-    D00_CHECK(draft_spawned && child_result_accepted(&draft_first)
-            && draft_first.exit_code == 0 && !draft_first.timed_out
-            && !draft_first.signaled && !draft_first.output_truncated,
-        "draft-then-collider fresh child exits zero with accepted result");
-    D00_CHECK(collider_spawned && child_result_accepted(&collider_first)
+    v1_spawned = spawn_child(self, "v1-then-collider", &v1_first);
+    collider_spawned = spawn_child(self, "collider-then-v1", &collider_first);
+    print_child_capture("v1-then-collider", &v1_first);
+    print_child_capture("collider-then-v1", &collider_first);
+    ED301V1_CHECK(v1_spawned && child_result_accepted(&v1_first)
+            && v1_first.exit_code == 0 && !v1_first.timed_out
+            && !v1_first.signaled && !v1_first.output_truncated,
+        "v1-then-collider fresh child exits zero with accepted result");
+    ED301V1_CHECK(collider_spawned && child_result_accepted(&collider_first)
             && collider_first.exit_code == 0 && !collider_first.timed_out
             && !collider_first.signaled && !collider_first.output_truncated,
-        "collider-then-draft fresh child exits zero with accepted result");
-    D00_CHECK(child_result_accepted(&draft_first)
+        "collider-then-v1 fresh child exits zero with accepted result");
+    ED301V1_CHECK(child_result_accepted(&v1_first)
             && child_result_accepted(&collider_first)
-            && strcmp(draft_first.result_line,
+            && strcmp(v1_first.result_line,
                 collider_first.result_line) == 0,
         "provider load orders have identical outcome/error/alert result");
-    return d00_summary("val05_codepoint");
+    return ed301v1_summary("val05_codepoint");
 }
