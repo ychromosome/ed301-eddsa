@@ -4,8 +4,8 @@
 //! unprivileged userspace code, so this implementation relies on OS-specific
 //! APIs for feature detection.
 
-// Evaluate the given `$body` expression any of the supplied target features
-// are not enabled. Otherwise returns true.
+// Evaluate the given `$body` expression if any supplied target feature is not
+// enabled. Otherwise returns true.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __unless_target_features {
@@ -56,7 +56,8 @@ macro_rules! __expand_check_macro {
         macro_rules! check {
             $(
                 ($hwcaps:expr, $name) => {
-                    (($hwcaps & $crate::aarch64::hwcaps::$hwcap) != 0)
+                    (($hwcaps & $crate::aarch64::hwcaps::$hwcap)
+                        == $crate::aarch64::hwcaps::$hwcap)
                 };
             )*
         }
@@ -84,11 +85,11 @@ __expand_check_macro! {
 pub mod hwcaps {
     use libc::c_ulong;
 
-    pub const AES: c_ulong = libc::HWCAP_AES | libc::HWCAP_PMULL;
+    pub const AES: c_ulong = libc::HWCAP_ASIMD | libc::HWCAP_AES | libc::HWCAP_PMULL;
     pub const DIT: c_ulong = libc::HWCAP_DIT;
-    pub const SHA2: c_ulong = libc::HWCAP_SHA2;
-    pub const SHA3: c_ulong = libc::HWCAP_SHA3 | libc::HWCAP_SHA512;
-    pub const SM4: c_ulong = libc::HWCAP_SM3 | libc::HWCAP_SM4;
+    pub const SHA2: c_ulong = libc::HWCAP_ASIMD | libc::HWCAP_SHA1 | libc::HWCAP_SHA2;
+    pub const SHA3: c_ulong = SHA2 | libc::HWCAP_SHA3 | libc::HWCAP_SHA512;
+    pub const SM4: c_ulong = libc::HWCAP_ASIMD | libc::HWCAP_SM3 | libc::HWCAP_SM4;
 }
 
 // Apple OS (macOS, iOS, watchOS, and tvOS) `check!` macro.

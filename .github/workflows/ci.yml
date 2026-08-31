@@ -17,6 +17,17 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify checked-out source identity
+        env:
+          GLIBC_TUNABLES: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+        shell: /usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/tmp LC_ALL=C /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          digest=$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')
+          scripts/run-authoritative-gate.sh git "$digest" \
+            '${{ github.sha }}' verify-source-tree
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: 1.98.0
@@ -67,6 +78,17 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify checked-out source identity
+        env:
+          GLIBC_TUNABLES: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+        shell: /usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/tmp LC_ALL=C /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          digest=$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')
+          scripts/run-authoritative-gate.sh git "$digest" \
+            '${{ github.sha }}' verify-source-tree
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: 1.97.1

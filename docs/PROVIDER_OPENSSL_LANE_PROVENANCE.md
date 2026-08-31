@@ -99,6 +99,10 @@ containment, release identity, and evidence chain.
 Standalone verification is invoked through `scripts/run-authoritative-gate.sh`
 with archive mode and the trusted source-manifest digest.
 
+Provider tests copy the installed prefix, evidence logs, and required native
+test files into their private result root and verify that copy before use. All
+include, library, loader, CLI, and `evp_test` paths then use the private copy.
+
 The source manifest is a content/presence seal for all regular files present
 after extraction and the version check. OpenSSL's in-tree build may add
 generated files, so the

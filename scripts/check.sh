@@ -60,6 +60,14 @@ cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets \
     --features sign-self-verify
 
+case "$(/usr/bin/uname -m)" in
+    aarch64|arm64)
+        cargo_clean test \
+            --manifest-path "$ROOT/vendor/cpufeatures/Cargo.toml" \
+            --locked --offline
+        ;;
+esac
+
 clean_env /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
 (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$TARGET_DIR" \

@@ -7,6 +7,11 @@ and standard POSIX utilities. From the repository root:
 evidence/curve-provenance/run_curve_checks.sh --quick
 ```
 
+Invoke the executable directly. It starts Bash with a reduced environment and
+uses fixed tool paths. The archived order-witness script is accepted only when
+run by this wrapper with unoptimized isolated Python and its exact final
+marker; direct or `python -O` execution is not evidence.
+
 The quick path verifies all 458 archived files, validates the complete search
 transcript, checks the stored ECPP and N-1 certificates with PARI and separate
 Python verifiers, proves the curve and twist orders from independent points,

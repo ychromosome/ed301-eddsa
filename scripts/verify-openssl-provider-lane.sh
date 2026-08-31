@@ -68,6 +68,14 @@ EVP_TEST_EXPECTED=$(awk '$2 == "./test/evp_test" { print $1 }' \
 test -n "$EVP_TEST_EXPECTED"
 test "$(sha256sum "$SOURCE/test/evp_test" | awk '{ print $1 }')" \
     = "$EVP_TEST_EXPECTED"
+MLKEM_DATA=./test/recipes/30-test_evp_data/evppkey_ml_kem_encap_decap.txt
+MLKEM_DATA_EXPECTED=$(awk -v path="$MLKEM_DATA" \
+    '$2 == path { print $1 }' "$LOGS/source_manifest_post.sha256")
+test -n "$MLKEM_DATA_EXPECTED"
+test -f "$SOURCE/${MLKEM_DATA#./}" \
+    && test ! -L "$SOURCE/${MLKEM_DATA#./}"
+test "$(sha256sum "$SOURCE/${MLKEM_DATA#./}" | awk '{ print $1 }')" \
+    = "$MLKEM_DATA_EXPECTED"
 
 grep -Fqx "lane=$VERSION" "$LOGS/lane_identity.seal"
 grep -Fqx "prefix_rel=inst/$VERSION" "$LOGS/lane_identity.seal"

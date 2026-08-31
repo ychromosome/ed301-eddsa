@@ -19,3 +19,5 @@ The direct dependencies declare:
 
 Transitive packages retain their own notices and terms. The project license
 does not relicense third-party code, standards or imported provenance inputs.
+The local `cpufeatures 0.3.0` HWCAP-mask correction is documented under that
+package and remains under its Apache-2.0 OR MIT license.
