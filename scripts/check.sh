@@ -62,8 +62,16 @@ cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
 
 case "$(/usr/bin/uname -m)" in
     aarch64|arm64)
+        CPUFEATURES_TEST_ROOT=$WORK/cpufeatures
+        /usr/bin/cp -a -- "$ROOT/vendor/cpufeatures" \
+            "$CPUFEATURES_TEST_ROOT"
+        /usr/bin/chmod -R u+w -- "$CPUFEATURES_TEST_ROOT"
+        /usr/bin/rm -f -- "$CPUFEATURES_TEST_ROOT/Cargo.lock"
+        cargo_clean generate-lockfile \
+            --manifest-path "$CPUFEATURES_TEST_ROOT/Cargo.toml" \
+            --offline
         cargo_clean test \
-            --manifest-path "$ROOT/vendor/cpufeatures/Cargo.toml" \
+            --manifest-path "$CPUFEATURES_TEST_ROOT/Cargo.toml" \
             --locked --offline
         ;;
 esac
