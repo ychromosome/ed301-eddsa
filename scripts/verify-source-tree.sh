@@ -9,6 +9,8 @@ MANIFEST=$ROOT/SOURCE_MANIFEST.sha256
 MODE=${ED301_SOURCE_MODE:-}
 EXPECTED_DIGEST=${ED301_EXPECTED_SOURCE_MANIFEST_SHA256:-}
 
+sh "$ROOT/scripts/check-rust-build-environment.sh" --environment-only
+
 for tool in awk cmp diff find grep mktemp sed sha256sum sort tr wc; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "missing source-verifier tool: $tool" >&2

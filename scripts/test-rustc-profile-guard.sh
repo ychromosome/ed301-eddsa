@@ -8,6 +8,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 GUARD=$ROOT/scripts/rustc-profile-guard.sh
 CHECK=$ROOT/scripts/check-profile-markers.sh
 ENV_GUARD=$ROOT/scripts/check-rust-build-environment.sh
+LAUNCHER=$ROOT/scripts/run-authoritative-gate.sh
 TMP=$(mktemp -d /tmp/ed301-profile-guard-test.XXXXXX)
 cleanup() {
     rm -rf -- "$TMP"
@@ -123,17 +124,47 @@ if ED301_PROFILE_MARKER_DIR=$markers \
     exit 1
 fi
 
-sh "$ENV_GUARD" >/dev/null
+manifest_digest=$(/usr/bin/sha256sum "$ROOT/SOURCE_MANIFEST.sha256" \
+    | /usr/bin/awk '{ print $1 }')
+"$LAUNCHER" archive "$manifest_digest" environment-check >/dev/null
 env_case_count=0
 for name in RUSTFLAGS CARGO_HOME CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER \
         CC CFLAGS AR LDFLAGS PYTHONPATH PYTHONSTARTUP LD_PRELOAD \
-        OPENSSL_LIB_DIR TMPDIR; do
+        OPENSSL_LIB_DIR TMPDIR BASH_ENV ENV TAR_OPTIONS PERL5OPT PERL5LIB \
+        PERLLIB PERL_LOCAL_LIB_ROOT PERL_MB_OPT PERL_MM_OPT MAKEFILES \
+        GNUMAKEFLAGS GCC_EXEC_PREFIX COMPILER_PATH HOST_CFLAGS \
+        TARGET_CFLAGS ARFLAGS HOST_ARFLAGS TARGET_ARFLAGS; do
     env_case_count=$((env_case_count + 1))
-    if env "$name=unsafe" sh "$ENV_GUARD" >/dev/null 2>&1; then
+    if env -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C \
+            ED301_HERMETIC_LAUNCH=1 ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$manifest_digest" \
+            "$name=unsafe" /bin/sh "$ENV_GUARD" \
+            >"$TMP/env-$name.log" 2>&1; then
         echo "environment guard accepted override: $name" >&2
         exit 1
     fi
+    grep -F "$name=<redacted>" "$TMP/env-$name.log" >/dev/null || {
+        echo "environment guard did not identify override: $name" >&2
+        exit 1
+    }
 done
 
-printf 'rustc_profile_guard_regressions=PASS profile_cases=11 env_cases=%s\n' \
+startup_hook=$TMP/bash-env
+startup_sentinel=$TMP/bash-env-executed
+printf '/usr/bin/printf injected > "%s"\n' "$startup_sentinel" \
+    >"$startup_hook"
+/usr/bin/env BASH_ENV="$startup_hook" ENV="$startup_hook" \
+    TAR_OPTIONS=--warning=no-all PERL5OPT=-Mstrict \
+    PERL5LIB=/tmp/ed301-invalid MAKEFILES=/tmp/ed301-invalid \
+    GNUMAKEFLAGS=-n GCC_EXEC_PREFIX=/tmp/ed301-invalid \
+    COMPILER_PATH=/tmp/ed301-invalid \
+    'BASH_FUNC_sha256sum%%=() { return 0; }' \
+    "$LAUNCHER" archive "$manifest_digest" environment-check >/dev/null
+if [ -e "$startup_sentinel" ]; then
+    echo "hermetic launcher executed inherited shell startup code" >&2
+    exit 1
+fi
+
+printf 'rustc_profile_guard_regressions=PASS profile_cases=11 env_cases=%s launcher_cases=1\n' \
     "$env_case_count"

@@ -25,18 +25,26 @@ The caller must authenticate the enclosing archive and pass the expected
 manifest digest explicitly:
 
 ```sh
-ED301_SOURCE_MODE=archive \
-ED301_VERIFIED_SNAPSHOT=1 \
-ED301_EXPECTED_SOURCE_MANIFEST_SHA256=<trusted-sha256> \
-    sh scripts/check.sh
+scripts/run-authoritative-gate.sh archive <trusted-sha256> check
 ```
 
-The same three variables are required by `scripts/check-downstream.sh`,
-`scripts/check-secret-taint.sh`, `scripts/test-provider.sh`, and
-`review-tests/run.sh`. The manifest inside an unauthenticated archive is not
-its own trust anchor. Git mode exists only as a source-verification primitive
-and additionally requires an external exact commit; authoritative build gates
-do not accept it.
+The launcher clears inherited startup and tool-control variables before the
+gate shell starts. It also exposes `check-downstream`, `check-secret-taint`,
+`review-tests`, `build-openssl-provider-lane`,
+`verify-openssl-provider-lane`, and `test-provider`. Calling the underlying
+scripts directly does not produce authoritative evidence. The manifest inside
+an unauthenticated archive is not its own trust anchor. Git mode exists only
+for exact source verification:
+
+```sh
+scripts/run-authoritative-gate.sh git <trusted-manifest-sha256> \
+    <trusted-commit> verify-source-tree
+```
+
+The host kernel, dynamic loader, and process that starts the launcher are
+trusted. The caller must clear loader controls before `exec`; a process cannot
+clear controls that executed before it began. CI supplies empty loader-control
+values at the runner boundary before starting its clean shell.
 
 `review-tests/run.sh` adds the independent v1 transcript/OID oracle, wire
 mutation matrix, public-signature taint test, external-consumer taint test and
@@ -51,8 +59,11 @@ The externally recorded digest of that lane's evidence manifest is then an
 input to the provider gate:
 
 ```sh
-scripts/build-openssl-provider-lane.sh 3.5.7 /trusted/upstream /private/lane-root
-scripts/test-provider.sh /private/lane-root 3.5.7 <trusted-evidence-manifest-sha256>
+scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
+    build-openssl-provider-lane 3.5.7 /trusted/upstream /private/lane-root
+scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
+    test-provider /private/lane-root 3.5.7 \
+    <trusted-evidence-manifest-sha256>
 ```
 
 Repeat with `4.0.1` for OpenSSL 4. The ordinary module exposes only `KEYMGMT`

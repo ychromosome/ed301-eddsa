@@ -5,6 +5,7 @@ PATH=/usr/bin:/bin
 export PATH LC_ALL=C
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+sh "$ROOT/scripts/check-rust-build-environment.sh"
 sh "$ROOT/scripts/require-verified-snapshot.sh"
 if [ "$#" -ne 3 ]; then
     printf 'usage: %s <provider-module.so> <toolchain-marker> <evidence-directory>\n' \

@@ -15,8 +15,14 @@ if [ -z "${ED301_EXPECTED_SOURCE_MANIFEST_SHA256:-}" ]; then
     echo "verified snapshot requires an external manifest digest" >&2
     exit 2
 fi
+EXPECTED_MANIFEST=$ED301_EXPECTED_SOURCE_MANIFEST_SHA256
 
-sh "$ROOT/scripts/verify-source-tree.sh"
+/usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C \
+    ED301_HERMETIC_LAUNCH="${ED301_HERMETIC_LAUNCH:-}" \
+    ED301_SOURCE_MODE="$ED301_SOURCE_MODE" \
+    ED301_VERIFIED_SNAPSHOT="$ED301_VERIFIED_SNAPSHOT" \
+    ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$EXPECTED_MANIFEST" \
+    /bin/sh "$ROOT/scripts/verify-source-tree.sh"
 
 if find "$ROOT" -xdev -perm /222 -print -quit | grep -q .; then
     echo "verified snapshot still contains writable source paths" >&2

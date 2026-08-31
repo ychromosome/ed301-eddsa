@@ -30,6 +30,10 @@ fn reject_native_injection_environment() {
     const EXACT: &[&str] = &[
         "ARFLAGS",
         "CFLAGS",
+        "CCC_OVERRIDE_OPTIONS",
+        "CCC_PRINT_BINDINGS",
+        "CCC_PRINT_OPTIONS",
+        "COMPILER_PATH",
         "CPPFLAGS",
         "CXXFLAGS",
         "LDFLAGS",
@@ -40,6 +44,11 @@ fn reject_native_injection_environment() {
         "OBJC_INCLUDE_PATH",
         "CRATE_CC_NO_DEFAULTS",
         "CC_ENABLE_DEBUG_OUTPUT",
+        "GCC_EXEC_PREFIX",
+        "HOST_ARFLAGS",
+        "HOST_CFLAGS",
+        "TARGET_ARFLAGS",
+        "TARGET_CFLAGS",
     ];
     for (name, _) in env::vars_os() {
         let Some(name) = name.to_str() else {

@@ -29,13 +29,17 @@ jobs:
             sudo ln -sf "$(rustup which "$tool")" "/usr/bin/$tool"
           done
       - name: Verify core and hostile regressions
+        env:
+          GLIBC_TUNABLES: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+        shell: /usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/tmp LC_ALL=C /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
-          unset CARGO_HOME CARGO_INCREMENTAL CARGO_TERM_COLOR
+          expected_commit='${{ github.sha }}'
           digest=$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')
-          env ED301_SOURCE_MODE=git \
-            ED301_EXPECTED_GIT_COMMIT="$GITHUB_SHA" \
-            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
-            sh scripts/verify-source-tree.sh
+          scripts/run-authoritative-gate.sh git "$digest" \
+            "$expected_commit" verify-source-tree
           snapshot=$(mktemp -d)
           trap 'chmod -R u+w "$snapshot"; rm -rf "$snapshot"' EXIT
           {
@@ -44,14 +48,10 @@ jobs:
           } | tar -cf - -T - | tar -xf - -C "$snapshot"
           test "$(sha256sum "$snapshot/SOURCE_MANIFEST.sha256" | awk '{ print $1 }')" = "$digest"
           chmod -R a-w "$snapshot"
-          env ED301_SOURCE_MODE=archive \
-            ED301_VERIFIED_SNAPSHOT=1 \
-            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
-            sh "$snapshot/scripts/check.sh"
-          env ED301_SOURCE_MODE=archive \
-            ED301_VERIFIED_SNAPSHOT=1 \
-            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
-            "$snapshot/review-tests/run.sh"
+          "$snapshot/scripts/run-authoritative-gate.sh" archive \
+            "$digest" check
+          "$snapshot/scripts/run-authoritative-gate.sh" archive \
+            "$digest" review-tests
 
   provider:
     needs: core
@@ -82,15 +82,18 @@ jobs:
           done
       - name: Build and verify OpenSSL lane
         env:
-          VERSION: ${{ matrix.version }}
-          TARBALL_SHA256: ${{ matrix.sha256 }}
+          GLIBC_TUNABLES: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+        shell: /usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/tmp LC_ALL=C /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
-          unset CARGO_HOME CARGO_INCREMENTAL CARGO_TERM_COLOR
+          expected_commit='${{ github.sha }}'
+          version='${{ matrix.version }}'
+          tarball_sha256='${{ matrix.sha256 }}'
           digest=$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')
-          env ED301_SOURCE_MODE=git \
-            ED301_EXPECTED_GIT_COMMIT="$GITHUB_SHA" \
-            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
-            sh scripts/verify-source-tree.sh
+          scripts/run-authoritative-gate.sh git "$digest" \
+            "$expected_commit" verify-source-tree
           snapshot=$(mktemp -d)
           work=$(mktemp -d)
           trap 'chmod -R u+w "$snapshot" "$work"; rm -rf "$snapshot" "$work"' EXIT
@@ -102,20 +105,15 @@ jobs:
           chmod -R a-w "$snapshot"
           mkdir "$work/upstream"
           curl -fL --retry 3 \
-            "https://www.openssl.org/source/openssl-$VERSION.tar.gz" \
-            -o "$work/upstream/openssl-$VERSION.tar.gz"
-          printf '%s  %s\n' "$TARBALL_SHA256" "openssl-$VERSION.tar.gz" \
-            >"$work/upstream/openssl-$VERSION.tar.gz.sha256"
-          env ED301_SOURCE_MODE=archive \
-            ED301_VERIFIED_SNAPSHOT=1 \
-            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
-            "$snapshot/scripts/build-openssl-provider-lane.sh" \
-              "$VERSION" "$work/upstream" "$work/lane"
+            "https://www.openssl.org/source/openssl-$version.tar.gz" \
+            -o "$work/upstream/openssl-$version.tar.gz"
+          printf '%s  %s\n' "$tarball_sha256" "openssl-$version.tar.gz" \
+            >"$work/upstream/openssl-$version.tar.gz.sha256"
+          "$snapshot/scripts/run-authoritative-gate.sh" archive "$digest" \
+            build-openssl-provider-lane \
+            "$version" "$work/upstream" "$work/lane"
           lane_digest=$(sha256sum \
-            "$work/lane/logs/$VERSION/evidence_manifest.sha256" \
+            "$work/lane/logs/$version/evidence_manifest.sha256" \
             | awk '{ print $1 }')
-          env ED301_SOURCE_MODE=archive \
-            ED301_VERIFIED_SNAPSHOT=1 \
-            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
-            "$snapshot/scripts/test-provider.sh" \
-              "$work/lane" "$VERSION" "$lane_digest"
+          "$snapshot/scripts/run-authoritative-gate.sh" archive "$digest" \
+            test-provider "$work/lane" "$version" "$lane_digest"

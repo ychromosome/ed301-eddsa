@@ -8,8 +8,8 @@ export LC_ALL=C
 umask 077
 
 SCRIPT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-sh "$SCRIPT_ROOT/scripts/require-verified-snapshot.sh"
 sh "$SCRIPT_ROOT/scripts/check-rust-build-environment.sh"
+sh "$SCRIPT_ROOT/scripts/require-verified-snapshot.sh"
 
 if (( $# != 3 )); then
   printf 'usage: build-openssl-provider-lane.sh <version> <upstream-dir> <lane-root>\n' >&2
@@ -51,8 +51,11 @@ ROOT=$(readlink -f -- "$ROOT_ARG")
 }
 
 TOP=openssl-$VER
-TAR=$UPSTREAM/$TOP.tar.gz
-CHECKSUM=$UPSTREAM/$TOP.tar.gz.sha256
+UPSTREAM_TAR=$UPSTREAM/$TOP.tar.gz
+UPSTREAM_CHECKSUM=$UPSTREAM/$TOP.tar.gz.sha256
+INPUT_DIR=$ROOT/input
+TAR=$INPUT_DIR/$TOP.tar.gz
+CHECKSUM=$INPUT_DIR/$TOP.tar.gz.sha256
 SRC=$ROOT/src/$TOP
 INST=$ROOT/inst/$VER
 LOGD=$ROOT/logs/$VER
@@ -81,15 +84,15 @@ for managed in "$SRC" "$INST" "$LOGD"; do
     exit 2
   }
 done
-[[ ! -L "$TAR" && ! -L "$CHECKSUM" ]] || {
+[[ ! -L "$UPSTREAM_TAR" && ! -L "$UPSTREAM_CHECKSUM" ]] || {
   printf 'tarball and checksum inputs must be regular non-symlink files\n' >&2
   exit 2
 }
-[[ -f "$TAR" ]] || {
-  printf 'missing public tarball: %s\n' "$TAR" >&2; exit 2;
+[[ -f "$UPSTREAM_TAR" ]] || {
+  printf 'missing public tarball: %s\n' "$UPSTREAM_TAR" >&2; exit 2;
 }
-[[ -f "$CHECKSUM" ]] || {
-  printf 'missing tarball checksum sidecar: %s\n' "$CHECKSUM" >&2; exit 2;
+[[ -f "$UPSTREAM_CHECKSUM" ]] || {
+  printf 'missing tarball checksum sidecar: %s\n' "$UPSTREAM_CHECKSUM" >&2; exit 2;
 }
 mkdir -p -- "$LOGD"
 [[ ! -L "$LOGD" && "$(readlink -f -- "$LOGD")" == "$LOGD" ]] || {
@@ -103,10 +106,12 @@ export RANLIB=/usr/bin/ranlib
 export LD=/usr/bin/ld
 
 BUILDER=$(readlink -f -- "$0")
+STAGER=$(readlink -f -- \
+  "$(dirname -- "$0")/stage-openssl-inputs.py")
 PROVENANCE=$(readlink -f -- \
   "$(dirname -- "$0")/../docs/PROVIDER_OPENSSL_LANE_PROVENANCE.md")
-[[ -f "$BUILDER" && -f "$PROVENANCE" ]] || {
-  printf 'builder or provenance document is missing\n' >&2
+[[ -f "$BUILDER" && -f "$STAGER" && -f "$PROVENANCE" ]] || {
+  printf 'builder, input stager or provenance document is missing\n' >&2
   exit 2
 }
 
@@ -158,13 +163,24 @@ run_step() {
   (( rc == 0 )) || fail_lane "$rc" "$name"
 }
 
+stage_inputs() {
+  [[ ! -e "$INPUT_DIR" && ! -L "$INPUT_DIR" ]] || return 1
+  mkdir -m 700 -- "$INPUT_DIR" || return 1
+  [[ "$(readlink -f -- "$INPUT_DIR")" == "$INPUT_DIR" ]] || return 1
+  /usr/bin/python3 -I -B "$STAGER" \
+    "$UPSTREAM_TAR" "$TAR" "$UPSTREAM_CHECKSUM" "$CHECKSUM"
+  [[ -f "$TAR" && ! -L "$TAR" && -f "$CHECKSUM" && ! -L "$CHECKSUM" ]]
+}
+
 record_builder_inputs() {
-  sha256sum -- "$BUILDER" "$PROVENANCE" \
+  sha256sum -- "$BUILDER" "$STAGER" "$PROVENANCE" \
     > "$LOGD/builder_inputs.sha256" || return 1
   {
     printf 'builder_path=%s\n' "$BUILDER"
+    printf 'stager_path=%s\n' "$STAGER"
     printf 'provenance_path=%s\n' "$PROVENANCE"
     printf 'builder_sha256=%s\n' "$(sha256sum "$BUILDER" | awk '{print $1}')"
+    printf 'stager_sha256=%s\n' "$(sha256sum "$STAGER" | awk '{print $1}')"
     printf 'provenance_sha256=%s\n' \
       "$(sha256sum "$PROVENANCE" | awk '{print $1}')"
   } > "$LOGD/builder_identity.tsv"
@@ -229,7 +245,7 @@ verify_tarball_hash() {
     printf 'checksum sidecar digest is not the pinned release digest\n' >&2
     return 1
   }
-  if ! ( cd "$UPSTREAM" &&
+  if ! ( cd "$INPUT_DIR" &&
          sha256sum --strict --quiet -c "$(basename -- "$CHECKSUM")" ); then
     return 1
   fi
@@ -238,10 +254,18 @@ verify_tarball_hash() {
     printf 'tarball digest is not the pinned release digest\n' >&2
     return 1
   }
-  sha256sum -- "$TAR" > "$LOGD/tarball.sha256"
-  sha256sum -- "$CHECKSUM" > "$LOGD/tarball_checksum.sha256"
+  ( cd "$ROOT" && sha256sum -- "input/$TOP.tar.gz" ) \
+    > "$LOGD/tarball.sha256"
+  ( cd "$ROOT" && sha256sum -- "input/$TOP.tar.gz.sha256" ) \
+    > "$LOGD/tarball_checksum.sha256"
   printf 'public_source_url=%s\nrelease_name=%s\n' \
     "$PUBLIC_URL" "$RELEASE_NAME"
+}
+
+verify_staged_inputs() {
+  ( cd "$ROOT" &&
+    sha256sum --strict --quiet -c "logs/$VER/tarball.sha256" &&
+    sha256sum --strict --quiet -c "logs/$VER/tarball_checksum.sha256" )
 }
 
 verify_tarball_layout() {
@@ -552,6 +576,10 @@ write_evidence_manifest() {
     "logs/$VER/builder_inputs.exit"
     "logs/$VER/builder_inputs.sha256"
     "logs/$VER/builder_identity.tsv"
+    "logs/$VER/staged_inputs.log"
+    "logs/$VER/staged_inputs.exit"
+    "input/$TOP.tar.gz"
+    "input/$TOP.tar.gz.sha256"
     "logs/$VER/toolchain_identity.log"
     "logs/$VER/toolchain_identity.exit"
     "logs/$VER/toolchain_identity.tsv"
@@ -566,6 +594,8 @@ write_evidence_manifest() {
     "logs/$VER/tarball_checksum.sha256"
     "logs/$VER/extract.log"
     "logs/$VER/extract.exit"
+    "logs/$VER/staged_inputs_recheck.log"
+    "logs/$VER/staged_inputs_recheck.exit"
     "logs/$VER/source_version.log"
     "logs/$VER/source_version.exit"
     "logs/$VER/source_manifest_pristine.log"
@@ -651,10 +681,12 @@ verify_evidence_manifest() {
 }
 
 run_step builder_inputs record_builder_inputs
+run_step staged_inputs stage_inputs
 run_step toolchain_identity record_toolchain_identity
 run_step tarball_hash verify_tarball_hash
 run_step tarball_layout verify_tarball_layout
 run_step extract extract_source
+run_step staged_inputs_recheck verify_staged_inputs
 run_step source_version verify_source_version
 run_step source_manifest_pristine write_source_manifest_pre
 run_step source_identity write_source_identity

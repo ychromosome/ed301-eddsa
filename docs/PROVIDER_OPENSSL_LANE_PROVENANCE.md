@@ -26,9 +26,11 @@ corresponding pinned value.
 
 The URL is provenance metadata only. The helper does not fetch it; the
 tarball and its `.sha256` sidecar must already exist in the supplied upstream
-directory. The checksum sidecar must name exactly the selected tarball,
-contain the pinned digest, and pass a strict `sha256sum -c` check. The
-tar listing must contain one
+directory. The builder copies both inputs through no-follow file descriptors
+into its private lane root before authentication. Hashing, layout validation,
+extraction, and final evidence use only those private copies. The checksum
+sidecar must name exactly the selected tarball, contain the pinned digest, and
+pass a strict `sha256sum -c` check. The tar listing must contain one
 top-level `openssl-<version>/` tree, no absolute or `..` member, and
 `VERSION.dat`.
 
@@ -47,8 +49,10 @@ campaign.
 
 Under the lane root, `logs/<version>/` contains:
 
-- `builder_inputs.sha256` and `builder_identity.tsv`, binding the exact
-  builder and this provenance document before and after the build;
+- `builder_inputs.sha256` and `builder_identity.tsv`, binding the builder,
+  input stager, and this provenance document before and after the build;
+- `staged_inputs.log` and `staged_inputs_recheck.log`, recording the private
+  input copy and its post-extraction verification;
 - `toolchain_identity.tsv` and `build_environment.tsv`, recording executable
   paths/versions, OS/kernel/architecture, and relevant inherited variables;
 - `tarball.sha256`, `tarball_checksum.sha256`, and `source_identity.tsv`;
@@ -92,6 +96,8 @@ requires the exact lane root, version, and an evidence-manifest SHA-256
 supplied by the outer controller. `scripts/verify-openssl-provider-lane.sh`
 then rechecks the complete prefix inventory, regular-file hashes, symlink
 containment, release identity, and evidence chain.
+Standalone verification is invoked through `scripts/run-authoritative-gate.sh`
+with archive mode and the trusted source-manifest digest.
 
 The source manifest is a content/presence seal for all regular files present
 after extraction and the version check. OpenSSL's in-tree build may add

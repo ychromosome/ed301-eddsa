@@ -8,8 +8,13 @@ for tool in cp ln mkfifo mktemp tar; do
         exit 127
     }
 done
+test -x /usr/bin/cargo || {
+    echo "missing canonical Cargo for source-path regressions" >&2
+    exit 127
+}
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ed301-source-gate-test.XXXXXX")
+unset TMPDIR
 cleanup() {
     rm -rf -- "$TMP"
 }
@@ -149,4 +154,54 @@ for gate in scripts/check.sh scripts/check-downstream.sh \
     fi
 done
 
-printf 'source_tree_gate_regressions=PASS cases=15\n'
+CARGO_HOME_DIR=$TMP/cargo-path-home
+CARGO_TARGET_DIR=$TMP/cargo-path-target
+CARGO_USER_HOME=$TMP/cargo-path-user-home
+mkdir -p "$CARGO_HOME_DIR" "$CARGO_TARGET_DIR" "$CARGO_USER_HOME"
+
+check_cargo_source_path() {
+    test_root=$TMP/$1
+    mkdir -p "$test_root/vendor"
+    /usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+        "$test_root/config.toml" "$test_root/vendor"
+    /usr/bin/python3 -I -B - "$test_root/config.toml" \
+        "$test_root/vendor" <<'PY'
+import pathlib
+import sys
+import tomllib
+
+config_path, vendor_path = sys.argv[1:]
+with open(config_path, "rb") as source:
+    configured = tomllib.load(source)["source"]["vendored-sources"]["directory"]
+expected = str(pathlib.Path(vendor_path).resolve(strict=True))
+if configured != expected:
+    raise SystemExit("serialized Cargo source path changed value")
+PY
+}
+
+check_cargo_source_path 'quote"path'
+check_cargo_source_path "apostrophe'path"
+check_cargo_source_path 'comment#path'
+check_cargo_source_path 'back\slash'
+newline_name=$(printf 'new\nline')
+check_cargo_source_path "$newline_name"
+check_cargo_source_path 'unicode-😀'
+
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor"
+(cd / && env -i PATH=/usr/bin:/bin HOME="$CARGO_USER_HOME" LC_ALL=C \
+    CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+    CARGO_NET_OFFLINE=true /usr/bin/cargo metadata \
+        --manifest-path "$ROOT/Cargo.toml" --locked --offline \
+        --format-version=1 >/dev/null)
+
+for gate in scripts/check.sh scripts/check-downstream.sh \
+        scripts/check-secret-taint.sh scripts/test-provider.sh \
+        review-tests/run.sh; do
+    grep -F 'scripts/write-cargo-config.py' "$ROOT/$gate" >/dev/null || {
+        echo "$gate does not bind Cargo to the verified vendor directory" >&2
+        exit 1
+    }
+done
+
+printf 'source_tree_gate_regressions=PASS cases=15 cargo_path_cases=7\n'

@@ -4,6 +4,10 @@ set -eu
 PATH=/usr/bin:/bin
 export PATH LC_ALL=C
 
+SCRIPT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+sh "$SCRIPT_ROOT/scripts/check-rust-build-environment.sh" --environment-only
+sh "$SCRIPT_ROOT/scripts/require-verified-snapshot.sh"
+
 if [ "$#" -ne 3 ]; then
     echo "usage: $0 <lane-root> <3.5.7|4.0.1> <evidence-manifest-sha256>" >&2
     exit 2

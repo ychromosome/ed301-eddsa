@@ -16,11 +16,8 @@ LANE_ROOT_ARG=$1
 LANE=$2
 LANE_EVIDENCE=$3
 
-sh "$ROOT/scripts/require-verified-snapshot.sh"
 sh "$ROOT/scripts/check-rust-build-environment.sh"
-case "$ROOT" in
-    *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
-esac
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 verify_lane() {
     sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
         "$LANE_ROOT_ARG" "$LANE" "$LANE_EVIDENCE"
@@ -37,14 +34,8 @@ CARGO_HOME_DIR=$BUILD/cargo-home
 mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$BUILD/bin" \
     "$BUILD/modules" "$BUILD/fresh-modules" "$BUILD/evidence" \
     "$BUILD/generated" "$BUILD/targets" "$BUILD/profile-markers"
-{
-    printf '%s\n' '[build]' 'rustflags = ["-Cpanic=unwind"]' '' \
-        '[source.crates-io]' 'replace-with = "vendored-sources"' '' \
-        '[source.vendored-sources]'
-    printf "directory = '%s'\n" "$ROOT/vendor"
-    printf '%s\n' '' '[net]' 'offline = true'
-} >"$CARGO_HOME_DIR/config.toml"
-chmod 600 "$CARGO_HOME_DIR/config.toml"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor" panic-unwind
 
 LOG=$BUILD/evidence/run.log
 STATUS=$BUILD/evidence/status.txt
@@ -356,8 +347,7 @@ sha256sum --strict --quiet -c \
 verify_lane
 
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
-    CARGO_HOME="$CARGO_HOME_DIR" CARGO_NET_OFFLINE=true \
-    CARGO_INCREMENTAL=0 ED301_SOURCE_MODE=archive \
+    ED301_HERMETIC_LAUNCH=1 ED301_SOURCE_MODE=archive \
     ED301_VERIFIED_SNAPSHOT=1 \
     ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$ED301_EXPECTED_SOURCE_MANIFEST_SHA256" \
     OPENSSL_PREFIX="$OPENSSL_PREFIX" \
@@ -366,6 +356,8 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_OBJECT_LISTS="$BUILD/evidence/openssl-objects.txt" \
     "$ROOT/review-tests/run.sh" \
     | tee "$BUILD/evidence/hostile-regressions.log"
+grep -Fq 'openssl_object_lists=1' \
+    "$BUILD/evidence/hostile-regressions.log"
 
 run_harness() {
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \

@@ -6,11 +6,8 @@ export PATH LC_ALL=C
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 FIXTURE=$ROOT/integration/downstream-workspace
-sh "$ROOT/scripts/require-verified-snapshot.sh"
 sh "$ROOT/scripts/check-rust-build-environment.sh"
-case "$ROOT" in
-    *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
-esac
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 for manifest in "$ROOT/Cargo.toml" "$ROOT/provider/Cargo.toml" \
         "$ROOT/secret-taint/Cargo.toml" "$FIXTURE/Cargo.toml"; do
     if grep -F '[profile.release.package."crypto-bigint' "$manifest" \
@@ -28,13 +25,8 @@ TARGET_DIR=$WORK/target
 MARKERS=$WORK/profile-markers
 mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$ANALYSIS_TARGET_DIR" \
     "$TARGET_DIR" "$MARKERS"
-{
-    printf '%s\n' '[source.crates-io]' 'replace-with = "vendored-sources"' \
-        '' '[source.vendored-sources]'
-    printf "directory = '%s'\n" "$ROOT/vendor"
-    printf '%s\n' '' '[net]' 'offline = true'
-} >"$CARGO_HOME_DIR/config.toml"
-chmod 600 "$CARGO_HOME_DIR/config.toml"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor"
 printf 'cargo_config_sha256=%s\n' \
     "$(sha256sum "$CARGO_HOME_DIR/config.toml" | awk '{print $1}')"
 cleanup() {

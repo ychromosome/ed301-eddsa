@@ -6,6 +6,9 @@ export PATH LC_ALL=C
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 TEST_ROOT=$ROOT/review-tests
+if ! sh "$ROOT/scripts/check-rust-build-environment.sh"; then
+    exit 1
+fi
 if ! sh "$ROOT/scripts/require-verified-snapshot.sh"; then
     exit 1
 fi
@@ -17,13 +20,8 @@ passes=0
 skips=0
 
 mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR"
-{
-    printf '%s\n' '[source.crates-io]' 'replace-with = "vendored-sources"' \
-        '' '[source.vendored-sources]'
-    printf 'directory = "%s"\n' "$ROOT/vendor"
-    printf '%s\n' '' '[net]' 'offline = true'
-} >"$CARGO_HOME_DIR/config.toml"
-chmod 600 "$CARGO_HOME_DIR/config.toml"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor"
 
 cleanup() {
     rm -rf -- "$WORK"
@@ -64,6 +62,7 @@ printf 'rustc=%s\n' "$(/usr/bin/rustc --version)"
 printf 'valgrind=%s\n' "$(/usr/bin/valgrind --version)"
 
 if env -i PATH=/usr/bin:/bin LC_ALL=C \
+        OPENSSL_OBJECT_LISTS="${OPENSSL_OBJECT_LISTS:-}" \
         /usr/bin/python3 -I -B "$TEST_ROOT/oid-independent-check.py"; then
     pass oid-independent-check
 else
