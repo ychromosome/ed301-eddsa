@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Verify checked-out source identity
+      - name: Check checked-out source consistency
         env:
           GLIBC_TUNABLES: ""
           LD_AUDIT: ""
@@ -39,7 +39,7 @@ jobs:
           for tool in cargo rustc rustfmt cargo-fmt cargo-clippy rustdoc; do
             sudo ln -sf "$(rustup which "$tool")" "/usr/bin/$tool"
           done
-      - name: Verify core and hostile regressions
+      - name: Run core and hostile regressions
         env:
           GLIBC_TUNABLES: ""
           LD_AUDIT: ""
@@ -78,7 +78,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Verify checked-out source identity
+      - name: Check checked-out source consistency
         env:
           GLIBC_TUNABLES: ""
           LD_AUDIT: ""
@@ -126,7 +126,7 @@ jobs:
           test "$(sha256sum "$snapshot/SOURCE_MANIFEST.sha256" | awk '{ print $1 }')" = "$digest"
           chmod -R a-w "$snapshot"
           mkdir "$work/upstream"
-          curl -fL --retry 3 \
+          curl -fL --retry 3 --proto '=https' --proto-redir '=https' \
             "https://www.openssl.org/source/openssl-$version.tar.gz" \
             -o "$work/upstream/openssl-$version.tar.gz"
           printf '%s  %s\n' "$tarball_sha256" "openssl-$version.tar.gz" \

@@ -1,5 +1,11 @@
-#!/usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C /bin/sh
+#!/usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C ED301_LAUNCH_STAGE=clean /bin/sh
 set -eu
+
+if [ "${ED301_LAUNCH_STAGE:-}" != clean ]; then
+    exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C \
+        ED301_LAUNCH_STAGE=clean /bin/sh "$0" "$@"
+fi
+unset ED301_LAUNCH_STAGE
 
 PATH=/usr/bin:/bin
 HOME=/nonexistent
@@ -58,6 +64,7 @@ esac
 
 GATE=$1
 shift
+TARGET_SHELL=/bin/sh
 case "$GATE" in
     environment-check)
         TARGET=$ROOT/scripts/check-rust-build-environment.sh
@@ -76,27 +83,23 @@ case "$GATE" in
         ;;
     review-tests)
         TARGET=$ROOT/review-tests/run.sh
-        case "$#" in
-            0) ;;
-            2)
-                OPENSSL_PREFIX=$1
-                ED301_MODULE_DIR=$2
-                export OPENSSL_PREFIX ED301_MODULE_DIR
-                set --
-                ;;
-            *) usage ;;
-        esac
+        [ "$#" -eq 0 ] || usage
         ;;
     build-openssl-provider-lane)
         TARGET=$ROOT/scripts/build-openssl-provider-lane.sh
+        TARGET_SHELL=/bin/bash
         ;;
     verify-openssl-provider-lane)
         TARGET=$ROOT/scripts/verify-openssl-provider-lane.sh
         ;;
     test-provider)
         TARGET=$ROOT/scripts/test-provider.sh
+        TARGET_SHELL=/bin/bash
         ;;
     *) usage ;;
 esac
 
-exec "$TARGET" "$@"
+if [ "$TARGET_SHELL" = /bin/bash ]; then
+    exec /bin/bash --noprofile --norc "$TARGET" "$@"
+fi
+exec /bin/sh "$TARGET" "$@"

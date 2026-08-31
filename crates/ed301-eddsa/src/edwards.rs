@@ -1,13 +1,9 @@
 //! Internal extended-coordinate arithmetic for the ED301-v1 Edwards group.
 //!
-//! The formulas in this module are the complete formulas for a general
-//! twisted-Edwards curve with square `a` and nonsquare `d`. Secret scalar
-//! multiplication executes a fixed 301-round double-and-add-always schedule.
-
-#![allow(
-    dead_code,
-    reason = "the point core is consumed by the forthcoming signature API"
-)]
+//! The formulas are complete for a twisted-Edwards curve with square `a` and
+//! nonsquare `d`. Secret fixed-base multiplication uses a signed-radix-16
+//! comb. Public verification uses variable-time wNAF/Straus arithmetic; the
+//! 301-round ladder remains a test reference.
 
 use crypto_bigint::Choice;
 
@@ -32,12 +28,14 @@ const POINT_ODD_MULTIPLES: usize = 1 << (POINT_WNAF_WIDTH - 2);
 pub(crate) type VartimePointTable = [AffineNielsPoint; POINT_ODD_MULTIPLES];
 
 /// Canonical compressed encoding of the ED301-v1 base point.
+#[cfg(test)]
 pub(crate) const BASEPOINT_ENCODING: [u8; FIELD_BYTES] = [
     0x6b, 0xf7, 0x3f, 0x75, 0x5a, 0x0c, 0x80, 0x65, 0x3c, 0xe8, 0x3f, 0xcf, 0x6d, 0x6f, 0xf7, 0xd7,
     0xf3, 0x47, 0xb1, 0x92, 0x92, 0x24, 0xac, 0x67, 0x55, 0x22, 0x73, 0x41, 0x9e, 0x6c, 0xf2, 0xc8,
     0xa8, 0x8a, 0x02, 0xd3, 0x88, 0x98,
 ];
 
+#[cfg(test)]
 const PRIME_ORDER_BYTES: [u8; FIELD_BYTES] = [
     0x03, 0x96, 0xbe, 0xd0, 0xa1, 0xe3, 0x02, 0x26, 0x31, 0x4a, 0xfb, 0x47, 0x98, 0x80, 0x92, 0x08,
     0xc8, 0xdc, 0x16, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -75,6 +73,7 @@ const PRIME_ORDER_WNAF8_DESC: [(u16, i8); 18] = [
 // The top bit is consumed by initializing the accumulator with `P`; the
 // remaining schedule therefore performs exactly 299 doublings and 63
 // additions instead of the generic add-always ladder's 301 additions.
+#[cfg(any(test, feature = "sign-self-verify"))]
 const PRIME_ORDER_SET_BITS_DESC: [u16; 64] = [
     299, 148, 146, 145, 143, 142, 140, 139, 138, 135, 134, 131, 123, 119, 116, 113, 111, 103, 100,
     99, 94, 90, 89, 88, 87, 86, 85, 84, 83, 81, 80, 78, 75, 73, 69, 68, 64, 61, 58, 57, 49, 47, 46,
@@ -314,10 +313,12 @@ impl EdwardsPoint {
     }
 
     /// Multiply by a canonical scalar in exactly 301 rounds.
+    #[cfg(test)]
     pub(crate) fn scalar_mul(self, scalar: &Scalar) -> Self {
         self.scalar_mul_with(|bit_index| scalar.bit(bit_index))
     }
 
+    #[cfg(test)]
     fn scalar_mul_encoded(self, scalar: &[u8; FIELD_BYTES]) -> Self {
         self.scalar_mul_with(|bit_index| {
             Choice::from_u8_lsb(scalar[bit_index >> 3] >> (bit_index & 7))
@@ -329,6 +330,7 @@ impl EdwardsPoint {
     /// Unlike [`Self::scalar_mul`], this path intentionally does not require
     /// the input to be canonical modulo `L`; the draft's pruned secret lies in
     /// `2^300 <= s < 2^301` and is consumed in exactly 301 rounds.
+    #[cfg(test)]
     pub(crate) fn scalar_mul_pruned(self, scalar: &[u8; FIELD_BYTES]) -> Self {
         self.scalar_mul_encoded(scalar)
     }
@@ -369,6 +371,7 @@ impl EdwardsPoint {
         result
     }
 
+    #[cfg(test)]
     fn scalar_mul_with(self, mut scalar_bit: impl FnMut(usize) -> Choice) -> Self {
         let mut accumulator = Self::IDENTITY;
         let mut bit_index = FIELD_BITS;
@@ -418,6 +421,7 @@ impl EdwardsPoint {
     /// strict public-key subgroup validation and remains safe when the point
     /// was derived from a secret scalar because its control flow is entirely
     /// input-independent.
+    #[cfg(any(test, feature = "sign-self-verify"))]
     fn scalar_mul_prime_order_sparse(self) -> Self {
         let mut accumulator = self;
         let mut current_bit = PRIME_ORDER_SET_BITS_DESC[0] as usize;
@@ -478,6 +482,7 @@ impl EdwardsPoint {
     }
 
     /// Encode a valid point as the canonical 38-byte compressed representation.
+    #[cfg(test)]
     pub(crate) fn encode(self) -> Result<[u8; FIELD_BYTES], EdwardsPointError> {
         self.encode_inner(false)
     }
@@ -578,6 +583,7 @@ impl EdwardsPoint {
     }
 
     /// Decode and require a nonidentity point of exact prime order `q`.
+    #[cfg(test)]
     pub(crate) fn decode_strict_subgroup(
         encoded: &[u8; FIELD_BYTES],
     ) -> Result<Self, EdwardsPointError> {
@@ -594,11 +600,13 @@ impl EdwardsPoint {
     }
 
     /// Return whether the point is nonidentity and satisfies `[q]P = I`.
+    #[cfg(any(test, feature = "sign-self-verify"))]
     pub(crate) fn is_prime_subgroup_nonidentity(&self) -> Choice {
         self.is_identity().not().and(self.is_prime_subgroup())
     }
 
     /// Return whether `[L]P` is the identity, allowing the identity itself.
+    #[cfg(any(test, feature = "sign-self-verify"))]
     pub(crate) fn is_prime_subgroup(&self) -> Choice {
         self.scalar_mul_prime_order_sparse().is_identity()
     }
@@ -609,6 +617,7 @@ impl EdwardsPoint {
     }
 
     /// Compare two valid projective points without affine inversion.
+    #[cfg(test)]
     pub(crate) fn ct_eq(&self, rhs: &Self) -> Choice {
         self.x
             .mul(rhs.z)
@@ -631,6 +640,7 @@ impl EdwardsPoint {
             .and(left.ct_eq(&right))
     }
 
+    #[cfg(test)]
     fn conditional_select(when_false: Self, when_true: Self, choice: Choice) -> Self {
         Self {
             x: FieldElement::conditional_select(when_false.x, when_true.x, choice),
@@ -873,11 +883,14 @@ mod tests {
         let public = EdwardsPoint::decode_strict_subgroup(&DRAFT00_PUBLIC_ENCODING)
             .expect("the draft public key is a strict subgroup point");
         let table = public.prepare_vartime_table();
+        let mut near_order = PRIME_ORDER_BYTES;
+        near_order[0] -= 1;
         let scalars = [
             Scalar::ZERO,
             Scalar::ONE,
             scalar(&SCALAR_12345),
             scalar(&DRAFT00_NONCE_SCALAR),
+            scalar(&near_order),
         ];
 
         for base_scalar in &scalars {

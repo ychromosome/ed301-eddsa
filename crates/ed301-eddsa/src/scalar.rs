@@ -1,8 +1,9 @@
 //! Constant-time scalar arithmetic modulo the ED301 prime subgroup order.
 
+#[cfg(test)]
+use crypto_bigint::Choice;
 use crypto_bigint::{
-    Choice, CtLt, CtOption, NonZero, U320, const_monty_form, const_monty_params,
-    modular::ConstMontyParams,
+    CtLt, CtOption, NonZero, U320, const_monty_form, const_monty_params, modular::ConstMontyParams,
 };
 use zeroize::Zeroize;
 
@@ -117,6 +118,7 @@ impl Scalar {
     }
 
     /// Read one bit for the fixed 301-round scalar multiplier.
+    #[cfg(test)]
     pub(crate) const fn bit(&self, index: usize) -> Choice {
         debug_assert!(index < FIELD_BITS);
         self.0.bit(index as u32)

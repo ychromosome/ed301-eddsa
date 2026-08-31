@@ -41,9 +41,9 @@ impl SigningKey {
         let seed: &[u8; SEED_BYTES] = seed
             .try_into()
             .map_err(|_| SignatureError::InvalidSeedLength)?;
-        Ok(Self {
-            seed: secret(*seed),
-        })
+        let mut owned = secret([0_u8; SEED_BYTES]);
+        owned.copy_from_slice(seed);
+        Ok(Self { seed: owned })
     }
 
     /// Derive the public verification key.

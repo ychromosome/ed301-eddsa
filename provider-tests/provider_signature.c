@@ -48,44 +48,6 @@ static int ed301v1_message_sign_init_rejects(OSSL_LIB_CTX *libctx, EVP_PKEY *pke
     return rejected;
 }
 
-/* OpenSSL's built-in Ed25519 provider is the lifecycle control. */
-static int ed301v1_ed25519_null_key_reinit_control(OSSL_LIB_CTX *libctx)
-{
-    static const unsigned char message[] = { 0x00, 0x7f, 0x80, 0xff };
-    EVP_PKEY *pkey = EVP_PKEY_Q_keygen(libctx, NULL, "ED25519");
-    EVP_MD_CTX *sign_context = EVP_MD_CTX_new();
-    EVP_MD_CTX *verify_context = EVP_MD_CTX_new();
-    unsigned char signature[64];
-    size_t signature_length = sizeof(signature);
-    int ok = pkey != NULL && sign_context != NULL && verify_context != NULL
-        && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
-            NULL, pkey, NULL) == 1
-        && EVP_DigestSign(sign_context, signature, &signature_length,
-            message, sizeof(message)) == 1
-        && signature_length == sizeof(signature)
-        && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
-            NULL, NULL, NULL) == 1;
-
-    signature_length = sizeof(signature);
-    ok = ok
-        && EVP_DigestSign(sign_context, signature, &signature_length,
-            message, sizeof(message)) == 1
-        && signature_length == sizeof(signature)
-        && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL, libctx,
-            NULL, pkey, NULL) == 1
-        && EVP_DigestVerify(verify_context, signature, signature_length,
-            message, sizeof(message)) == 1
-        && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL, libctx,
-            NULL, NULL, NULL) == 1
-        && EVP_DigestVerify(verify_context, signature, signature_length,
-            message, sizeof(message)) == 1;
-
-    EVP_MD_CTX_free(verify_context);
-    EVP_MD_CTX_free(sign_context);
-    EVP_PKEY_free(pkey);
-    return ok;
-}
-
 int main(void)
 {
     ED301V1_REQUIRE_RUNTIME_BINDING();
@@ -424,11 +386,7 @@ int main(void)
         EVP_PKEY_free(pkey);
     }
 
-    /*
-     * EVP DigestSign/DigestVerify contexts retain their bound key when a
-     * repeated init supplies pkey == NULL.  Run the same lifecycle against
-     * Ed301 and OpenSSL's built-in Ed25519 implementation.
-     */
+    /* Match Ed448: every DigestSign/DigestVerify init requires a key. */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
         EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
@@ -443,37 +401,43 @@ int main(void)
                 && EVP_DigestSign(sign_context, signature,
                     &signature_length, tc->message, tc->message_len) == 1
                 && signature_length == ED301V1_SIG_BYTES
-                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0
+                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0,
+            "DigestSign initializes and signs with an explicit Ed301 key");
+
+        ED301V1_CHECK(sign_context != NULL
                 && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
-                    ED301V1_PROP, NULL, NULL) == 1,
-            "DigestSign NULL-key reinit retains the Ed301 signing key");
+                    ED301V1_PROP, NULL, NULL) != 1,
+            "DigestSign rejects NULL-key reinitialization");
+        ERR_clear_error();
 
         memset(signature, 0, sizeof(signature));
         signature_length = sizeof(signature);
         ED301V1_CHECK(sign_context != NULL
                 && EVP_DigestSign(sign_context, signature,
-                    &signature_length, tc->message, tc->message_len) == 1
-                && signature_length == ED301V1_SIG_BYTES
-                && memcmp(signature, tc->signature, ED301V1_SIG_BYTES) == 0,
-            "DigestSign succeeds byte-exactly after NULL-key reinit");
+                    &signature_length, tc->message, tc->message_len) != 1,
+            "rejected DigestSign reinit invalidates the prior operation");
+        ERR_clear_error();
 
         ED301V1_CHECK(pkey != NULL && verify_context != NULL
                 && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
                     libctx, ED301V1_PROP, pkey, NULL) == 1
                 && EVP_DigestVerify(verify_context, tc->signature,
-                    ED301V1_SIG_BYTES, tc->message, tc->message_len) == 1
-                && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
-                    libctx, ED301V1_PROP, NULL, NULL) == 1
-                && EVP_DigestVerify(verify_context, tc->signature,
                     ED301V1_SIG_BYTES, tc->message, tc->message_len) == 1,
-            "DigestVerify succeeds after NULL-key reinit");
+            "DigestVerify initializes and verifies with an explicit key");
+        ED301V1_CHECK(verify_context != NULL
+                && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
+                    libctx, ED301V1_PROP, NULL, NULL) != 1,
+            "DigestVerify rejects NULL-key reinitialization");
+        ERR_clear_error();
+        ED301V1_CHECK(verify_context != NULL
+                && EVP_DigestVerify(verify_context, tc->signature,
+                    ED301V1_SIG_BYTES, tc->message, tc->message_len) != 1,
+            "rejected DigestVerify reinit invalidates the prior operation");
+        ERR_clear_error();
 
         EVP_MD_CTX_free(verify_context);
         EVP_MD_CTX_free(sign_context);
         EVP_PKEY_free(pkey);
-
-        ED301V1_CHECK(ed301v1_ed25519_null_key_reinit_control(libctx),
-            "built-in Ed25519 accepts the same NULL-key reinit lifecycle");
     }
 
     /*

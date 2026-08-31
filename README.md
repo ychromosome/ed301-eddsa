@@ -46,6 +46,11 @@ trusted. The caller must clear loader controls before `exec`; a process cannot
 clear controls that executed before it began. CI supplies empty loader-control
 values at the runner boundary before starting its clean shell.
 
+Repository CI derives its manifest digest and commit from the checked-out
+revision. It checks internal consistency and regressions; it is not an external
+trust anchor and does not produce release evidence. Release evidence requires
+an independently authenticated archive and manifest digest.
+
 `review-tests/run.sh` adds the independent v1 transcript/OID oracle, wire
 mutation matrix, public-signature taint test, external-consumer taint test and
 header-version contract. The provider matrix also runs its OpenSSL context

@@ -306,9 +306,12 @@ static int ed301v1_wants_public(int selection)
     return (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0;
 }
 
-static void ed301v1_raise(
+static void ed301v1_raise_at(
     ED301V1_PROVIDER_CONTEXT *provider,
     uint32_t reason,
+    const char *file,
+    int line,
+    const char *function,
     const char *format,
     ...)
 {
@@ -320,11 +323,15 @@ static void ed301v1_raise(
         return;
 
     provider->new_error(provider->handle);
-    provider->set_error_debug(provider->handle, __FILE__, __LINE__, __func__);
+    provider->set_error_debug(provider->handle, file, line, function);
     va_start(arguments, format);
     provider->vset_error(provider->handle, reason, format, arguments);
     va_end(arguments);
 }
+
+#define ed301v1_raise(provider, reason, ...) \
+    ed301v1_raise_at((provider), (reason), __FILE__, __LINE__, __func__, \
+        __VA_ARGS__)
 
 static void *ed301v1_allocate(
     ED301V1_PROVIDER_CONTEXT *provider,
@@ -425,10 +432,11 @@ static int ed301v1_key_import(
     const int wants_private = ed301v1_wants_private(selection);
     const int wants_public = ed301v1_wants_public(selection);
 
-    if (key == NULL || key->provider == NULL || key->inner == NULL
-            || params == NULL || !ed301v1_selection_supported(selection)
-            || (!wants_private && !wants_public))
+    if (key == NULL || key->provider == NULL || key->inner == NULL)
         return 0;
+    if (params == NULL || !ed301v1_selection_supported(selection)
+            || (!wants_private && !wants_public))
+        goto invalid;
 
     if (wants_private && !ed301v1_param_get_strict_octet_string(
             params,
@@ -509,6 +517,8 @@ static int ed301v1_key_export(
     int result = 0;
     const int wants_private = ed301v1_wants_private(selection);
     const int wants_public = ed301v1_wants_public(selection);
+    int has_private;
+    int has_public;
 
     if (key == NULL || key->provider == NULL || key->inner == NULL
             || parameter_callback == NULL
@@ -516,13 +526,10 @@ static int ed301v1_key_export(
             || (!wants_private && !wants_public))
         goto cleanup;
 
-    if (key->provider->rust->key_has(
-            key->inner,
-            wants_private,
-            wants_public) != 1)
-        goto cleanup;
+    has_private = key->provider->rust->key_has(key->inner, 1, 0) == 1;
+    has_public = key->provider->rust->key_has(key->inner, 0, 1) == 1;
 
-    if (wants_private) {
+    if (wants_private && has_private) {
         if (key->provider->rust->key_get_private(
                 key->inner,
                 private_key,
@@ -534,7 +541,7 @@ static int ed301v1_key_export(
                 private_key,
                 sizeof(private_key));
     }
-    if (wants_public) {
+    if (wants_public && has_public) {
         if (key->provider->rust->key_get_public(
                 key->inner,
                 public_key,
@@ -546,6 +553,8 @@ static int ed301v1_key_export(
                 public_key,
                 sizeof(public_key));
     }
+    if (parameter_count == 0)
+        goto cleanup;
     export_params[parameter_count] = (OSSL_PARAM)OSSL_PARAM_END;
     result = parameter_callback(export_params, callback_argument);
 
@@ -601,23 +610,26 @@ static int ed301v1_key_get_params(void *key_data, OSSL_PARAM params[])
     encoded_public_param =
         OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY);
     if (public_param != NULL || encoded_public_param != NULL) {
-        if (key->provider->rust->key_get_public(
-                key->inner,
-                public_key,
-                sizeof(public_key)) != 1
-                || !ed301v1_param_set_optional_octet_string(
-                    public_param,
+        if (key->provider->rust->key_has(key->inner, 0, 1) == 1) {
+            if (key->provider->rust->key_get_public(
+                    key->inner,
                     public_key,
-                    sizeof(public_key))
-                || !ed301v1_param_set_optional_octet_string(
-                    encoded_public_param,
-                    public_key,
-                    sizeof(public_key)))
-            goto cleanup;
+                    sizeof(public_key)) != 1
+                    || !ed301v1_param_set_optional_octet_string(
+                        public_param,
+                        public_key,
+                        sizeof(public_key))
+                    || !ed301v1_param_set_optional_octet_string(
+                        encoded_public_param,
+                        public_key,
+                        sizeof(public_key)))
+                goto cleanup;
+        }
     }
 
     private_param = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_PRIV_KEY);
-    if (private_param != NULL) {
+    if (private_param != NULL
+            && key->provider->rust->key_has(key->inner, 1, 0) == 1) {
         if (key->provider->rust->key_get_private(
                 key->inner,
                 private_key,
@@ -1124,34 +1136,21 @@ static int ed301v1_signature_sign_init(
             || signature->inner == NULL)
         return 0;
 
-    /*
-     * OpenSSL reinitializes DigestSign with key_data == NULL to retain the
-     * previously bound key.  Validate new parameters before touching that
-     * operation, then let the Rust context accept only a matching Sign state.
-     */
     if (key == NULL) {
-        /* Match Ed448: each initialization starts from the empty context. */
-        ed301v1_signature_clear_context(signature);
-        if (!ed301v1_signature_apply_params(signature, params)) {
-            ed301v1_signature_invalidate(signature);
-            return 0;
-        }
-        if (signature->provider->rust->signature_sign_init(
-                signature->inner, NULL) != 1) {
-            /* A failed FFI call may have left the retained operation live. */
-            ed301v1_signature_invalidate(signature);
-            ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
-                "v1 signing reinitialization has no bound signing key");
-            return 0;
-        }
-        return 1;
+        ed301v1_signature_invalidate(signature);
+        ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
+            "v1 signing initialization requires an explicit key");
+        return 0;
     }
 
     /* Match Ed448: clear both the prior key operation and native context. */
     ed301v1_signature_invalidate(signature);
     if (signature->provider != key->provider
-            || key->inner == NULL)
+            || key->inner == NULL) {
+        ed301v1_raise(signature->provider, ED301V1_R_INVALID_KEY,
+            "v1 signing key belongs to a different provider context");
         return 0;
+    }
     if (!ed301v1_signature_apply_params(signature, params)) {
         return 0;
     }
@@ -1178,30 +1177,21 @@ static int ed301v1_signature_verify_init(
             || signature->inner == NULL)
         return 0;
 
-    /* Same NULL-key reinitialization contract as the signing path. */
     if (key == NULL) {
-        /* Match Ed448: each initialization starts from the empty context. */
-        ed301v1_signature_clear_context(signature);
-        if (!ed301v1_signature_apply_params(signature, params)) {
-            ed301v1_signature_invalidate(signature);
-            return 0;
-        }
-        if (signature->provider->rust->signature_verify_init(
-                signature->inner, NULL) != 1) {
-            /* A failed FFI call may have left the retained operation live. */
-            ed301v1_signature_invalidate(signature);
-            ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
-                "v1 verification reinitialization has no bound key");
-            return 0;
-        }
-        return 1;
+        ed301v1_signature_invalidate(signature);
+        ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
+            "v1 verification initialization requires an explicit key");
+        return 0;
     }
 
     /* Match Ed448: clear both the prior key operation and native context. */
     ed301v1_signature_invalidate(signature);
     if (signature->provider != key->provider
-            || key->inner == NULL)
+            || key->inner == NULL) {
+        ed301v1_raise(signature->provider, ED301V1_R_INVALID_KEY,
+            "v1 verification key belongs to a different provider context");
         return 0;
+    }
     if (!ed301v1_signature_apply_params(signature, params)) {
         return 0;
     }

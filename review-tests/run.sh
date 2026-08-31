@@ -132,16 +132,21 @@ if test -n "${OPENSSL_PREFIX:-}" || test -n "${ED301_MODULE_DIR:-}"; then
         else
             fail openssl-configured-header-support
         fi
-        if test -n "${ED301_PROVIDER_CONTEXT_HARNESS:-}"; then
-            test -x "$ED301_PROVIDER_CONTEXT_HARNESS" \
+        context_result=1
+        if test -n "${ED301_PROVIDER_CONTEXT_HARNESS:-}" \
+                && test -x "$ED301_PROVIDER_CONTEXT_HARNESS" \
                 && test ! -L "$ED301_PROVIDER_CONTEXT_HARNESS" \
-                && env ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
-                    OPENSSL_MODULES="$ED301_MODULE_DIR" \
-                    "$ED301_PROVIDER_CONTEXT_HARNESS"
-            context_result=$?
-        else
-            "$TEST_ROOT/run-provider-context-contract.sh" \
-                "$OPENSSL_PREFIX" "$ED301_MODULE_DIR"
+                && test -f "$ED301_MODULE_DIR/ed301_eddsa_v1.so" \
+                && test ! -L "$ED301_MODULE_DIR/ed301_eddsa_v1.so"; then
+            printf 'provider_context_inputs prefix=%s harness_sha256=%s module_sha256=%s\n' \
+                "$OPENSSL_PREFIX" \
+                "$(/usr/bin/sha256sum "$ED301_PROVIDER_CONTEXT_HARNESS" \
+                    | /usr/bin/awk '{ print $1 }')" \
+                "$(/usr/bin/sha256sum "$ED301_MODULE_DIR/ed301_eddsa_v1.so" \
+                    | /usr/bin/awk '{ print $1 }')"
+            env ED301V1_EXPECT_OPENSSL_PREFIX="$OPENSSL_PREFIX" \
+                OPENSSL_MODULES="$ED301_MODULE_DIR" \
+                "$ED301_PROVIDER_CONTEXT_HARNESS"
             context_result=$?
         fi
         if test "$context_result" -eq 0; then

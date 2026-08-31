@@ -166,5 +166,21 @@ if [ -e "$startup_sentinel" ]; then
     exit 1
 fi
 
-printf 'rustc_profile_guard_regressions=PASS profile_cases=11 env_cases=%s launcher_cases=1\n' \
+rm -f "$startup_sentinel"
+/usr/bin/env BASH_ENV="$startup_hook" ENV="$startup_hook" \
+    /bin/sh "$LAUNCHER" archive "$manifest_digest" \
+    environment-check >/dev/null
+if [ -e "$startup_sentinel" ]; then
+    echo "sh-invoked launcher propagated inherited shell startup code" >&2
+    exit 1
+fi
+
+if "$LAUNCHER" archive "$manifest_digest" review-tests \
+        /tmp/unverified-prefix /tmp/unverified-modules \
+        >"$TMP/review-tests-arguments.log" 2>&1; then
+    echo "launcher accepted unverified review-test inputs" >&2
+    exit 1
+fi
+
+printf 'rustc_profile_guard_regressions=PASS profile_cases=11 env_cases=%s launcher_cases=3\n' \
     "$env_case_count"

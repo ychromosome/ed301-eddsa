@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Rejected NULL-key signature reinitialization, preserved private material on
+  matching public-only import, and made KEYPAIR export/get-params return the
+  key components that are present.
+- Re-executed authoritative gates with a clean environment even when invoked
+  through `sh`; standalone review tests no longer accept unverified OpenSSL or
+  module paths.
 - Published the complete manifest-bound 2026-07-31 curve-selection archive,
   including original search scripts, all 355 worker results, certificates,
   independent verifiers and a curve-only reproduction path. The record

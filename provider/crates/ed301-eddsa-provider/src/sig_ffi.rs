@@ -116,8 +116,10 @@ struct PrivateKeyMaterial {
 
 impl Clone for PrivateKeyMaterial {
     fn clone(&self) -> Self {
+        let mut seed = SecretSeed([0_u8; SEED_BYTES]);
+        seed.0.copy_from_slice(&self.seed.0);
         Self {
-            seed: SecretSeed(self.seed.0),
+            seed,
             expanded: self.expanded.clone(),
         }
     }
@@ -406,6 +408,25 @@ pub(crate) unsafe extern "C" fn key_import(
 
         if raw_private.is_none() && raw_public.is_none() {
             return 0;
+        }
+
+        if raw_private.is_none() {
+            let Some(encoded) = raw_public else {
+                return 0;
+            };
+            let Ok(public) = VerifyingKey::from_bytes(&encoded) else {
+                return 0;
+            };
+            if key.private.as_ref().is_some_and(|private| {
+                !bytes_equal(private.expanded.verifying_key_bytes(), public.as_bytes())
+            }) {
+                return 0;
+            }
+            let Some(public) = Shared::try_new_at("key_import", public) else {
+                return 0;
+            };
+            key.public = Some(public);
+            return 1;
         }
 
         let private = match raw_private {
@@ -1101,6 +1122,14 @@ mod tests {
     }
 
     #[test]
+    fn provider_key_and_signature_state_remain_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<V1Key>();
+        assert_send_sync::<V1SignatureContext>();
+    }
+
+    #[test]
     fn read_bytes_rejects_oversized_length_without_dereference() {
         let byte = 0_u8;
         // SAFETY: The oversized length is rejected before any slice is
@@ -1155,6 +1184,60 @@ mod tests {
             assert_eq!(duplicate.private.is_some(), include_private != 0);
             assert_eq!(duplicate.public.is_some(), include_public != 0);
         }
+    }
+
+    #[test]
+    fn public_only_import_preserves_matching_private_material() {
+        let first = expanded_key(0x31);
+        let matching_public = *first.verifying_key_bytes();
+        let other_public = *expanded_key(0x32).verifying_key_bytes();
+        let mut key = V1Key {
+            public: Some(shared(first.verifying_key())),
+            private: Some(PrivateKeyMaterial {
+                seed: SecretSeed([0x31; SEED_BYTES]),
+                expanded: shared(first),
+            }),
+        };
+        let key_pointer = (&mut key as *mut V1Key).cast();
+
+        assert_eq!(
+            unsafe {
+                key_import(
+                    key_pointer,
+                    core::ptr::null(),
+                    0,
+                    matching_public.as_ptr(),
+                    matching_public.len(),
+                )
+            },
+            1
+        );
+        assert!(key.private.is_some());
+        assert!(bytes_equal(
+            key.public.as_ref().expect("matching public key").as_bytes(),
+            &matching_public,
+        ));
+
+        assert_eq!(
+            unsafe {
+                key_import(
+                    key_pointer,
+                    core::ptr::null(),
+                    0,
+                    other_public.as_ptr(),
+                    other_public.len(),
+                )
+            },
+            0
+        );
+        assert!(key.private.is_some());
+        assert!(bytes_equal(
+            key.public
+                .as_ref()
+                .expect("unchanged public key")
+                .as_bytes(),
+            &matching_public,
+        ));
     }
 
     #[test]

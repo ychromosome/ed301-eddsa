@@ -11,6 +11,7 @@ static int unit_verify_result;
 static unsigned int unit_verify_calls;
 static unsigned int unit_error_calls;
 static uint32_t unit_error_reason;
+static const char *unit_error_function;
 static unsigned int unit_signature_reset_calls;
 static unsigned int unit_sign_init_calls;
 static unsigned int unit_verify_init_calls;
@@ -118,7 +119,7 @@ static void unit_core_set_error_debug(
     (void)handle;
     (void)file;
     (void)line;
-    (void)function;
+    unit_error_function = function;
 }
 
 static void unit_core_vset_error(
@@ -197,13 +198,18 @@ static void unit_test_digest_reinit_contract(
     unit_verify_init_result = 1;
     unit_sign_key_bound = !verification;
     unit_verify_key_bound = verification;
-    ED301V1_CHECK(init(&signature, NULL, NULL, NULL) == 1
-            && unit_signature_reset_calls == 0
+    unit_error_reason = 0;
+    unit_error_function = NULL;
+    ED301V1_CHECK(init(&signature, NULL, NULL, NULL) == 0
+            && unit_signature_reset_calls == 1
             && (verification ? unit_verify_init_calls
-                             : unit_sign_init_calls) == 1
-            && (verification ? unit_verify_key_bound
-                             : unit_sign_key_bound) == 1,
-        "valid NULL-key %s reinit retains the matching operation",
+                             : unit_sign_init_calls) == 0
+            && unit_sign_key_bound == 0
+            && unit_verify_key_bound == 0
+            && unit_error_reason == ED301V1_R_INVALID_STATE
+            && unit_error_function != NULL
+            && strcmp(unit_error_function, "ed301v1_raise_at") != 0,
+        "NULL-key %s reinit is rejected and invalidates the operation",
         operation);
 
     unit_signature_reset_calls = 0;
@@ -231,27 +237,6 @@ static void unit_test_digest_reinit_contract(
             && unit_verify_key_bound == 0,
         "rejected params invalidate a bound NULL-key %s operation",
         operation);
-
-    /* Model a caught Rust panic: the callback returns failure unchanged. */
-    unit_signature_reset_calls = 0;
-    unit_sign_init_calls = 0;
-    unit_verify_init_calls = 0;
-    if (verification)
-        unit_verify_init_result = 0;
-    else
-        unit_sign_init_result = 0;
-    unit_sign_key_bound = !verification;
-    unit_verify_key_bound = verification;
-    ED301V1_CHECK(init(&signature, NULL, NULL, NULL) == 0
-            && unit_signature_reset_calls == 1
-            && (verification ? unit_verify_init_calls
-                             : unit_sign_init_calls) == 1
-            && unit_sign_key_bound == 0
-            && unit_verify_key_bound == 0,
-        "failed NULL-key %s callback resets the retained operation",
-        operation);
-    unit_sign_init_result = 1;
-    unit_verify_init_result = 1;
 
     unit_signature_reset_calls = 0;
     unit_sign_init_calls = 0;

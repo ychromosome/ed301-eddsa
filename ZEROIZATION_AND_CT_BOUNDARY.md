@@ -11,7 +11,8 @@ This is not a guarantee that every physical copy is erased. `Scalar`,
 `FieldElement` and `EdwardsPoint` use by-value arithmetic, and Rust or LLVM may
 create additional stack, register or ABI copies beyond the named owners. The
 candidate therefore makes no forensic stack-remanence or every-copy
-zeroization claim.
+zeroization claim. This exclusion includes point accumulators, table-selection
+temporaries and field encodings created during point normalization.
 
 The provider seed-import boundary constructs the fixed-size seed directly
 inside its non-`Copy`, zeroizing owner. It no longer creates a plain Rust

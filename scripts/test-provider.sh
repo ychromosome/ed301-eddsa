@@ -16,6 +16,14 @@ LANE_ROOT_ARG=$1
 LANE=$2
 LANE_EVIDENCE=$3
 
+case "$LANE" in
+    3.5.7|4.0.1) ;;
+    *)
+        printf 'unsupported OpenSSL lane: %s\n' "$LANE" >&2
+        exit 2
+        ;;
+esac
+
 sh "$ROOT/scripts/check-rust-build-environment.sh"
 sh "$ROOT/scripts/require-verified-snapshot.sh"
 verify_lane() {
@@ -82,8 +90,13 @@ provider_env() {
         CC=/usr/bin/gcc AR=/usr/bin/ar \
         ED301_HERMETIC_PROVIDER_BUILD=1 \
         OPENSSL_INCLUDE_DIR="$OPENSSL_PREFIX/include" \
-        OPENSSL_LIB_DIR="$OPENSSL_LIB" LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        OPENSSL_LIB_DIR="$OPENSSL_LIB" \
         "$@"
+}
+provider_runtime_env() {
+    local target=$1
+    shift
+    provider_env "$target" env LD_LIBRARY_PATH="$OPENSSL_LIB" "$@"
 }
 cargo_provider() {
     local target=$1
@@ -186,7 +199,7 @@ sha256sum --strict --quiet -c \
     "$BUILD/evidence/provider-unit-executables.seal"
 sh "$ROOT/scripts/require-verified-snapshot.sh"
 while IFS= read -r executable; do
-    provider_env "$QA_TARGET" "$executable"
+    provider_runtime_env "$QA_TARGET" "$executable"
 done <"$BUILD/evidence/provider-unit-executables.lst"
 sha256sum --strict --quiet -c \
     "$BUILD/evidence/provider-unit-executables.sha256"

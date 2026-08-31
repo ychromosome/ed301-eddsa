@@ -188,6 +188,14 @@ fn native_context_vectors_and_boundaries_match() {
             &context,
             &signature
         ));
+        let mut different_context = context.clone();
+        different_context[0] ^= 1;
+        assert!(!verify_with_context(
+            &public_key,
+            &message,
+            &different_context,
+            &signature
+        ));
         assert!(!verify(&public_key, &message, &signature));
     }
 
@@ -205,6 +213,31 @@ fn native_context_vectors_and_boundaries_match() {
         b"message",
         &[0x5a; 256],
         &signature
+    ));
+}
+
+#[test]
+fn verify_rejects_a_noncanonical_commitment_encoding() {
+    let positives = fixture();
+    let points = edges();
+    let case = &positives["cases"][0];
+    let point_cases = points["point_cases"].as_array().expect("point cases");
+    let mut signature = array::<76>(case["signature_hex"].as_str().expect("positive signature"));
+    let noncanonical = array::<38>(
+        by_id(point_cases, "y-equals-p")["encoding_hex"]
+            .as_str()
+            .expect("noncanonical point"),
+    );
+    signature[..38].copy_from_slice(&noncanonical);
+
+    assert!(!verify(
+        &array::<38>(
+            case["public_key_hex"]
+                .as_str()
+                .expect("positive public key"),
+        ),
+        &decode_hex(case["message_hex"].as_str().expect("positive message")),
+        &signature,
     ));
 }
 

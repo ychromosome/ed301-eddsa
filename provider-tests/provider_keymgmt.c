@@ -17,6 +17,20 @@ static unsigned char ascii_lower(unsigned char value)
         ? (unsigned char)(value + ('a' - 'A')) : value;
 }
 
+static int all_bytes_equal(
+    const unsigned char *bytes,
+    size_t length,
+    unsigned char value)
+{
+    size_t index;
+
+    for (index = 0; index < length; index++) {
+        if (bytes[index] != value)
+            return 0;
+    }
+    return 1;
+}
+
 static int contains_ascii_case_insensitive(
     const char *haystack,
     size_t haystack_length,
@@ -358,7 +372,11 @@ int main(void)
     {
         EVP_PKEY *pkey = ed301v1_key_from_public(
             libctx, base->public_key, ED301V1_PUB_BYTES);
+        OSSL_PARAM *keypair_export = NULL;
+        OSSL_PARAM query[3];
         unsigned char seed_out[38];
+        unsigned char queried_public[ED301V1_PUB_BYTES] = { 0 };
+        unsigned char queried_private[ED301V1_SEED_BYTES];
         size_t out_len = 0;
 
         ED301V1_CHECK(pkey != NULL, "public-only import");
@@ -368,6 +386,34 @@ int main(void)
                     sizeof(seed_out), &out_len) != 1,
             "public-only key has no private component");
         ERR_clear_error();
+
+        ED301V1_CHECK(pkey != NULL
+                && EVP_PKEY_todata(pkey, EVP_PKEY_KEYPAIR,
+                    &keypair_export) == 1
+                && exported_material_matches(keypair_export, 0, 1,
+                    base->seed, base->public_key),
+            "keypair export emits the available public component");
+        OSSL_PARAM_free(keypair_export);
+
+        memset(queried_private, 0xa5, sizeof(queried_private));
+        query[0] = OSSL_PARAM_construct_octet_string(
+            OSSL_PKEY_PARAM_PUB_KEY,
+            queried_public,
+            sizeof(queried_public));
+        query[1] = OSSL_PARAM_construct_octet_string(
+            OSSL_PKEY_PARAM_PRIV_KEY,
+            queried_private,
+            sizeof(queried_private));
+        query[2] = OSSL_PARAM_construct_end();
+        ED301V1_CHECK(pkey != NULL
+                && EVP_PKEY_get_params(pkey, query) == 1
+                && query[0].return_size == ED301V1_PUB_BYTES
+                && memcmp(queried_public, base->public_key,
+                    ED301V1_PUB_BYTES) == 0
+                && query[1].return_size == OSSL_PARAM_UNMODIFIED
+                && all_bytes_equal(queried_private,
+                    sizeof(queried_private), 0xa5),
+            "multi-parameter query skips an absent private component");
 
         /*
          * K5 -- Provider contract: the ordinary artifact has no text encoder,

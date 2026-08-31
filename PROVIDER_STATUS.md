@@ -25,6 +25,8 @@ PKI, TLS, collision and failpoint surfaces are separate test artifacts.
 Release evidence MUST come from a read-only source snapshot authenticated by
 `SOURCE_MANIFEST.sha256`. It MUST identify the manifest digest, compiler,
 OpenSSL lane, final provider digest and evidence-manifest digest.
+The repository CI uses a digest derived from its own checkout and therefore
+provides consistency evidence only.
 
 The required matrix is:
 
