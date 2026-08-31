@@ -31,3 +31,7 @@ Revalidate the fork whenever the Rust toolchain or upstream dependency changes:
 run the external-consumer tests, the four Valgrind taint cases and the final
 provider-binary code-generation gate. Apply upstream security fixes manually;
 this fork does not claim automatic update compatibility.
+
+No upstream PR covers this project-specific codegen patch as of 2026-08-31.
+`scripts/check-vendor-forks.py` binds the exact changed-file set to the
+preserved upstream and active checksum maps.

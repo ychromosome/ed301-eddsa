@@ -93,6 +93,17 @@ fn main() {
     reject_native_injection_environment();
     let include_dir = canonical_directory("OPENSSL_INCLUDE_DIR");
     let lib_dir = canonical_directory("OPENSSL_LIB_DIR");
+    let manifest_dir = canonical_directory("CARGO_MANIFEST_DIR");
+    let source_root = manifest_dir
+        .ancestors()
+        .nth(3)
+        .expect("provider manifest must remain below the source root");
+    let source_map = format!(
+        "-ffile-prefix-map={}=/usr/src/ed301-eddsa",
+        source_root
+            .to_str()
+            .expect("source root must remain valid UTF-8")
+    );
 
     let mut build = cc::Build::new();
     let failpoint = env::var_os("CARGO_FEATURE_TEST_FAILPOINT").is_some();
@@ -128,6 +139,7 @@ fn main() {
         .std("c11")
         .flag_if_supported("-fvisibility=hidden")
         .flag_if_supported("-fstack-protector-strong")
+        .flag(&source_map)
         .warnings(true)
         .warnings_into_errors(true)
         .compile("ed301_eddsa_v1_shim");

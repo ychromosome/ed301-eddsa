@@ -65,22 +65,22 @@ input to the provider gate:
 
 ```sh
 scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
-    build-openssl-provider-lane 3.5.7 /trusted/upstream /private/lane-root
+    build-openssl-provider-lane 3.5.8 /trusted/upstream /private/lane-root
 scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
-    test-provider /private/lane-root 3.5.7 \
+    test-provider /private/lane-root 3.5.8 \
     <trusted-evidence-manifest-sha256>
 ```
 
-Repeat with `4.0.1` for OpenSSL 4. The ordinary module exposes only `KEYMGMT`
+Repeat with `4.0.2` for OpenSSL 4. The ordinary module exposes only `KEYMGMT`
 and `SIGNATURE`: no OID alias, encoder, decoder, PKI registration, or TLS
 capability. PKI encoders and the private-use TLS proof are separately named,
 disabled-by-default test artifacts whose registry setup belongs to the host
 harness.
 
-These releases are also the provider's source/API and runtime minima:
-OpenSSL 3.5.7 for ABI major 3 and OpenSSL 4.0.1 for ABI major 4. Later releases
-in the same major are accepted; earlier releases are not supported merely
-because they share that major.
+The compatibility minima remain OpenSSL 3.5.7 for ABI major 3 and OpenSSL
+4.0.1 for ABI major 4. The authoritative matrix uses the current security
+patch releases. Later releases in the same major are accepted; earlier
+releases are not supported merely because they share that major.
 
 The provider matrix requires Rust with Cargo, rustfmt, Clippy and rustdoc,
 plus GCC, Clang/scan-build, binutils, make, Perl, Python 3, pkg-config,

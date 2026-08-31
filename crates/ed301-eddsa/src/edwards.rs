@@ -328,7 +328,7 @@ impl EdwardsPoint {
     /// Multiply by the exact pruned 301-bit secret encoding.
     ///
     /// Unlike [`Self::scalar_mul`], this path intentionally does not require
-    /// the input to be canonical modulo `L`; the draft's pruned secret lies in
+    /// the input to be canonical modulo `L`; the profile's pruned secret lies in
     /// `2^300 <= s < 2^301` and is consumed in exactly 301 rounds.
     #[cfg(test)]
     pub(crate) fn scalar_mul_pruned(self, scalar: &[u8; FIELD_BYTES]) -> Self {

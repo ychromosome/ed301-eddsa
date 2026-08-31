@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Moved authoritative provider evidence to patched OpenSSL 3.5.8 and 4.0.2;
+  compatibility minima remain 3.5.7 and 4.0.1.
 - Rejected NULL-key signature reinitialization, preserved private material on
   matching public-only import, and made KEYPAIR export/get-params return the
   key components that are present.

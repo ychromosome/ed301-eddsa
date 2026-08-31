@@ -11,7 +11,7 @@ sh "$ROOT/scripts/check-rust-build-environment.sh" --environment-only
 sh "$ROOT/scripts/require-verified-snapshot.sh"
 
 if [ "$#" -ne 4 ]; then
-    echo "usage: $0 <source-lane> <3.5.7|4.0.1> <evidence-sha256> <private-copy>" >&2
+    echo "usage: $0 <source-lane> <3.5.8|4.0.2> <evidence-sha256> <private-copy>" >&2
     exit 2
 fi
 
@@ -20,8 +20,8 @@ VERSION=$2
 EVIDENCE=$3
 DEST_ARG=$4
 case "$VERSION" in
-    3.5.7) SHLIB_MAJOR=3 ;;
-    4.0.1) SHLIB_MAJOR=4 ;;
+    3.5.8) SHLIB_MAJOR=3 ;;
+    4.0.2) SHLIB_MAJOR=4 ;;
     *) echo "unsupported OpenSSL lane: $VERSION" >&2; exit 2 ;;
 esac
 if printf '%s\n' "$SOURCE_ARG" "$DEST_ARG" | grep -q '[[:cntrl:]]'; then

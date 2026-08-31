@@ -34,6 +34,7 @@ cargo_clean() {
 }
 
 (cd "$ROOT/inputs/round4" && sha256sum --strict --quiet -c SHA256SUMS)
+/usr/bin/python3 -I -B "$ROOT/scripts/check-vendor-forks.py"
 # This regression test materializes many intentionally corrupted snapshots.
 # Keep that copy-heavy work off small tmpfs mounts.
 TMPDIR=/var/tmp sh "$ROOT/scripts/test-source-tree-gate.sh"

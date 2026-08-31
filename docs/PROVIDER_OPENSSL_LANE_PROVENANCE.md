@@ -7,21 +7,18 @@ or release operation. The only accepted lanes are:
 
 | lane | release name | public source URL | shared-library major |
 |---|---|---|---|
-| 3.5.7 | openssl-3.5.7 | https://www.openssl.org/source/openssl-3.5.7.tar.gz | 3 |
-| 4.0.1 | openssl-4.0.1 | https://www.openssl.org/source/openssl-4.0.1.tar.gz | 4 |
+| 3.5.8 | openssl-3.5.8 | https://www.openssl.org/source/openssl-3.5.8.tar.gz | 3 |
+| 4.0.2 | openssl-4.0.2 | https://www.openssl.org/source/openssl-4.0.2.tar.gz | 4 |
 
-These are also the minimum source/API and runtime releases claimed for their
-respective ABI majors. The provider uses message-signature dispatches absent
-from early OpenSSL 3 releases. It accepts later compatible releases within
-major 3 or 4, but rejects runtimes below 3.5.7 or 4.0.1 respectively. Each
-minimum is covered by a real build, provider load, sign and verify lane;
-parsing a synthetic version string is not compatibility evidence.
+These are the current security-patch test releases. The compatibility minima
+remain 3.5.7 and 4.0.1. The provider uses message-signature dispatches absent
+from early OpenSSL 3 releases and rejects runtimes below those minima.
 
 The builder also pins the full SHA-256 digest of each accepted release
-tarball: `a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8`
-for 3.5.7 and
-`2db3f3a0d6ea4b59e1f094ace2c8cd536dffb87cdc39084c5afa1e6f7f37dd09`
-for 4.0.1. Both the sidecar value and the tarball bytes must match the
+tarball: `a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2`
+for 3.5.8 and
+`736b467530f916737b7031310ccb21d8218c6229e61e8e160cd1d3458cd543a8`
+for 4.0.2. Both the sidecar value and the tarball bytes must match the
 corresponding pinned value.
 
 The URL is provenance metadata only. The helper does not fetch it; the
@@ -133,5 +130,10 @@ as evidence and reported as targeted checks. They do not instrument the
 OpenSSL shared libraries, every harness, every provider entry path, or the
 whole matrix, and they do not establish a general memory-safety claim.
 
-No lane result should be promoted beyond public OpenSSL 3.5.7/4.0.1 tarball,
+The ordinary provider is built twice from a manifest-derived source root into
+separate clean targets. Rust and C source paths are remapped to
+`/usr/src/ed301-eddsa`; both module bytes must match and the module may not
+contain its build source path.
+
+No lane result should be promoted beyond public OpenSSL 3.5.8/4.0.2 tarball,
 build, and runtime identity verified under this evidence contract.

@@ -2,9 +2,8 @@
 
 The Rust crate uses exactly pinned third-party sources. Registry crates retain
 their license, Cargo metadata and registry checksum files. The source-bound
-`crypto-bigint` fork retains the upstream checksum separately, preserves its
-VCS metadata and documents local changes in
-`vendor/crypto-bigint/ED301_PATCHES.md`.
+`crypto-bigint` and `cpufeatures` forks preserve upstream hashes and document
+their local changes under their vendor directories.
 
 The direct dependencies declare:
 

@@ -1,7 +1,7 @@
 /*
  * OpenSSL-style lifecycle and concurrency contracts for the ordinary
  * Ed301-EdDSA provider.  The cited OpenSSL test files exist in both normative
- * source lanes (3.5.7 and 4.0.1); this harness translates their contracts to
+ * source lanes (3.5.8 and 4.0.2); this harness translates their contracts to
  * Ed301's 38-byte keys, 76-byte signatures and pure one-shot message API.
  */
 

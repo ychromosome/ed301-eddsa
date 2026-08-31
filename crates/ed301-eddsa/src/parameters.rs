@@ -30,7 +30,7 @@ pub const PUBLIC_KEY_BYTES: usize = FIELD_BYTES;
 /// Required signature length, `ENC(R) || ENC_SCALAR(S)`.
 pub const SIGNATURE_BYTES: usize = 2 * FIELD_BYTES;
 
-/// Exact SHAKE256 output length used by the draft.
+/// Exact SHAKE256 output length used by Ed301-EdDSA-v1.
 pub const HASH_BYTES: usize = 2 * FIELD_BYTES;
 
 /// Cofactor used by the sole verification equation.

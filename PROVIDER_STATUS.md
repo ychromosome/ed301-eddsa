@@ -16,6 +16,7 @@ This branch contains an experimental, signature-only OpenSSL provider for
   no `TLS-SIGALG` capability.
 - OpenSSL ABI major 3 requires source and runtime version 3.5.7 or newer.
   ABI major 4 requires 4.0.1 or newer.
+- Authoritative provider evidence uses current patch releases 3.5.8 and 4.0.2.
 
 The ordinary module does not mutate the host OID registry and has no decoder.
 PKI, TLS, collision and failpoint surfaces are separate test artifacts.
@@ -32,8 +33,9 @@ The required matrix is:
 
 - `scripts/check.sh`;
 - `review-tests/run.sh`;
-- provider matrices for OpenSSL 3.5.7 and 4.0.1;
+- provider matrices for OpenSSL 3.5.8 and 4.0.2;
 - final-DSO code-generation checks in both lanes;
+- byte-identical provider rebuilds from a manifest-derived source root;
 - the EVP secret-taint matrix;
 - ASan, UBSan, static analysis and Valgrind paths in `scripts/test-provider.sh`.
 
@@ -52,7 +54,11 @@ digests do.
   strict 150-bit claim.
 - Secret owners are cleared on normal return and panic unwinding. Compiler
   copies and arithmetic temporaries have no forensic erasure guarantee.
-- `crypto-bigint 0.7.5` is a project-maintained security fork; its local patch
-  set is documented in `vendor/crypto-bigint/ED301_PATCHES.md`.
-- AArch64 codegen, a fresh full-repository deep scan and an independent
-  cryptography/FFI/side-channel audit remain open.
+- `crypto-bigint 0.7.5` and `cpufeatures 0.3.0` are project-maintained
+  security forks. Their local changes and update gates are documented in
+  `vendor/crypto-bigint/ED301_PATCHES.md` and
+  `vendor/cpufeatures/ED301_PATCHES.md`.
+- Native AArch64 provider/DSO codegen, a fresh full-repository deep scan and
+  an independent cryptography/FFI/side-channel audit remain open.
+- Required checks, branch protection and signed release tags remain external
+  release gates; this branch does not enforce them by itself.

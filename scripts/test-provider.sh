@@ -6,7 +6,7 @@ export PATH LC_ALL=C
 umask 077
 
 if (( $# != 3 )); then
-    printf 'usage: %s <sealed-lane-root> <3.5.7|4.0.1> <lane-evidence-sha256>\n' \
+    printf 'usage: %s <sealed-lane-root> <3.5.8|4.0.2> <lane-evidence-sha256>\n' \
         "$0" >&2
     exit 2
 fi
@@ -17,7 +17,7 @@ LANE=$2
 LANE_EVIDENCE=$3
 
 case "$LANE" in
-    3.5.7|4.0.1) ;;
+    3.5.8|4.0.2) ;;
     *)
         printf 'unsupported OpenSSL lane: %s\n' "$LANE" >&2
         exit 2
@@ -55,8 +55,13 @@ mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$BUILD/bin" \
 
 LOG=$BUILD/evidence/run.log
 STATUS=$BUILD/evidence/status.txt
+CANONICAL_SOURCE=
 finish() {
     rc=$?
+    if [[ -n "$CANONICAL_SOURCE" && -d "$CANONICAL_SOURCE" ]]; then
+        chmod -R u+w "$CANONICAL_SOURCE" 2>/dev/null || true
+        rm -rf -- "$CANONICAL_SOURCE"
+    fi
     if (( rc == 0 )); then
         printf 'PASS provider lane %s result=%s\n' "$LANE" "$BUILD" \
             | tee "$STATUS"
@@ -206,12 +211,43 @@ sha256sum --strict --quiet -c \
 sha256sum --strict --quiet -c \
     "$BUILD/evidence/provider-unit-executables.seal"
 
+CANONICAL_SOURCE=/tmp/ed301-provider-source-${LANE}-${ED301_EXPECTED_SOURCE_MANIFEST_SHA256}
+CANONICAL_CARGO_HOME=$BUILD/canonical-cargo-home
+test ! -e "$CANONICAL_SOURCE" && test ! -L "$CANONICAL_SOURCE" || {
+    echo "deterministic provider source root already exists: $CANONICAL_SOURCE" >&2
+    exit 1
+}
+mkdir -m 700 "$CANONICAL_SOURCE" "$CANONICAL_CARGO_HOME"
+mkdir -m 700 "$CANONICAL_SOURCE/scripts"
+cp -a -- "$ROOT/Cargo.toml" "$ROOT/Cargo.lock" "$CANONICAL_SOURCE/"
+cp -a -- "$ROOT/crates" "$ROOT/provider" "$ROOT/secret-taint" \
+    "$ROOT/vendor" "$CANONICAL_SOURCE/"
+cp -a -- "$ROOT/scripts/rustc-profile-guard.sh" \
+    "$CANONICAL_SOURCE/scripts/"
+(
+    cd "$ROOT"
+    find Cargo.toml Cargo.lock crates provider secret-taint vendor \
+        scripts/rustc-profile-guard.sh -type f -print0 \
+        | sort -z | xargs -0 sha256sum
+) >"$BUILD/evidence/provider-build-source.original.sha256"
+(
+    cd "$CANONICAL_SOURCE"
+    find Cargo.toml Cargo.lock crates provider secret-taint vendor \
+        scripts/rustc-profile-guard.sh -type f -print0 \
+        | sort -z | xargs -0 sha256sum
+) >"$BUILD/evidence/provider-build-source.copy.sha256"
+cmp "$BUILD/evidence/provider-build-source.original.sha256" \
+    "$BUILD/evidence/provider-build-source.copy.sha256"
+chmod -R a-w "$CANONICAL_SOURCE"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CANONICAL_CARGO_HOME/config.toml" "$CANONICAL_SOURCE/vendor"
+
 build_variant() {
     local variant=$1 feature=$2 module=$3
     local target=$BUILD/targets/$variant
     local markers=$BUILD/profile-markers/$variant
     local command=(/usr/bin/cargo build \
-        --manifest-path "$ROOT/provider/Cargo.toml" \
+        --manifest-path "$CANONICAL_SOURCE/provider/Cargo.toml" \
         --release --locked --offline)
     mkdir -m 700 "$target" "$markers"
     provider_env "$target" /usr/bin/rustc --version --verbose \
@@ -220,8 +256,9 @@ build_variant() {
         command+=(--features "$feature")
     fi
     (cd / && provider_env "$target" env \
+        CARGO_HOME="$CANONICAL_CARGO_HOME" \
         ED301_PROFILE_MARKER_DIR="$markers" \
-        RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+        RUSTC_WRAPPER="$CANONICAL_SOURCE/scripts/rustc-profile-guard.sh" \
         "${command[@]}")
     sh "$ROOT/scripts/check-profile-markers.sh" "$markers" \
         crypto_bigint=on ed301_eddsa=on ed301_eddsa_v1=on
@@ -231,6 +268,25 @@ build_variant() {
 }
 
 build_variant normal '' ed301_eddsa_v1.so
+build_variant reproducible '' ed301_eddsa_v1.rebuild.so
+cmp "$BUILD/modules/ed301_eddsa_v1.so" \
+    "$BUILD/modules/ed301_eddsa_v1.rebuild.so"
+if strings "$BUILD/modules/ed301_eddsa_v1.so" \
+        | grep -F "$ROOT" >/dev/null \
+        || strings "$BUILD/modules/ed301_eddsa_v1.rebuild.so" \
+        | grep -F "$CANONICAL_SOURCE" >/dev/null; then
+    echo "provider module contains an unremapped source path" >&2
+    exit 1
+fi
+mv "$BUILD/modules/ed301_eddsa_v1.rebuild.so" \
+    "$BUILD/evidence/provider-rebuild.so"
+(
+    cd "$BUILD"
+    sha256sum modules/ed301_eddsa_v1.so evidence/provider-rebuild.so
+) >"$BUILD/evidence/provider-reproducibility.sha256"
+printf 'provider_reproducibility=PASS builds=2 source_root=manifest-derived\n' \
+    >"$BUILD/evidence/provider-reproducibility.txt"
+
 sh "$ROOT/scripts/check-final-provider-codegen.sh" \
     "$BUILD/modules/ed301_eddsa_v1.so" \
     "$BUILD/profile-markers/normal/toolchain.txt" \
@@ -239,6 +295,9 @@ build_variant failpoint test-failpoint ed301_eddsa_v1_failpoint.so
 build_variant pki pki-experiment ed301_eddsa_v1_pki_test.so
 build_variant tls tls-experiment ed301_eddsa_v1_tls_test.so
 build_variant collider tls-collider ed301_eddsa_v1_tls_collider.so
+chmod -R u+w "$CANONICAL_SOURCE"
+rm -rf -- "$CANONICAL_SOURCE"
+CANONICAL_SOURCE=
 
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
@@ -353,8 +412,13 @@ done
 # Seal every generated executable or module before the first execution.
 (
     cd "$BUILD"
-    sha256sum cargo-home/config.toml
+    sha256sum cargo-home/config.toml canonical-cargo-home/config.toml
     sha256sum evidence/openssl-objects.txt
+    sha256sum evidence/provider-build-source.original.sha256 \
+        evidence/provider-build-source.copy.sha256 \
+        evidence/provider-rebuild.so \
+        evidence/provider-reproducibility.sha256 \
+        evidence/provider-reproducibility.txt
     sha256sum profile-markers/normal/toolchain.txt \
         profile-markers/secret-taint/toolchain.txt
     find modules modules-taint fresh-modules bin generated \

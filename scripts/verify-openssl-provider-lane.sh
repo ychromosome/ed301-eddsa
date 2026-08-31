@@ -9,7 +9,7 @@ sh "$SCRIPT_ROOT/scripts/check-rust-build-environment.sh" --environment-only
 sh "$SCRIPT_ROOT/scripts/require-verified-snapshot.sh"
 
 if [ "$#" -ne 3 ]; then
-    echo "usage: $0 <lane-root> <3.5.7|4.0.1> <evidence-manifest-sha256>" >&2
+    echo "usage: $0 <lane-root> <3.5.8|4.0.2> <evidence-manifest-sha256>" >&2
     exit 2
 fi
 
@@ -17,8 +17,8 @@ ROOT_ARG=$1
 VERSION=$2
 EXPECTED=$3
 case "$VERSION" in
-    3.5.7) EXPECTED_TAR=a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8 ;;
-    4.0.1) EXPECTED_TAR=2db3f3a0d6ea4b59e1f094ace2c8cd536dffb87cdc39084c5afa1e6f7f37dd09 ;;
+    3.5.8) EXPECTED_TAR=a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2 ;;
+    4.0.2) EXPECTED_TAR=736b467530f916737b7031310ccb21d8218c6229e61e8e160cd1d3458cd543a8 ;;
     *) echo "unsupported OpenSSL lane: $VERSION" >&2; exit 2 ;;
 esac
 if ! printf '%s\n' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then

@@ -17,17 +17,17 @@ if (( $# != 3 )); then
 fi
 VER=$1
 case "$VER" in
-  3.5.7)
+  3.5.8)
     SHLIB_MAJOR=3
-    RELEASE_NAME=openssl-3.5.7
-    PUBLIC_URL=https://www.openssl.org/source/openssl-3.5.7.tar.gz
-    EXPECTED_TAR_SHA256=a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
+    RELEASE_NAME=openssl-3.5.8
+    PUBLIC_URL=https://www.openssl.org/source/openssl-3.5.8.tar.gz
+    EXPECTED_TAR_SHA256=a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
     ;;
-  4.0.1)
+  4.0.2)
     SHLIB_MAJOR=4
-    RELEASE_NAME=openssl-4.0.1
-    PUBLIC_URL=https://www.openssl.org/source/openssl-4.0.1.tar.gz
-    EXPECTED_TAR_SHA256=2db3f3a0d6ea4b59e1f094ace2c8cd536dffb87cdc39084c5afa1e6f7f37dd09
+    RELEASE_NAME=openssl-4.0.2
+    PUBLIC_URL=https://www.openssl.org/source/openssl-4.0.2.tar.gz
+    EXPECTED_TAR_SHA256=736b467530f916737b7031310ccb21d8218c6229e61e8e160cd1d3458cd543a8
     ;;
   *) printf 'unsupported public OpenSSL lane: %s\n' "$VER" >&2; exit 2 ;;
 esac
@@ -326,14 +326,14 @@ extract_source() {
 verify_source_version() {
   local version_file=$SRC/VERSION.dat
   case "$VER" in
-    3.5.7)
+    3.5.8)
       grep -qx 'MAJOR=3' "$version_file" || return 1
       grep -qx 'MINOR=5' "$version_file" || return 1
-      grep -qx 'PATCH=7' "$version_file" || return 1 ;;
-    4.0.1)
+      grep -qx 'PATCH=8' "$version_file" || return 1 ;;
+    4.0.2)
       grep -qx 'MAJOR=4' "$version_file" || return 1
       grep -qx 'MINOR=0' "$version_file" || return 1
-      grep -qx 'PATCH=1' "$version_file" || return 1 ;;
+      grep -qx 'PATCH=2' "$version_file" || return 1 ;;
     *) return 1 ;;
   esac
   grep -qx "SHLIB_VERSION=$SHLIB_MAJOR" "$version_file" || return 1

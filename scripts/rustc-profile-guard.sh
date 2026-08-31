@@ -4,6 +4,9 @@ set -eu
 PATH=/usr/bin:/bin
 export PATH LC_ALL=C
 
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+REMAP_SOURCE=/usr/src/ed301-eddsa
+
 if [ "$#" -lt 1 ] || [ -z "${ED301_PROFILE_MARKER_DIR:-}" ]; then
     echo "rustc-profile-guard: compiler or marker directory missing" >&2
     exit 2
@@ -106,7 +109,7 @@ case "$crate_name" in
 esac
 
 if [ "$crate_name" = build_script_build ]; then
-    "$compiler_selected" "$@"
+    "$compiler_selected" "$@" --remap-path-prefix "$ROOT=$REMAP_SOURCE"
     record_success host crate="$crate_name"
     exit 0
 fi
@@ -137,6 +140,6 @@ fi
 
 "$compiler_selected" "$@" "-Coverflow-checks=$expected_overflow" \
     -Cpanic=unwind -Copt-level=3 -Ccodegen-units=1 \
-    -Cdebug-assertions=off
+    -Cdebug-assertions=off --remap-path-prefix "$ROOT=$REMAP_SOURCE"
 record_success target crate="$crate_name" overflow="$expected_overflow" \
     panic=unwind opt=3 cgu=1 dbgassert=off enforced=yes

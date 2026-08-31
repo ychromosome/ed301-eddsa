@@ -18,7 +18,7 @@
  * and carry application data in both directions.  Any other failure is a test
  * failure; an arbitrary error is never promoted to PASS.
  *
- * The public OpenSSL 3.5.7 and 4.0.1 sources do not specify a duplicate
+ * The public OpenSSL 3.5.8 and 4.0.2 sources do not specify a duplicate
  * provider TLS-SIGALG policy.  The test therefore accepts only the two
  * observable, safe outcomes above and compares the complete result line from
  * both fresh-process orders.  Both fixtures are full, separately named

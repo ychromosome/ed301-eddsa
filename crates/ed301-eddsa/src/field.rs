@@ -75,7 +75,6 @@ impl FieldElement {
     }
 
     /// Construct a field element from a small canonical integer.
-    #[allow(dead_code, reason = "used by the forthcoming Edwards implementation")]
     pub(crate) const fn from_u64(value: u64) -> Self {
         Self(MontgomeryFieldElement::new(&U320::from_u64(value)))
     }
@@ -109,7 +108,6 @@ impl FieldElement {
     }
 
     /// Negate a field element.
-    #[allow(dead_code, reason = "used by the forthcoming Edwards implementation")]
     pub(crate) const fn neg(self) -> Self {
         Self(self.0.neg())
     }
