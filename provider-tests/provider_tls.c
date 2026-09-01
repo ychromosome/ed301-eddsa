@@ -29,6 +29,8 @@
  * hashes of raw transcript prefixes, TBS and signatures are logged.
  */
 
+#include <openssl/encoder.h>
+#include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/sha.h>
 #include <openssl/x509.h>
@@ -52,6 +54,29 @@
 
 #define SERVER_NAME "server.v1.test.example"
 #define CLIENT_NAME "client.v1.test.example"
+
+static EVP_PKEY *reload_private_key_through_pem(EVP_PKEY *source)
+{
+    OSSL_ENCODER_CTX *encoder = source == NULL ? NULL
+        : OSSL_ENCODER_CTX_new_for_pkey(source, EVP_PKEY_KEYPAIR, "PEM",
+            "PrivateKeyInfo", ED301V1_PKI_PROP);
+    unsigned char *pem = NULL;
+    size_t pem_length = 0;
+    BIO *bio = NULL;
+    EVP_PKEY *loaded = NULL;
+
+    if (encoder != NULL
+            && OSSL_ENCODER_to_data(encoder, &pem, &pem_length) == 1
+            && pem != NULL && pem_length <= INT_MAX)
+        bio = BIO_new_mem_buf(pem, (int)pem_length);
+    if (bio != NULL)
+        loaded = PEM_read_bio_PrivateKey_ex(
+            bio, NULL, NULL, NULL, NULL, NULL);
+    BIO_free(bio);
+    OPENSSL_clear_free(pem, pem_length);
+    OSSL_ENCODER_CTX_free(encoder);
+    return loaded;
+}
 
 typedef struct cv_event_st {
     char endpoint;        /* 'S' or 'C': which SSL_CTX observed it */
@@ -881,9 +906,12 @@ int main(void)
     OSSL_PROVIDER *deflt = OSSL_PROVIDER_load(NULL, "default");
     OSSL_PROVIDER *v1 =
         ed301v1_load_named(NULL, NULL, ED301V1_TLS_PROVIDER);
+    OSSL_PROVIDER *pki =
+        ed301v1_load_named(NULL, NULL, ED301V1_PKI_PROVIDER);
     EVP_PKEY *ca_key = ed301v1_keygen(NULL);
     EVP_PKEY *ca2_key = ed301v1_keygen(NULL);
-    EVP_PKEY *server_key = ed301v1_keygen(NULL);
+    EVP_PKEY *server_source_key = ed301v1_keygen(NULL);
+    EVP_PKEY *server_key = reload_private_key_through_pem(server_source_key);
     EVP_PKEY *client_key = ed301v1_keygen(NULL);
     X509 *ca_cert = NULL;
     X509 *ca2_cert = NULL;
@@ -892,9 +920,19 @@ int main(void)
     TLS_OPTIONS options;
     TLS_OUTCOME outcome;
 
-    ED301V1_CHECK(deflt != NULL && v1 != NULL, "providers loaded");
+    ED301V1_CHECK(deflt != NULL && v1 != NULL && pki != NULL,
+        "TLS and PKI providers loaded");
     ED301V1_CHECK(ca_key != NULL && ca2_key != NULL && server_key != NULL
-            && client_key != NULL, "TLS keys");
+            && client_key != NULL && server_source_key != NULL
+            && EVP_PKEY_eq(server_source_key, server_key) == 1
+            && strcmp(OSSL_PROVIDER_get0_name(
+                EVP_PKEY_get0_provider(server_key)),
+                ED301V1_TLS_PROVIDER) == 0,
+        "TLS keys; server private key reloaded through generic PEM decoding");
+    EVP_PKEY_free(server_source_key);
+    server_source_key = NULL;
+    OSSL_PROVIDER_unload(pki);
+    pki = NULL;
     if (ca_key == NULL || ca2_key == NULL || server_key == NULL
             || client_key == NULL)
         return ed301v1_summary("provider_tls");
@@ -915,6 +953,19 @@ int main(void)
         "leaf certificates (CA:FALSE, digitalSignature, EKU, SAN)");
     if (server_cert == NULL || client_cert == NULL)
         return ed301v1_summary("provider_tls");
+
+    {
+        SSL_CTX *mismatch = SSL_CTX_new(TLS_server_method());
+        int accepted = mismatch != NULL
+            && SSL_CTX_use_certificate(mismatch, server_cert) == 1
+            && SSL_CTX_use_PrivateKey(mismatch, ca2_key) == 1
+            && SSL_CTX_check_private_key(mismatch) == 1;
+
+        ED301V1_CHECK(!accepted,
+            "SSL_CTX rejects a certificate/private-key mismatch");
+        SSL_CTX_free(mismatch);
+        ERR_clear_error();
+    }
 
     /* Server authentication over X25519 with hostname validation. */
     memset(&options, 0, sizeof(options));
@@ -1128,7 +1179,11 @@ int main(void)
             if (corrupt != NULL) {
                 X509_get0_signature(&signature, &algorithm, corrupt);
                 if (signature != NULL
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+                        && ASN1_STRING_get_length(signature) > 0)
+#else
                         && ASN1_STRING_length(signature) > 0)
+#endif
                     ((unsigned char *)ASN1_STRING_get0_data(
                         signature))[8] ^= 1;
             }
@@ -1198,10 +1253,12 @@ int main(void)
     X509_free(ca2_cert);
     EVP_PKEY_free(ca_key);
     EVP_PKEY_free(ca2_key);
+    EVP_PKEY_free(server_source_key);
     EVP_PKEY_free(server_key);
     EVP_PKEY_free(client_key);
     if (v1 != NULL)
         OSSL_PROVIDER_unload(v1);
+    OSSL_PROVIDER_unload(pki);
     OSSL_PROVIDER_unload(deflt);
     return ed301v1_summary("provider_tls");
 }

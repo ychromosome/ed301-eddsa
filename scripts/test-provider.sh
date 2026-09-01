@@ -339,8 +339,15 @@ strings "$BUILD/modules/ed301_eddsa_v1_failpoint.so" \
     | grep -F ED301_EDDSA_V1_PANIC_FAILPOINT >/dev/null
 strings "$BUILD/modules/ed301_eddsa_v1_tls_test.so" \
     | grep -F TLS-SIGALG >/dev/null
+strings "$BUILD/modules/ed301_eddsa_v1_tls_test.so" \
+    | grep -F 'input=der,structure=PrivateKeyInfo' >/dev/null
 strings "$BUILD/modules/ed301_eddsa_v1_tls_collider.so" \
     | grep -F TLS-SIGALG >/dev/null
+if strings "$BUILD/modules/ed301_eddsa_v1_tls_collider.so" \
+        | grep -F 'input=der,structure=PrivateKeyInfo' >/dev/null; then
+    echo "TLS collider unexpectedly exposes the private decoder" >&2
+    exit 1
+fi
 strings "$BUILD/modules/ed301_eddsa_v1_pki_test.so" \
     | grep -F 'structure=PrivateKeyInfo' >/dev/null
 
@@ -520,10 +527,8 @@ test "$WRONG_RUNTIME_RC" -ne 0
 grep -E 'FATAL: runtime OpenSSL|FATAL: libcrypto resolved|error while loading shared libraries' \
     "$WRONG_RUNTIME_LOG" >/dev/null
 
-# CLI coverage is intentionally limited to discovery and key encoding.  The
-# ordinary and PKI artifacts expose no decoder; private-key imports use the
-# strict complete-buffer C boundary.  The TLS-only SPKI decoder is exercised
-# by the transactional decoder and wire-certificate harnesses above.
+# The CLI supplies a separate-process encode/load check.  val01_decoder_bio
+# and provider_tls cover generic PEM, ownership and SSL_CTX installation.
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
@@ -539,6 +544,26 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         -out "$BUILD/evidence/cli-generated-key.pem"
 grep -F 'BEGIN PRIVATE KEY' "$BUILD/evidence/cli-generated-key.pem" \
     >/dev/null
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key.pem" -check -noout
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key.pem" -outform DER \
+        -out "$BUILD/evidence/cli-generated-key.der"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -inform DER -in "$BUILD/evidence/cli-generated-key.der" \
+        -check -noout
 
 for harness in provider_signature provider_keymgmt provider_serialization \
         val01_decoder_bio provider_load provider_rand provider_lifecycle \

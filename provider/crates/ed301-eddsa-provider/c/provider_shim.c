@@ -116,6 +116,12 @@
 # define ED301V1_HAS_TEST_DECODER 0
 #endif
 
+#ifdef ED301V1_TLS_EXPERIMENT_ARTIFACT
+# define ED301V1_HAS_PRIVATE_KEY_DECODER 1
+#else
+# define ED301V1_HAS_PRIVATE_KEY_DECODER 0
+#endif
+
 static const char ED301V1_PROVIDER_NAME[] =
     "Ed301-EdDSA-v1 Experimental Provider (test-only)";
 static const char ED301V1_PROVIDER_VERSION[] = "0.0.1";
@@ -124,6 +130,8 @@ static const char ED301V1_PROVIDER_BUILDINFO[] =
     "private-use TLS test identifier); headers: " OPENSSL_VERSION_TEXT;
 static const char ED301V1_ALGORITHM_NAME[] = "Ed301-EdDSA-v1";
 static const char ED301V1_ALGORITHM_NAMES[] = "Ed301-EdDSA-v1";
+#define ED301V1_DECODER_ALGORITHM_NAMES \
+    "Ed301-EdDSA-v1:" ED301V1_OID_TEXT
 static const char ED301V1_PROPERTY[] =
     "provider=" ED301V1_PROVIDER_BASENAME;
 #if ED301V1_HAS_TEST_TLS_CAPABILITY
@@ -1867,21 +1875,22 @@ static int ed301v1_codec_decode(
         goto cleanup;
 
     /*
-     * This test-only decoder accepts only a fully buffered candidate.  In
-     * particular, a retryable/nonblocking source with fewer bytes available
-     * is declined before the first read.  That removes partial parser state
-     * entirely: a later call starts from the unchanged input once the whole
-     * fixed-size object is available.
+     * A positive short pending count identifies a retryable source whose
+     * bytes must remain outside the decoder's read buffer.  A regular file
+     * may report zero pending bytes despite being readable, so zero is not a
+     * short-input signal and proceeds to the bounded read below.
      */
     pending = codec->provider->bio_ctrl(
         input, BIO_CTRL_PENDING, 0, NULL);
-    if (pending < 0 || (size_t)pending < encoded_length)
+    if (pending < 0
+            || (pending > 0 && (size_t)pending < encoded_length))
         goto cleanup;
 
     /*
-     * Read one bounded candidate.  Unexpected short reads, outer-shape
-     * mismatches and foreign OIDs are all "not mine": cleanup rewinds the
-     * core BIO and permits another decoder to start at exactly the same byte.
+     * Read one bounded candidate.  A short or retryable source leaves no
+     * parser state: cleanup rewinds to the checkpoint.  Outer-shape
+     * mismatches and foreign OIDs are likewise "not mine" and are rewound so
+     * another decoder starts at exactly the same byte.
      */
     if (!ed301v1_codec_read_exact(
             codec, input, encoded, encoded_length))
@@ -2038,6 +2047,12 @@ ED301V1_DEFINE_DECODER_DISPATCH(
     ed301v1_spki_der_codec_new_context,
     ed301v1_public_codec_does_selection);
 #endif
+#if ED301V1_HAS_PRIVATE_KEY_DECODER
+ED301V1_DEFINE_DECODER_DISPATCH(
+    ED301V1_PKCS8_DER_DECODER_DISPATCH,
+    ed301v1_pkcs8_der_codec_new_context,
+    ed301v1_private_codec_does_selection);
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Dispatch and algorithm tables                                      */
@@ -2192,8 +2207,16 @@ static const OSSL_ALGORITHM ED301V1_ENCODER_ALGORITHMS[] = {
 
 #if ED301V1_HAS_TEST_DECODER
 static const OSSL_ALGORITHM ED301V1_DECODER_ALGORITHMS[] = {
+# if ED301V1_HAS_PRIVATE_KEY_DECODER
     {
-        ED301V1_ALGORITHM_NAMES,
+        ED301V1_DECODER_ALGORITHM_NAMES,
+        "provider=" ED301V1_PROVIDER_BASENAME ",input=der,structure=PrivateKeyInfo",
+        ED301V1_PKCS8_DER_DECODER_DISPATCH,
+        "Ed301-EdDSA-v1 transactional PKCS#8 DER decoder (TLS test-only)"
+    },
+# endif
+    {
+        ED301V1_DECODER_ALGORITHM_NAMES,
         "provider=" ED301V1_PROVIDER_BASENAME ",input=der,structure=SubjectPublicKeyInfo",
         ED301V1_SPKI_DER_DECODER_DISPATCH,
         "Ed301-EdDSA-v1 transactional SPKI DER decoder (TLS test-only)"

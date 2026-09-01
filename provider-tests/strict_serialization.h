@@ -3,10 +3,9 @@
 
 /*
  * Project-owned, complete-buffer import boundary for the test-only PKI
- * profile.  The PKI artifact deliberately exposes encoders but no
- * OSSL_DECODER, so private-key import never joins a generic decoder chain.
- * The separate TLS artifact has only the transactional SPKI decoder needed
- * for peer certificates on the wire.
+ * profile.  The PKI artifact exposes encoders but no OSSL_DECODER.  The TLS
+ * integration artifact reuses the same exact DER contract through its
+ * transactional PKCS#8 and SPKI decoders.
  */
 
 #include <openssl/pem.h>

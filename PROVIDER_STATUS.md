@@ -19,7 +19,16 @@ This branch contains an experimental, signature-only OpenSSL provider for
 - Authoritative provider evidence uses current patch releases 3.5.8 and 4.0.2.
 
 The ordinary module does not mutate the host OID registry and has no decoder.
-PKI, TLS, collision and failpoint surfaces are separate test artifacts.
+Test-artifact surfaces are separate:
+
+| Artifact | Additional surface |
+| --- | --- |
+| PKI | PKCS#8/SPKI DER and PEM encoders; no decoder |
+| TLS integration | PKI encoders, TLS-SIGALG, and strict DER decoders for PKCS#8 PrivateKeyInfo and SPKI |
+| TLS collider | PKI encoders, TLS-SIGALG collision fixture, and SPKI decoder; no private decoder |
+| Failpoint | injected provider-owned failure paths only |
+
+PEM and EncryptedPrivateKeyInfo input use OpenSSL's generic decoder chain.
 
 ## Required gates
 

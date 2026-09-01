@@ -17,6 +17,8 @@ Local comparison sources:
 - `test/verify_extra_test.c`
 - `providers/implementations/keymgmt/ecx_kmgmt.c`
 - `providers/implementations/signature/eddsa_sig.c`
+- `providers/implementations/encode_decode/decode_der2key.c`
+- OpenSSL's generic PEM-to-DER and EncryptedPrivateKeyInfo decoders
 
 ## Serialization and decoder matrix
 
@@ -30,11 +32,18 @@ Local comparison sources:
 | D6 | **Deliberate deviation:** v1 accepts only PKCS#8 `PrivateKeyInfo` version 0. RFC 5958 `OneAsymmetricKey` version 1, with or without embedded public key, is rejected. The seed uniquely derives the public key and KEYMGMT validates that relation, so accepting a second embedded copy adds mismatch policy without a profile requirement. Revisit only if a later Ed301 PKI profile normatively adopts OneAsymmetricKey. | Explicit version-1 and canonical embedded-public-key rejection tests. No mismatch-acceptance path exists. |
 | D7 | Ed301-EdDSA-v1 fixes the seed at 38 bytes. The nested private-key OCTET STRING accepts neither 37 nor 39 bytes. | Independently constructed DER objects carry 37- and 39-byte seeds in `provider_serialization.c`; both reject. |
 
-The ordinary and PKI artifacts deliberately expose no generic private-key
-decoder.  The private-use TLS test artifact exposes only the transactional
-SPKI DER decoder required for wire certificates.  Direct encrypted PKCS#8 is
-not a provider-encoder feature; generic application-side wrapping is outside
-this optional profile.
+The ordinary and PKI artifacts expose no decoder.  The private-use TLS
+integration artifact follows OpenSSL's Ed25519/Ed448 decoder shape: separate
+`PrivateKeyInfo` and `SubjectPublicKeyInfo` DER dispatches share one KEYMGMT
+and reference-transfer path.  Ed301 differs only by enforcing its fixed
+62-byte PKCS#8 and 58-byte SPKI encodings.  As in OpenSSL's ECX decoders, the
+decoder dispatch names include the canonical key OID so generic DER chaining
+can select them without an application-owned OID registry.  KEYMGMT and
+SIGNATURE retain their existing name set; historical and X301 OIDs are not
+aliases.  The collider remains SPKI-only.
+OpenSSL's generic chain removes PEM and standard EncryptedPrivateKeyInfo
+wrappers before the Ed301 DER decoder runs; the provider contains no PEM,
+Base64, password or encryption parser.
 
 ## PKI matrix
 
