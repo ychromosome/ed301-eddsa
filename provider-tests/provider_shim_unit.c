@@ -200,28 +200,28 @@ static void unit_test_digest_reinit_contract(
     unit_verify_key_bound = verification;
     unit_error_reason = 0;
     unit_error_function = NULL;
-    ED301V1_CHECK(init(&signature, NULL, NULL, NULL) == 0
-            && unit_signature_reset_calls == 1
+    ED301V1_CHECK(init(&signature, NULL, NULL, NULL) == 1
+            && unit_signature_reset_calls == 0
             && (verification ? unit_verify_init_calls
-                             : unit_sign_init_calls) == 0
-            && unit_sign_key_bound == 0
-            && unit_verify_key_bound == 0
-            && unit_error_reason == ED301V1_R_INVALID_STATE
-            && unit_error_function != NULL
-            && strcmp(unit_error_function, "ed301v1_raise_at") != 0,
-        "NULL-key %s reinit is rejected and invalidates the operation",
+                             : unit_sign_init_calls) == 1
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1
+            && unit_error_reason == 0,
+        "NULL-key %s reinit retains the matching operation",
         operation);
 
     unit_signature_reset_calls = 0;
     unit_sign_init_calls = 0;
     unit_verify_init_calls = 0;
+    unit_error_reason = 0;
     ED301V1_CHECK(init(&signature, "SHA256", NULL, NULL) == 0
-            && unit_signature_reset_calls == 1
+            && unit_signature_reset_calls == 0
             && (verification ? unit_verify_init_calls
                              : unit_sign_init_calls) == 0
-            && unit_sign_key_bound == 0
-            && unit_verify_key_bound == 0,
-        "rejected digest invalidates a bound NULL-key %s operation",
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1
+            && unit_error_reason == ED301V1_R_UNSUPPORTED_MODE,
+        "rejected digest preserves a bound NULL-key %s operation",
         operation);
 
     unit_signature_reset_calls = 0;
@@ -229,13 +229,15 @@ static void unit_test_digest_reinit_contract(
     unit_verify_init_calls = 0;
     unit_sign_key_bound = !verification;
     unit_verify_key_bound = verification;
+    unit_error_reason = 0;
     ED301V1_CHECK(init(&signature, NULL, NULL, bad_params) == 0
-            && unit_signature_reset_calls == 1
+            && unit_signature_reset_calls == 0
             && (verification ? unit_verify_init_calls
-                             : unit_sign_init_calls) == 0
-            && unit_sign_key_bound == 0
-            && unit_verify_key_bound == 0,
-        "rejected params invalidate a bound NULL-key %s operation",
+                             : unit_sign_init_calls) == 1
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1
+            && unit_error_reason == ED301V1_R_UNSUPPORTED_MODE,
+        "rejected params preserve a bound NULL-key %s operation",
         operation);
 
     unit_signature_reset_calls = 0;
@@ -243,13 +245,15 @@ static void unit_test_digest_reinit_contract(
     unit_verify_init_calls = 0;
     unit_sign_key_bound = !verification;
     unit_verify_key_bound = verification;
+    unit_error_reason = 0;
     ED301V1_CHECK(init(&signature, "SHA256", &key, NULL) == 0
-            && unit_signature_reset_calls == 1
+            && unit_signature_reset_calls == 0
             && (verification ? unit_verify_init_calls
                              : unit_sign_init_calls) == 0
-            && unit_sign_key_bound == 0
-            && unit_verify_key_bound == 0,
-        "rejected digest with a new key resets the old %s operation",
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1
+            && unit_error_reason == ED301V1_R_UNSUPPORTED_MODE,
+        "rejected digest with a new key preserves the old %s operation",
         operation);
 
     unit_signature_reset_calls = 0;
@@ -265,6 +269,26 @@ static void unit_test_digest_reinit_contract(
             && unit_verify_key_bound == 0,
         "rejected params with a new key reset the old %s operation",
         operation);
+
+    unit_signature_reset_calls = 0;
+    unit_sign_init_calls = 0;
+    unit_verify_init_calls = 0;
+    unit_sign_key_bound = !verification;
+    unit_verify_key_bound = verification;
+    if (verification)
+        unit_verify_init_result = 0;
+    else
+        unit_sign_init_result = 0;
+    ED301V1_CHECK(init(&signature, NULL, NULL, NULL) == 0
+            && unit_signature_reset_calls == 0
+            && (verification ? unit_verify_init_calls
+                             : unit_sign_init_calls) == 1
+            && (verification ? unit_verify_key_bound
+                             : unit_sign_key_bound) == 1,
+        "failed NULL-key %s callback preserves the bound operation",
+        operation);
+    unit_sign_init_result = 1;
+    unit_verify_init_result = 1;
 
     unit_signature_reset_calls = 0;
     unit_sign_init_calls = 0;

@@ -48,6 +48,46 @@ static int ed301v1_message_sign_init_rejects(OSSL_LIB_CTX *libctx, EVP_PKEY *pke
     return rejected;
 }
 
+static int builtin_eddsa_null_key_reinit_control(
+    OSSL_LIB_CTX *libctx,
+    const char *algorithm,
+    size_t expected_signature_length)
+{
+    static const unsigned char message[] = { 0x00, 0x7f, 0x80, 0xff };
+    EVP_PKEY *pkey = EVP_PKEY_Q_keygen(libctx, NULL, algorithm);
+    EVP_MD_CTX *sign_context = EVP_MD_CTX_new();
+    EVP_MD_CTX *verify_context = EVP_MD_CTX_new();
+    unsigned char signature[114];
+    size_t signature_length = sizeof(signature);
+    int ok = pkey != NULL && sign_context != NULL && verify_context != NULL
+        && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
+            NULL, pkey, NULL) == 1
+        && EVP_DigestSign(sign_context, signature, &signature_length,
+            message, sizeof(message)) == 1
+        && signature_length == expected_signature_length
+        && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
+            NULL, NULL, NULL) == 1;
+
+    signature_length = sizeof(signature);
+    ok = ok
+        && EVP_DigestSign(sign_context, signature, &signature_length,
+            message, sizeof(message)) == 1
+        && signature_length == expected_signature_length
+        && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL, libctx,
+            NULL, pkey, NULL) == 1
+        && EVP_DigestVerify(verify_context, signature, signature_length,
+            message, sizeof(message)) == 1
+        && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL, libctx,
+            NULL, NULL, NULL) == 1
+        && EVP_DigestVerify(verify_context, signature, signature_length,
+            message, sizeof(message)) == 1;
+
+    EVP_MD_CTX_free(verify_context);
+    EVP_MD_CTX_free(sign_context);
+    EVP_PKEY_free(pkey);
+    return ok;
+}
+
 int main(void)
 {
     ED301V1_REQUIRE_RUNTIME_BINDING();
@@ -309,8 +349,7 @@ int main(void)
         EVP_PKEY_free(pkey);
     }
 
-    /* Context bounds and type checks are fail-closed and invalidate any
-     * previously bound operation so an old domain can never be reused. */
+    /* Context parameter failures are atomic and preserve the prior domain. */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
         EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
@@ -333,9 +372,12 @@ int main(void)
                 && ed301v1_sign_message_init(libctx, pctx, NULL)
                 && EVP_PKEY_CTX_set_params(pctx, params) != 1
                 && EVP_PKEY_sign(pctx, output, &output_length,
-                    tc->message, tc->message_len) != 1
-                && memcmp(output, canary, sizeof(output)) == 0,
-            "256-byte context rejected and prior operation invalidated");
+                    tc->message, tc->message_len) == 1
+                && output_length == ED301V1_SIG_BYTES
+                && memcmp(output, tc->signature,
+                    ED301V1_SIG_BYTES) == 0
+                && memcmp(output, canary, sizeof(output)) != 0,
+            "256-byte context rejected without changing the prior operation");
         ERR_clear_error();
         EVP_PKEY_CTX_free(pctx);
 
@@ -386,7 +428,7 @@ int main(void)
         EVP_PKEY_free(pkey);
     }
 
-    /* Match Ed448: every DigestSign/DigestVerify init requires a key. */
+    /* NULL-key reinitialization follows the built-in EdDSA lifecycle. */
     {
         const POSITIVE_CASE *tc = &POSITIVE_CASES[0];
         EVP_PKEY *pkey = ed301v1_key_from_seed(libctx, tc->seed);
@@ -406,17 +448,18 @@ int main(void)
 
         ED301V1_CHECK(sign_context != NULL
                 && EVP_DigestSignInit_ex(sign_context, NULL, NULL, libctx,
-                    ED301V1_PROP, NULL, NULL) != 1,
-            "DigestSign rejects NULL-key reinitialization");
-        ERR_clear_error();
+                    ED301V1_PROP, NULL, NULL) == 1,
+            "DigestSign NULL-key reinit retains the Ed301 signing key");
 
         memset(signature, 0, sizeof(signature));
         signature_length = sizeof(signature);
         ED301V1_CHECK(sign_context != NULL
                 && EVP_DigestSign(sign_context, signature,
-                    &signature_length, tc->message, tc->message_len) != 1,
-            "rejected DigestSign reinit invalidates the prior operation");
-        ERR_clear_error();
+                    &signature_length, tc->message, tc->message_len) == 1
+                && signature_length == ED301V1_SIG_BYTES
+                && memcmp(signature, tc->signature,
+                    ED301V1_SIG_BYTES) == 0,
+            "DigestSign succeeds byte-exactly after NULL-key reinit");
 
         ED301V1_CHECK(pkey != NULL && verify_context != NULL
                 && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
@@ -426,18 +469,23 @@ int main(void)
             "DigestVerify initializes and verifies with an explicit key");
         ED301V1_CHECK(verify_context != NULL
                 && EVP_DigestVerifyInit_ex(verify_context, NULL, NULL,
-                    libctx, ED301V1_PROP, NULL, NULL) != 1,
-            "DigestVerify rejects NULL-key reinitialization");
-        ERR_clear_error();
+                    libctx, ED301V1_PROP, NULL, NULL) == 1,
+            "DigestVerify NULL-key reinit retains the Ed301 verification key");
         ED301V1_CHECK(verify_context != NULL
                 && EVP_DigestVerify(verify_context, tc->signature,
-                    ED301V1_SIG_BYTES, tc->message, tc->message_len) != 1,
-            "rejected DigestVerify reinit invalidates the prior operation");
-        ERR_clear_error();
+                    ED301V1_SIG_BYTES, tc->message, tc->message_len) == 1,
+            "DigestVerify succeeds after NULL-key reinit");
 
         EVP_MD_CTX_free(verify_context);
         EVP_MD_CTX_free(sign_context);
         EVP_PKEY_free(pkey);
+
+        ED301V1_CHECK(builtin_eddsa_null_key_reinit_control(
+                libctx, "ED25519", 64),
+            "built-in Ed25519 accepts the same NULL-key lifecycle");
+        ED301V1_CHECK(builtin_eddsa_null_key_reinit_control(
+                libctx, "ED448", 114),
+            "built-in Ed448 accepts the same NULL-key lifecycle");
     }
 
     /*
@@ -894,12 +942,13 @@ int main(void)
             EVP_MD_CTX_free(mctx);
         }
 
-        /* A rejected parameter update or reinitialization invalidates the
-         * previous Rust operation; no stale key may sign or verify. */
+        /* Parameter updates are atomic. A reinit that reaches a new key
+         * binding still clears the previous Rust operation first. */
         {
             OSSL_PARAM bad_params[2];
             static char digest_value[] = "SHA256";
             unsigned char stale_sig[76] = { 0 };
+            unsigned char expected_sig[76];
             unsigned char canary[76];
             size_t stale_sig_len;
             EVP_PKEY_CTX *state_ctx;
@@ -912,13 +961,18 @@ int main(void)
             memset(stale_sig, 0xa5, sizeof(stale_sig));
             memcpy(canary, stale_sig, sizeof(canary));
             stale_sig_len = sizeof(stale_sig);
-            ED301V1_CHECK(state_ctx != NULL
+            ED301V1_CHECK(ed301v1_digest_sign(libctx, pkey, probe,
+                    sizeof(probe) - 1, expected_sig)
+                    && state_ctx != NULL
                     && ed301v1_sign_message_init(libctx, state_ctx, NULL)
                     && EVP_PKEY_CTX_set_params(state_ctx, bad_params) != 1
                     && EVP_PKEY_sign(state_ctx, stale_sig, &stale_sig_len,
-                        probe, sizeof(probe) - 1) != 1
-                    && memcmp(stale_sig, canary, sizeof(stale_sig)) == 0,
-                "rejected digest set_params cannot alter signature output");
+                        probe, sizeof(probe) - 1) == 1
+                    && stale_sig_len == sizeof(stale_sig)
+                    && memcmp(stale_sig, expected_sig,
+                        sizeof(stale_sig)) == 0
+                    && memcmp(stale_sig, canary, sizeof(stale_sig)) != 0,
+                "rejected digest set_params preserves the signing operation");
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
@@ -944,8 +998,8 @@ int main(void)
                     && EVP_PKEY_verify(state_ctx,
                         POSITIVE_CASES[0].signature, ED301V1_SIG_BYTES,
                         POSITIVE_CASES[0].message,
-                        POSITIVE_CASES[0].message_len) != 1,
-                "rejected verify set_params invalidates prior operation");
+                        POSITIVE_CASES[0].message_len) == 1,
+                "rejected verify set_params preserves the prior operation");
             ERR_clear_error();
             EVP_PKEY_CTX_free(state_ctx);
 
@@ -974,8 +1028,8 @@ int main(void)
                         && EVP_DigestSign(digest_ctx, stale_sig,
                             &stale_sig_len, probe,
                             sizeof(probe) - 1) != 1,
-                    "rejected digest sign reinit invalidates prior "
-                    "operation");
+                    "EVP invalidates the operation after rejected digest "
+                    "sign reinit with a key");
                 ERR_clear_error();
                 EVP_MD_CTX_free(digest_ctx);
             }
@@ -992,8 +1046,8 @@ int main(void)
                             POSITIVE_CASES[0].signature, ED301V1_SIG_BYTES,
                             POSITIVE_CASES[0].message,
                             POSITIVE_CASES[0].message_len) != 1,
-                    "rejected digest verify reinit invalidates prior "
-                    "operation");
+                    "EVP invalidates the operation after rejected digest "
+                    "verify reinit with a key");
                 ERR_clear_error();
                 EVP_MD_CTX_free(digest_ctx);
             }

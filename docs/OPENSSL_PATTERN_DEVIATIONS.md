@@ -51,7 +51,7 @@ this optional profile.
 
 | ID | Decision and contract source | Enforcement |
 | --- | --- | --- |
-| S6 | Ed301-EdDSA-v1 adopts the Ed448 `dom4` structure with label `SigEd301-v1`, fixed `phflag=0`, one-octet context length and an opaque 0--255-byte context. The domain prefixes both nonce and challenge transcripts. Empty context is the default; oversize, duplicate and wrongly typed context parameters fail closed. DigestSign/DigestVerify initialization requires an explicit key so reinitialization cannot discard a bound context. | Independent context KATs plus empty, binary, 255/256-byte, altered-context, duplicate, reinit, duplication and get/set tests in the Rust core and `provider_signature.c`. |
+| S6 | Ed301-EdDSA-v1 adopts the Ed448 `dom4` structure with label `SigEd301-v1`, fixed `phflag=0`, one-octet context length and an opaque 0--255-byte context. The domain prefixes both nonce and challenge transcripts. Empty context is the default; oversize, duplicate and wrongly typed context parameters fail closed. DigestSign/DigestVerify reinitialization with a NULL key retains only a matching bound operation and applies new parameters atomically, as Ed25519 and Ed448 do. | Independent context KATs plus empty, binary, 255/256-byte, altered-context, duplicate, reinit, duplication and get/set tests in the Rust core and `provider_signature.c`. |
 | S7 | Ed301-EdDSA-v1 has one fixed pure instance. `OSSL_SIGNATURE_PARAM_INSTANCE`, prehash mode, external digest selection and streaming/prehashed signing are rejected rather than reinterpreted. The Ed448-style `phflag` is always zero; no Ed301ph variant exists. | Existing pure-only, instance, digest, prehash and streaming rejection tests. |
 
 ## KEYMGMT decisions reserved by the same register

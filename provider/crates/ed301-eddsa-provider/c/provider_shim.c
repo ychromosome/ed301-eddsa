@@ -1107,11 +1107,7 @@ static int ed301v1_signature_set_context_params(
             || signature->provider->rust == NULL
             || signature->inner == NULL)
         return 0;
-    if (!ed301v1_signature_apply_params(signature, params)) {
-        ed301v1_signature_invalidate(signature);
-        return 0;
-    }
-    return 1;
+    return ed301v1_signature_apply_params(signature, params);
 }
 
 static const OSSL_PARAM *ed301v1_signature_settable_context_params(
@@ -1137,10 +1133,13 @@ static int ed301v1_signature_sign_init(
         return 0;
 
     if (key == NULL) {
-        ed301v1_signature_invalidate(signature);
-        ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
-            "v1 signing initialization requires an explicit key");
-        return 0;
+        if (signature->provider->rust->signature_sign_init(
+                signature->inner, NULL) != 1) {
+            ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
+                "v1 signing reinitialization has no bound signing key");
+            return 0;
+        }
+        return ed301v1_signature_apply_params(signature, params);
     }
 
     /* Match Ed448: clear both the prior key operation and native context. */
@@ -1178,10 +1177,13 @@ static int ed301v1_signature_verify_init(
         return 0;
 
     if (key == NULL) {
-        ed301v1_signature_invalidate(signature);
-        ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
-            "v1 verification initialization requires an explicit key");
-        return 0;
+        if (signature->provider->rust->signature_verify_init(
+                signature->inner, NULL) != 1) {
+            ed301v1_raise(signature->provider, ED301V1_R_INVALID_STATE,
+                "v1 verification reinitialization has no bound key");
+            return 0;
+        }
+        return ed301v1_signature_apply_params(signature, params);
     }
 
     /* Match Ed448: clear both the prior key operation and native context. */
@@ -1299,7 +1301,6 @@ static int ed301v1_signature_digest_sign_init(
 
     if (!ed301v1_digest_name_is_pure(digest_name)) {
         if (signature != NULL) {
-            ed301v1_signature_invalidate(signature);
             ed301v1_raise(signature->provider, ED301V1_R_UNSUPPORTED_MODE,
                 "Ed301-EdDSA-v1 does not accept an external digest");
         }
@@ -1318,7 +1319,6 @@ static int ed301v1_signature_digest_verify_init(
 
     if (!ed301v1_digest_name_is_pure(digest_name)) {
         if (signature != NULL) {
-            ed301v1_signature_invalidate(signature);
             ed301v1_raise(signature->provider, ED301V1_R_UNSUPPORTED_MODE,
                 "Ed301-EdDSA-v1 does not accept an external digest");
         }

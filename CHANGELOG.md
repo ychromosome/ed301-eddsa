@@ -4,9 +4,8 @@
 
 - Moved authoritative provider evidence to patched OpenSSL 3.5.8 and 4.0.2;
   compatibility minima remain 3.5.7 and 4.0.1.
-- Rejected NULL-key signature reinitialization, preserved private material on
-  matching public-only import, and made KEYPAIR export/get-params return the
-  key components that are present.
+- Preserved private material on matching public-only import and made KEYPAIR
+  export/get-params return the key components that are present.
 - Re-executed authoritative gates with a clean environment even when invoked
   through `sh`; standalone review tests no longer accept unverified OpenSSL or
   module paths.
@@ -116,9 +115,9 @@
   boundary explicitly return `1` for acceptance, `0` only for signature
   invalidity, and a negative value for operational failures. Regression tests
   cover the Rust FFI, registered provider dispatch, both EVP lanes and the
-  built-in Ed25519 lifecycle control. A rejected NULL-key mode request leaves
-  the matching immutable operation untouched, while a callback failure or a
-  rejected reinitialization carrying a new key now clears the old operation
+  built-in Ed25519 and Ed448 lifecycle controls. Rejected parameter changes
+  leave the matching immutable operation untouched. A valid-mode
+  reinitialization that reaches a new invalid key clears the old operation
   fail-closed; direct sign and verify shim tests bind both sides of that rule.
 - Replaced the scalar reducer's five- and ten-word base-`2^64` Horner loops
   with one direct 304-bit Montgomery conversion for pruned scalars and a
