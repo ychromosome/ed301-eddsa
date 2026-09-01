@@ -1,0 +1,54 @@
+diff --git a/provider/crates/ed301-eddsa-provider/build.rs b/provider/crates/ed301-eddsa-provider/build.rs
+index f224bd6..ceedca7 100644
+--- a/provider/crates/ed301-eddsa-provider/build.rs
++++ b/provider/crates/ed301-eddsa-provider/build.rs
+@@ -26,7 +26,7 @@ fn canonical_directory(name: &str) -> PathBuf {
+     path
+ }
+ 
+-fn reject_native_injection_environment() {
++fn reject_native_injection_environment(allow_package_build_flags: bool) {
+     const EXACT: &[&str] = &[
+         "ARFLAGS",
+         "CFLAGS",
+@@ -50,6 +50,7 @@ fn reject_native_injection_environment() {
+         "TARGET_ARFLAGS",
+         "TARGET_CFLAGS",
+     ];
++    const PACKAGE_BUILD_FLAGS: &[&str] = &["CFLAGS", "CXXFLAGS", "LDFLAGS"];
+     for (name, _) in env::vars_os() {
+         let Some(name) = name.to_str() else {
+             panic!("non-UTF-8 environment variable name");
+@@ -66,8 +67,10 @@ fn reject_native_injection_environment() {
+         ]
+         .iter()
+         .any(|prefix| name.starts_with(prefix));
++        let forbidden_exact = EXACT.contains(&name)
++            && !(allow_package_build_flags && PACKAGE_BUILD_FLAGS.contains(&name));
+         assert!(
+-            !prefixed && !EXACT.contains(&name),
++            !prefixed && !forbidden_exact,
+             "native build override is forbidden: {name}"
+         );
+     }
+@@ -83,6 +86,7 @@ fn main() {
+         "OPENSSL_LIB_DIR",
+         "CC",
+         "AR",
++        "ED301_ALLOW_PACKAGE_BUILD_FLAGS",
+     ] {
+         println!("cargo:rerun-if-env-changed={name}");
+     }
+@@ -90,7 +94,11 @@ fn main() {
+     required_exact_environment("ED301_HERMETIC_PROVIDER_BUILD", "1");
+     required_exact_environment("CC", "/usr/bin/gcc");
+     required_exact_environment("AR", "/usr/bin/ar");
+-    reject_native_injection_environment();
++    let allow_package_build_flags = env::var_os("ED301_ALLOW_PACKAGE_BUILD_FLAGS").is_some();
++    if allow_package_build_flags {
++        required_exact_environment("ED301_ALLOW_PACKAGE_BUILD_FLAGS", "1");
++    }
++    reject_native_injection_environment(allow_package_build_flags);
+     let include_dir = canonical_directory("OPENSSL_INCLUDE_DIR");
+     let lib_dir = canonical_directory("OPENSSL_LIB_DIR");
+     let manifest_dir = canonical_directory("CARGO_MANIFEST_DIR");
