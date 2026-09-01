@@ -139,3 +139,14 @@ jobs:
             | awk '{ print $1 }')
           "$snapshot/scripts/run-authoritative-gate.sh" archive "$digest" \
             test-provider "$work/lane" "$version" "$lane_digest"
+
+  rpm-contract:
+    runs-on: ubuntu-24.04
+    container: fedora:43
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate Fedora packaging contract
+        run: |
+          dnf -qy install git rpm-build cargo-rpm-macros ShellCheck
+          shellcheck scripts/check-rpm-packaging.sh
+          scripts/check-rpm-packaging.sh
