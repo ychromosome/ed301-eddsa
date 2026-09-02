@@ -2,7 +2,7 @@
 
 Name:           ed301-four-component-review
 Version:        0.1.0
-Release:        0.6%{?dist}
+Release:        0.7%{?dist}
 Summary:        Four-component Ed301 laboratory review environment
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
@@ -10,8 +10,8 @@ BuildArch:      noarch
 
 Requires:       openssl = %{openssl_fork_evr}
 Requires:       openssl-libs%{?_isa} = %{openssl_fork_evr}
-Requires:       ed301-openssl-provider = 0.1.0-0.8.20260902git14b402f%{?dist}
-Requires:       ed301-openssl-provider-policy = 0.1.0-0.8.20260902git14b402f%{?dist}
+Requires:       ed301-openssl-provider = 0.1.0-0.9.20260902git96e6b86%{?dist}
+Requires:       ed301-openssl-provider-policy = 0.1.0-0.9.20260902git96e6b86%{?dist}
 Requires:       x301-openssl-provider = 0.1.0-0.8.20260902git73b30af%{?dist}
 Requires:       x301-openssl-provider-policy = 0.1.0-0.8.20260902git73b30af%{?dist}
 Requires:       g301-openssl-provider = 0.1.0-0.5.20260902git07da4c8%{?dist}
@@ -35,6 +35,9 @@ test "%{openssl_fork_evr}" = \
 %files
 
 %changelog
+* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.7
+- Require the fresh-process Ed301 X.509 fix
+
 * Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.6
 - Pin the repaired OpenSSL, Ed301, X301 and G301 package set
 

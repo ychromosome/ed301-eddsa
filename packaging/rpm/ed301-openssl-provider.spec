@@ -1,16 +1,16 @@
 %bcond_without tests
 
-%global commit 14b402f4a5b17996ef29687e1248842a4f092854
-%global shortcommit 14b402f
+%global commit 96e6b86a32faa87523cbb7827aeb048797bd8015
+%global shortcommit 96e6b86
 %global snapshot 20260902
-%global source_manifest_sha256 42e2a66958db825a9047f05205d0e2c9c587a21abfd82a13d99fe275133328ce
+%global source_manifest_sha256 491d1034442a44b21d43cf18dc4d89e90eec385a4ba8939e7a9e24200393fc7e
 %global openssl_fork_evr 1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           ed301-openssl-provider
 Version:        0.1.0
-Release:        0.8.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.9.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental Ed301-EdDSA provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
@@ -205,6 +205,9 @@ fi
 exit 0
 
 %changelog
+* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.9.20260902git96e6b86
+- Enable fresh-process Ed301 X.509 verification
+
 * Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.8.20260902git14b402f
 - Include PKCS#8 decoding and malformed-input ownership regressions
 - Pin the rebuilt OpenSSL review fork
