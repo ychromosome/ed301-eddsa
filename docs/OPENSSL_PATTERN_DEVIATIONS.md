@@ -36,11 +36,17 @@ The ordinary and PKI artifacts expose no decoder.  The private-use TLS
 integration artifact follows OpenSSL's Ed25519/Ed448 decoder shape: separate
 `PrivateKeyInfo` and `SubjectPublicKeyInfo` DER dispatches share one KEYMGMT
 and reference-transfer path.  Ed301 differs only by enforcing its fixed
-62-byte PKCS#8 and 58-byte SPKI encodings.  As in OpenSSL's ECX decoders, the
-decoder dispatch names include the canonical key OID so generic DER chaining
-can select them without an application-owned OID registry.  KEYMGMT and
-SIGNATURE retain their existing name set; historical and X301 OIDs are not
-aliases.  The collider remains SPKI-only.
+62-byte PKCS#8 and 58-byte SPKI encodings.  Its decoder, KEYMGMT and SIGNATURE
+dispatches include the canonical key OID.  At initialization this artifact
+uses OpenSSL's `core_obj_create` and `core_obj_add_sigid` upcalls to register
+the OID and its digestless SIGID mapping before generic X.509 use.  The
+ordinary, PKI, failpoint and collider artifacts retain their existing
+algorithm aliases and perform no such registration.
+
+The Core registration upcalls are non-transactional and treat existing
+registrations as success without proving that every name and SIGID role is
+identical.  This OpenSSL boundary is not replaced by provider-local registry,
+locking or collision logic.
 OpenSSL's generic chain removes PEM and standard EncryptedPrivateKeyInfo
 wrappers before the Ed301 DER decoder runs; the provider contains no PEM,
 Base64, password or encryption parser.

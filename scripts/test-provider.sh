@@ -565,6 +565,107 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         -inform DER -in "$BUILD/evidence/cli-generated-key.der" \
         -check -noout
 
+# Every command below is a fresh process.  No test registry helper or SSL_CTX
+# can pre-register the Ed301 OID/SIGID before the TLS artifact initializes.
+for provider in ed301_eddsa_v1 ed301_eddsa_v1_failpoint \
+        ed301_eddsa_v1_pki_test ed301_eddsa_v1_tls_collider; do
+    for operation in key-managers signature-algorithms; do
+        output="$BUILD/evidence/${provider}-${operation}.txt"
+        env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+            OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+            LD_LIBRARY_PATH="$OPENSSL_LIB" \
+            "$OPENSSL_BIN" list -provider-path "$BUILD/modules" \
+                -provider default -provider "$provider" \
+                "-$operation" -verbose >"$output"
+        if grep -F '1.3.6.1.4.1.66282.301.4' "$output" >/dev/null; then
+            echo "$provider unexpectedly exposes the Ed301 OID alias for $operation" >&2
+            exit 1
+        fi
+    done
+done
+for operation in key-managers signature-algorithms; do
+    output="$BUILD/evidence/ed301_eddsa_v1_tls_test-${operation}.txt"
+    env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+        LD_LIBRARY_PATH="$OPENSSL_LIB" \
+        "$OPENSSL_BIN" list -provider-path "$BUILD/modules" \
+            -provider default -provider ed301_eddsa_v1_tls_test \
+            "-$operation" -verbose >"$output"
+    grep -F '1.3.6.1.4.1.66282.301.4' "$output" >/dev/null
+done
+
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" req -new -x509 -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -key "$BUILD/evidence/cli-generated-key.pem" \
+        -subj /CN=Ed301-CA -days 1 \
+        -addext basicConstraints=critical,CA:TRUE \
+        -out "$BUILD/evidence/cli-ed301-ca.crt"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" verify -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -CAfile "$BUILD/evidence/cli-ed301-ca.crt" \
+        "$BUILD/evidence/cli-ed301-ca.crt"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" verify -check_ss_sig \
+        -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -CAfile "$BUILD/evidence/cli-ed301-ca.crt" \
+        "$BUILD/evidence/cli-ed301-ca.crt"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" x509 -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-ed301-ca.crt" -pubkey -noout \
+        -out "$BUILD/evidence/cli-ed301-ca.pub"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -pubin -in "$BUILD/evidence/cli-ed301-ca.pub" \
+        -pubcheck -noout
+
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" genpkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_pki_test \
+        -algorithm Ed301-EdDSA-v1 \
+        -out "$BUILD/evidence/cli-ed301-leaf-key.pem"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" req -new -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -key "$BUILD/evidence/cli-ed301-leaf-key.pem" \
+        -subj /CN=Ed301-Leaf \
+        -out "$BUILD/evidence/cli-ed301-leaf.csr"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" x509 -req -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-ed301-leaf.csr" \
+        -CA "$BUILD/evidence/cli-ed301-ca.crt" \
+        -CAkey "$BUILD/evidence/cli-generated-key.pem" \
+        -set_serial 2 -days 1 \
+        -out "$BUILD/evidence/cli-ed301-leaf.crt"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" verify -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -CAfile "$BUILD/evidence/cli-ed301-ca.crt" \
+        "$BUILD/evidence/cli-ed301-leaf.crt"
+
 for harness in provider_signature provider_keymgmt provider_serialization \
         val01_decoder_bio provider_load provider_rand provider_lifecycle \
         provider_tls; do

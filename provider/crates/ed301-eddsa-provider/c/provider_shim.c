@@ -132,6 +132,14 @@ static const char ED301V1_ALGORITHM_NAME[] = "Ed301-EdDSA-v1";
 static const char ED301V1_ALGORITHM_NAMES[] = "Ed301-EdDSA-v1";
 #define ED301V1_DECODER_ALGORITHM_NAMES \
     "Ed301-EdDSA-v1:" ED301V1_OID_TEXT
+#ifdef ED301V1_TLS_EXPERIMENT_ARTIFACT
+# define ED301V1_OPERATION_ALGORITHM_NAMES \
+    ED301V1_DECODER_ALGORITHM_NAMES
+# define ED301V1_REGISTER_PROCESS_OID 1
+#else
+# define ED301V1_OPERATION_ALGORITHM_NAMES ED301V1_ALGORITHM_NAMES
+# define ED301V1_REGISTER_PROCESS_OID 0
+#endif
 static const char ED301V1_PROPERTY[] =
     "provider=" ED301V1_PROVIDER_BASENAME;
 #if ED301V1_HAS_TEST_TLS_CAPABILITY
@@ -2167,7 +2175,7 @@ static const OSSL_DISPATCH ED301V1_SIGNATURE_DISPATCH[] = {
 
 static const OSSL_ALGORITHM ED301V1_KEYMGMT_ALGORITHMS[] = {
     {
-        ED301V1_ALGORITHM_NAMES,
+        ED301V1_OPERATION_ALGORITHM_NAMES,
         ED301V1_PROPERTY,
         ED301V1_KEYMGMT_DISPATCH,
         "Experimental Ed301-EdDSA-v1 raw key management (test-only)"
@@ -2177,7 +2185,7 @@ static const OSSL_ALGORITHM ED301V1_KEYMGMT_ALGORITHMS[] = {
 
 static const OSSL_ALGORITHM ED301V1_SIGNATURE_ALGORITHMS[] = {
     {
-        ED301V1_ALGORITHM_NAMES,
+        ED301V1_OPERATION_ALGORITHM_NAMES,
         ED301V1_PROPERTY,
         ED301V1_SIGNATURE_DISPATCH,
         "Experimental pure Ed301-EdDSA-v1 signatures (test-only)"
@@ -2536,6 +2544,10 @@ int ed301_eddsa_v1_shim_init(
     OSSL_FUNC_BIO_write_ex_fn *bio_write_ex = NULL;
     OSSL_FUNC_BIO_ctrl_fn *bio_ctrl = NULL;
     OSSL_FUNC_core_get_params_fn *core_get_params = NULL;
+#if ED301V1_REGISTER_PROCESS_OID
+    OSSL_FUNC_core_obj_create_fn *core_obj_create = NULL;
+    OSSL_FUNC_core_obj_add_sigid_fn *core_obj_add_sigid = NULL;
+#endif
     ED301V1_PROVIDER_CONTEXT *provider;
 
     if (handle == NULL || input_dispatch == NULL || output_dispatch == NULL
@@ -2577,6 +2589,14 @@ int ed301_eddsa_v1_shim_init(
         case OSSL_FUNC_BIO_CTRL:
             bio_ctrl = OSSL_FUNC_BIO_ctrl(dispatch);
             break;
+#if ED301V1_REGISTER_PROCESS_OID
+        case OSSL_FUNC_CORE_OBJ_CREATE:
+            core_obj_create = OSSL_FUNC_core_obj_create(dispatch);
+            break;
+        case OSSL_FUNC_CORE_OBJ_ADD_SIGID:
+            core_obj_add_sigid = OSSL_FUNC_core_obj_add_sigid(dispatch);
+            break;
+#endif
         default:
             break;
         }
@@ -2587,6 +2607,10 @@ int ed301_eddsa_v1_shim_init(
         return 0;
 #if ED301V1_HAS_TEST_DECODER
     if (bio_read_ex == NULL || bio_ctrl == NULL)
+        return 0;
+#endif
+#if ED301V1_REGISTER_PROCESS_OID
+    if (core_obj_create == NULL || core_obj_add_sigid == NULL)
         return 0;
 #endif
     if (!ed301v1_core_version_is_supported(handle, core_get_params))
@@ -2610,6 +2634,19 @@ int ed301_eddsa_v1_shim_init(
         clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
         return 0;
     }
+#if ED301V1_REGISTER_PROCESS_OID
+    if (core_obj_create(handle, ED301V1_OID, ED301V1_ALGORITHM_NAME,
+            ED301V1_ALGORITHM_NAME) != 1
+            || core_obj_add_sigid(
+                handle, ED301V1_OID, "", ED301V1_OID) != 1) {
+        ed301v1_raise(provider, ED301V1_R_INVALID_STATE,
+            "core rejected Ed301-EdDSA-v1 OID/SIGID registration");
+        OSSL_LIB_CTX_free(provider->libctx);
+        provider->libctx = NULL;
+        clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
+        return 0;
+    }
+#endif
 
     *provider_context = provider;
     *output_dispatch = ED301V1_PROVIDER_DISPATCH;
