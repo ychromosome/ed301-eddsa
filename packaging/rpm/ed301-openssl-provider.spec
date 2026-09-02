@@ -4,17 +4,20 @@
 %global shortcommit 14b402f
 %global snapshot 20260902
 %global source_manifest_sha256 42e2a66958db825a9047f05205d0e2c9c587a21abfd82a13d99fe275133328ce
+%global openssl_fork_evr 1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           ed301-openssl-provider
 Version:        0.1.0
-Release:        0.3.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.8.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental Ed301-EdDSA provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
 Source0:        %{url}/archive/%{commit}/ed301-eddsa-%{commit}.tar.gz
-Source1:        ed301-provider.conf
+Source1:        ed301-tls-experiment.conf
+Source2:        opensslcnf-zz-ed301.config
+Source3:        README.crypto-policy
 Patch0:         0001-Allow-standard-RPM-native-build-flags.patch
 
 BuildRequires:  cargo-rpm-macros
@@ -22,23 +25,40 @@ BuildRequires:  cargo >= 1.91
 BuildRequires:  rust >= 1.91
 BuildRequires:  gcc
 BuildRequires:  binutils
-BuildRequires:  pkgconfig(openssl) >= 3.5.7
+BuildRequires:  openssl = %{openssl_fork_evr}
+BuildRequires:  openssl-devel = %{openssl_fork_evr}
 %if %{with tests}
-BuildRequires:  openssl
 BuildRequires:  python3
 BuildRequires:  rustfmt
 %endif
 
-Requires:       openssl-libs%{?_isa} >= 1:3.5.7
+Requires:       openssl-libs%{?_isa} = %{openssl_fork_evr}
 
-# crypto-bigint is a source-bound path dependency and is therefore not emitted
-# by the cargo vendor manifest generator.
+# crypto-bigint is a source-bound path dependency.
 Provides:       bundled(crate(crypto-bigint)) = 0.7.5
+Provides:       bundled(crate(cpufeatures)) = 0.3.0
 
 %description
-Ed301-EdDSA-v1 is an experimental signature algorithm. Installing this package
-activates its OpenSSL provider system-wide. The algorithm is not standardized
-or FIPS validated.
+Ed301-EdDSA-v1 is an experimental signature algorithm. This package installs
+the ordinary OpenSSL provider for explicit loading. It does not activate the
+provider globally or advertise a TLS signature scheme. The algorithm is not
+standardized or FIPS validated.
+
+%package policy
+Summary:        Private-use Ed301 TLS experiment for the review environment
+Requires:       %{name}%{?_isa} = %{version}-%{release}
+Requires:       openssl-libs%{?_isa} = %{openssl_fork_evr}
+Requires:       crypto-policies-scripts
+Requires(posttrans): crypto-policies-scripts
+Requires(postun): crypto-policies-scripts
+
+%description policy
+This laboratory package activates the separately named Ed301 TLS experiment
+provider. It advertises a private-use TLS signature scheme for the joint test.
+It also installs an explicit OpenSSL overlay that places the private-use Ed301
+TLS signature algorithm before the nonempty Fedora signature-algorithm list.
+The overlay is not a native crypto-policies module and must not be used with
+FIPS, BSI, EMPTY or another closed policy.
 
 %prep
 %setup -q -n ed301-eddsa-%{commit}
@@ -46,6 +66,7 @@ test "$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')" = \
     %{source_manifest_sha256}
 sha256sum --strict --quiet -c SOURCE_MANIFEST.sha256
 %autopatch -p1
+install -pm 0644 %{SOURCE3} README.crypto-policy
 pushd provider
 %cargo_prep -v ../vendor
 popd
@@ -60,24 +81,32 @@ export ED301_ALLOW_PACKAGE_BUILD_FLAGS=1
 export OPENSSL_INCLUDE_DIR=%{_includedir}
 export OPENSSL_LIB_DIR=%{_libdir}
 export CARGO_INCREMENTAL=0
+
 %cargo_build -- -p ed301-eddsa-provider
+install -Dpm 0755 target/rpm/libed301_eddsa_v1.so \
+    ../target/rpm-package-modules/ed301_eddsa_v1.so
+
+%cargo_build -f tls-experiment -- -p ed301-eddsa-provider
+install -Dpm 0755 target/rpm/libed301_eddsa_v1.so \
+    ../target/rpm-package-modules/ed301_eddsa_v1_tls_test.so
 
 pushd crates/ed301-eddsa-provider
 %cargo_license_summary
 %{cargo_license} > ../../../LICENSE.dependencies
 popd
 %cargo_vendor_manifest
-# Fedora 43 cargo2rpm includes workspace path packages in this file although
-# the bundled-crate generator accepts registry entries only.
 sed -i '\| (/|d' cargo-vendor.txt
 popd
 
 %install
-install -Dpm 0755 \
-    provider/target/rpm/libed301_eddsa_v1.so \
+install -Dpm 0755 target/rpm-package-modules/ed301_eddsa_v1.so \
     %{buildroot}%{provider_modulesdir}/ed301_eddsa_v1.so
+install -Dpm 0755 target/rpm-package-modules/ed301_eddsa_v1_tls_test.so \
+    %{buildroot}%{provider_modulesdir}/ed301_eddsa_v1_tls_test.so
 install -Dpm 0644 %{SOURCE1} \
-    %{buildroot}%{_sysconfdir}/pki/tls/openssl.d/ed301-provider.conf
+    %{buildroot}%{_sysconfdir}/pki/tls/openssl.d/ed301-tls-experiment.conf
+install -Dpm 0644 %{SOURCE2} \
+    %{buildroot}%{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-ed301.config
 
 %check
 %if %{with tests}
@@ -100,27 +129,41 @@ cmp "$test_dir/policy_vectors_data.rs" \
     -o "$test_dir/provider_signature" \
     provider-tests/provider_signature.c %{build_ldflags} \
     -lcrypto -lssl -lpthread -ldl
-
-module=%{buildroot}%{provider_modulesdir}/ed301_eddsa_v1.so
-test -f "$module"
-test "$(nm -D --defined-only "$module" \
-    | awk '$2 == "T" { count++ } END { print count + 0 }')" -eq 1
-nm -D --defined-only "$module" | grep -E ' T OSSL_provider_init$' >/dev/null
-if readelf -d "$module" | grep -Eq '\((RPATH|RUNPATH)\)'; then
-    echo 'provider module contains an RPATH or RUNPATH' >&2
-    exit 1
-fi
+for module in \
+        target/rpm-package-modules/ed301_eddsa_v1.so \
+        target/rpm-package-modules/ed301_eddsa_v1_tls_test.so; do
+    test "$(nm -D --defined-only "$module" \
+        | awk '$2 == "T" { count++ } END { print count + 0 }')" -eq 1
+    nm -D --defined-only "$module" | grep -E ' T OSSL_provider_init$' >/dev/null
+    if readelf -d "$module" | grep -Eq '\((RPATH|RUNPATH)\)'; then
+        echo "provider module contains an RPATH or RUNPATH: $module" >&2
+        exit 1
+    fi
+done
 
 mkdir -p "$test_dir/openssl-prefix"
 ln -s %{_libdir} "$test_dir/openssl-prefix/lib"
 
 env OPENSSL_CONF=/dev/null \
-    OPENSSL_MODULES=%{buildroot}%{provider_modulesdir} \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
     ED301V1_EXPECT_OPENSSL_PREFIX="$test_dir/openssl-prefix" \
     "$test_dir/provider_signature"
-openssl list -provider-path %{buildroot}%{provider_modulesdir} \
-    -provider default -provider ed301_eddsa_v1 \
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
+    openssl list -provider default -provider ed301_eddsa_v1 \
     -signature-algorithms | grep -F Ed301-EdDSA-v1 >/dev/null
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
+    openssl list -provider default -provider ed301_eddsa_v1_tls_test \
+    -signature-algorithms | grep -F Ed301-EdDSA-v1 >/dev/null
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
+    openssl genpkey -provider default -provider ed301_eddsa_v1_tls_test \
+    -algorithm Ed301-EdDSA-v1 -out "$test_dir/ed301-pkcs8.pem"
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
+    openssl pkey -provider default -provider ed301_eddsa_v1_tls_test \
+    -in "$test_dir/ed301-pkcs8.pem" -check -noout
 %endif
 
 %files
@@ -129,21 +172,57 @@ openssl list -provider-path %{buildroot}%{provider_modulesdir} \
 %license provider/cargo-vendor.txt
 %doc README.md
 %doc THIRD_PARTY_NOTICES.md
-%config(noreplace) %{_sysconfdir}/pki/tls/openssl.d/ed301-provider.conf
 %{provider_modulesdir}/ed301_eddsa_v1.so
+
+%files policy
+%doc README.crypto-policy
+%config(noreplace) %{_sysconfdir}/pki/tls/openssl.d/ed301-tls-experiment.conf
+%config(noreplace) %{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-ed301.config
+%{provider_modulesdir}/ed301_eddsa_v1_tls_test.so
 
 %posttrans
 echo 'WARNING: Ed301-EdDSA-v1 is experimental, non-standardized and not FIPS validated.'
-echo 'The provider is active system-wide for newly started OpenSSL applications.'
-echo 'Restart long-running OpenSSL consumers before relying on the new provider.'
+echo 'The ordinary provider is installed but not activated globally; load it explicitly.'
+exit 0
+
+%posttrans policy
+if ! %{_bindir}/update-crypto-policies; then
+    echo 'error: failed to regenerate the selected crypto policy' >&2
+    exit 1
+fi
+echo 'WARNING: The private-use Ed301 TLS experiment is active for laboratory review.'
+echo 'The OpenSSL overlay places ed301_eddsa_v1_test before Fedora signature algorithms.'
+echo 'Remove this package before selecting FIPS, BSI, EMPTY or another closed policy.'
+exit 0
+
+%postun policy
+if [ "$1" -eq 0 ]; then
+    if ! %{_bindir}/update-crypto-policies; then
+        echo 'error: failed to regenerate crypto policy after removing Ed301 policy' >&2
+        exit 1
+    fi
+fi
 exit 0
 
 %changelog
-* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.3.20260902git14b402f
-- Include strict Ed301 PKCS#8 decoding and malformed-input ownership fixes
+* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.8.20260902git14b402f
+- Include PKCS#8 decoding and malformed-input ownership regressions
+- Pin the rebuilt OpenSSL review fork
 
-* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.2.20260901gite15f0aa
-- Include EdDSA NULL-key reinitialization parity with Ed25519 and Ed448
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.7.20260901gita6c23cf
+- Limit the Ed301 policy package to the TLS signature experiment
 
-* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.1.20260831git8a1db67
-- Initial split Ed301 provider package
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.6.20260901gita6c23cf
+- Require the exact X301 provider used by the laboratory group overlay
+
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.5.20260901gita6c23cf
+- Add the explicit laboratory OpenSSL group and signature overlay
+- Regenerate crypto-policies after policy installation and final removal
+
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.4.20260901gita6c23cf
+- Keep the ordinary provider explicitly loadable but globally inactive
+- Activate only the separately named TLS experiment from the policy package
+
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.3.20260901gita6c23cf
+- Pin the reviewed Ed301 source and OpenSSL fork
+- Split the private-use TLS experiment into the optional policy package
