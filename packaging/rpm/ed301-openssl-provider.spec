@@ -1,15 +1,15 @@
 %bcond_without tests
 
-%global commit e15f0aae5bb12267d64108b46e52277242cfc7c0
-%global shortcommit e15f0aa
-%global snapshot 20260901
-%global source_manifest_sha256 986dbf30469c8ac6ac10c959ac63180d45890c8e614aa573d4aeee7ad9b594ff
+%global commit 14b402f4a5b17996ef29687e1248842a4f092854
+%global shortcommit 14b402f
+%global snapshot 20260902
+%global source_manifest_sha256 42e2a66958db825a9047f05205d0e2c9c587a21abfd82a13d99fe275133328ce
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           ed301-openssl-provider
 Version:        0.1.0
-Release:        0.2.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.3.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental Ed301-EdDSA provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
@@ -139,6 +139,9 @@ echo 'Restart long-running OpenSSL consumers before relying on the new provider.
 exit 0
 
 %changelog
+* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.3.20260902git14b402f
+- Include strict Ed301 PKCS#8 decoding and malformed-input ownership fixes
+
 * Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.2.20260901gite15f0aa
 - Include EdDSA NULL-key reinitialization parity with Ed25519 and Ed448
 
