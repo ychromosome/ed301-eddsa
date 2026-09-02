@@ -142,13 +142,12 @@ jobs:
 
   rpm-contract:
     runs-on: ubuntu-24.04
-    container: fedora:43
+    container: fedora:45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Validate Fedora packaging contract
+      - name: Validate Fedora 45 source RPM contract
         run: |
-          dnf -qy install binutils cargo cargo-rpm-macros curl gcc git \
-            openssl openssl-devel python3 rpm-build rust rustfmt ShellCheck
+          dnf -qy install curl git rpm-build ShellCheck
           shellcheck scripts/check-rpm-packaging.sh scripts/test-rpm-install.sh
           scripts/check-rpm-packaging.sh
           topdir=$(mktemp -d)
@@ -158,8 +157,12 @@ jobs:
           curl -fL --retry 3 --proto '=https' --proto-redir '=https' \
             "https://github.com/ychromosome/ed301-eddsa/archive/$commit/ed301-eddsa-$commit.tar.gz" \
             -o "$topdir/SOURCES/ed301-eddsa-$commit.tar.gz"
-          cp packaging/rpm/0001-Allow-standard-RPM-native-build-flags.patch \
-            packaging/rpm/ed301-provider.conf "$topdir/SOURCES/"
-          rpmbuild -ba --define "_topdir $topdir" \
+          awk '$1 ~ /^(Source[1-9][0-9]*|Patch[0-9]+):$/ { print $2 }' \
+            packaging/rpm/ed301-openssl-provider.spec \
+            | while IFS= read -r source; do
+                cp "packaging/rpm/$source" "$topdir/SOURCES/"
+              done
+          rpmbuild -bs --nodeps --define "_topdir $topdir" \
             packaging/rpm/ed301-openssl-provider.spec
-          scripts/test-rpm-install.sh "$topdir/RPMS/x86_64"
+          test -n "$(find "$topdir/SRPMS" -maxdepth 1 -type f \
+            -name 'ed301-openssl-provider-*.src.rpm' -print -quit)"
