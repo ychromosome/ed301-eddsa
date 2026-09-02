@@ -883,7 +883,7 @@ int main(void)
         malformed[pkcs8_length] = 0x00;
         ED301V1_CHECK(hard_failure_is_consumed_and_reported(
                 libctx, malformed, pkcs8_length + 1, 0,
-                pkcs8_length + 1),
+                1),
             "additional PKCS#8 content is a hard failure");
 
         memset(malformed, 0, sizeof(malformed));
@@ -900,12 +900,12 @@ int main(void)
         memcpy(malformed + 22, pkcs8 + 20, pkcs8_length - 20);
         ED301V1_CHECK(hard_failure_is_consumed_and_reported(
                 libctx, malformed, pkcs8_length + 2, 0,
-                pkcs8_length + 2),
+                2),
             "PKCS#8 NULL parameters are a hard failure");
         malformed[20] = 0x04;
         ED301V1_CHECK(hard_failure_is_consumed_and_reported(
                 libctx, malformed, pkcs8_length + 2, 0,
-                pkcs8_length + 2),
+                2),
             "PKCS#8 explicit parameters are a hard failure");
 
         memcpy(malformed, pkcs8, pkcs8_length);
@@ -923,7 +923,7 @@ int main(void)
         malformed[pkcs8_length] = 0x00;
         ED301V1_CHECK(hard_failure_is_consumed_and_reported(
                 libctx, malformed, pkcs8_length + 1, 0,
-                pkcs8_length + 1),
+                1),
             "39-byte seed form is not partially imported");
 
         memcpy(malformed, pkcs8, 20);
@@ -935,7 +935,7 @@ int main(void)
         memcpy(malformed + 23, pkcs8 + 22, pkcs8_length - 22);
         ED301V1_CHECK(hard_failure_is_consumed_and_reported(
                 libctx, malformed, pkcs8_length + 1, 0,
-                pkcs8_length + 1),
+                1),
             "non-minimal inner DER length is a hard failure");
 
         malformed[0] = 0x30;

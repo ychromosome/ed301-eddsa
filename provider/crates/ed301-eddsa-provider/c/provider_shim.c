@@ -1895,13 +1895,21 @@ static int ed301v1_codec_decode(
     if (!ed301v1_codec_read_exact(
             codec, input, encoded, encoded_length))
         goto cleanup;
+    if (ed301v1_codec_has_target_oid(codec, encoded, encoded_length))
+        owns_input = 1;
     if (encoded[0] != 0x30
-            || encoded[1] != (unsigned char)(encoded_length - 2))
+            || encoded[1] != (unsigned char)(encoded_length - 2)) {
+        if (owns_input) {
+            ed301v1_raise(codec->provider,
+                ED301V1_R_SERIALIZATION_FAILURE,
+                "non-canonical Ed301-EdDSA-v1 key encoding");
+            result = 0;
+        }
         goto cleanup;
-    if (!ed301v1_codec_has_target_oid(codec, encoded, encoded_length))
+    }
+    if (!owns_input)
         goto cleanup;
 
-    owns_input = 1;
     if (memcmp(encoded, prefix, prefix_length) != 0) {
         ed301v1_raise(codec->provider, ED301V1_R_SERIALIZATION_FAILURE,
             "non-canonical Ed301-EdDSA-v1 key encoding");
