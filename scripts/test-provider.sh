@@ -341,6 +341,8 @@ strings "$BUILD/modules/ed301_eddsa_v1_tls_test.so" \
     | grep -F TLS-SIGALG >/dev/null
 strings "$BUILD/modules/ed301_eddsa_v1_tls_test.so" \
     | grep -F 'input=der,structure=PrivateKeyInfo' >/dev/null
+strings "$BUILD/modules/ed301_eddsa_v1_tls_test.so" \
+    | grep -F 'output=text' >/dev/null
 strings "$BUILD/modules/ed301_eddsa_v1_tls_collider.so" \
     | grep -F TLS-SIGALG >/dev/null
 if strings "$BUILD/modules/ed301_eddsa_v1_tls_collider.so" \
@@ -350,6 +352,13 @@ if strings "$BUILD/modules/ed301_eddsa_v1_tls_collider.so" \
 fi
 strings "$BUILD/modules/ed301_eddsa_v1_pki_test.so" \
     | grep -F 'structure=PrivateKeyInfo' >/dev/null
+for module in ed301_eddsa_v1.so ed301_eddsa_v1_failpoint.so \
+        ed301_eddsa_v1_pki_test.so ed301_eddsa_v1_tls_collider.so; do
+    if strings "$BUILD/modules/$module" | grep -F 'output=text' >/dev/null; then
+        echo "$module unexpectedly exposes the TLS text encoder" >&2
+        exit 1
+    fi
+done
 
 test "$(nm -D --defined-only "$BUILD/modules/ed301_eddsa_v1.so" \
     | awk '$2 == "T" { count++ } END { print count + 0 }')" -eq 1
@@ -550,6 +559,40 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
         -provider default -provider ed301_eddsa_v1_tls_test \
         -in "$BUILD/evidence/cli-generated-key.pem" -check -noout
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key.pem" -text \
+        >"$BUILD/evidence/cli-generated-key-text.txt"
+grep -F 'Ed301-EdDSA-v1 Private-Key:' \
+    "$BUILD/evidence/cli-generated-key-text.txt" >/dev/null
+grep -F 'priv:' "$BUILD/evidence/cli-generated-key-text.txt" >/dev/null
+grep -F 'pub:' "$BUILD/evidence/cli-generated-key-text.txt" >/dev/null
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key.pem" -pubout \
+        -out "$BUILD/evidence/cli-generated-key.pub"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -pubin -in "$BUILD/evidence/cli-generated-key.pub" \
+        -text_pub -noout \
+        >"$BUILD/evidence/cli-generated-public-key-text.txt"
+grep -F 'Ed301-EdDSA-v1 Public-Key:' \
+    "$BUILD/evidence/cli-generated-public-key-text.txt" >/dev/null
+grep -F 'pub:' "$BUILD/evidence/cli-generated-public-key-text.txt" >/dev/null
+if grep -F 'priv:' \
+        "$BUILD/evidence/cli-generated-public-key-text.txt" >/dev/null; then
+    echo "public text output contains a private-key label" >&2
+    exit 1
+fi
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \

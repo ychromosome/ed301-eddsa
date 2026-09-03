@@ -118,8 +118,10 @@
 
 #ifdef ED301V1_TLS_EXPERIMENT_ARTIFACT
 # define ED301V1_HAS_PRIVATE_KEY_DECODER 1
+# define ED301V1_HAS_TEXT_ENCODER 1
 #else
 # define ED301V1_HAS_PRIVATE_KEY_DECODER 0
+# define ED301V1_HAS_TEXT_ENCODER 0
 #endif
 
 static const char ED301V1_PROVIDER_NAME[] =
@@ -200,12 +202,14 @@ typedef struct ed301v1_signature_context_st {
 
 typedef enum ed301v1_codec_structure_st {
     ED301V1_CODEC_PRIVATE_KEY_INFO = 1,
-    ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO = 2
+    ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO = 2,
+    ED301V1_CODEC_KEY_TEXT = 3
 } ED301V1_CODEC_STRUCTURE;
 
 typedef enum ed301v1_codec_format_st {
     ED301V1_CODEC_FORMAT_DER = 1,
-    ED301V1_CODEC_FORMAT_PEM = 2
+    ED301V1_CODEC_FORMAT_PEM = 2,
+    ED301V1_CODEC_FORMAT_TEXT = 3
 } ED301V1_CODEC_FORMAT;
 
 typedef struct ed301v1_codec_context_st {
@@ -1435,6 +1439,16 @@ static void *ed301v1_spki_pem_codec_new_context(void *provider_context)
         ED301V1_CODEC_FORMAT_PEM);
 }
 
+#if ED301V1_HAS_TEXT_ENCODER
+static void *ed301v1_text_codec_new_context(void *provider_context)
+{
+    return ed301v1_codec_new_context(
+        provider_context,
+        ED301V1_CODEC_KEY_TEXT,
+        ED301V1_CODEC_FORMAT_TEXT);
+}
+#endif
+
 static void ed301v1_codec_free_context(void *codec_context)
 {
     ED301V1_CODEC_CONTEXT *codec = codec_context;
@@ -1455,6 +1469,8 @@ static int ed301v1_codec_required_selection(
         return OSSL_KEYMGMT_SELECT_PRIVATE_KEY;
     if (codec->structure == ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO)
         return OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
+    if (codec->structure == ED301V1_CODEC_KEY_TEXT)
+        return OSSL_KEYMGMT_SELECT_KEYPAIR;
     return 0;
 }
 
@@ -1471,6 +1487,10 @@ static int ed301v1_codec_does_selection(void *codec_context, int selection)
         return selection == 0
             || ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0
                 && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0);
+    if (codec->structure == ED301V1_CODEC_KEY_TEXT)
+        return selection == 0
+            || (ed301v1_selection_supported(selection)
+                && (selection & OSSL_KEYMGMT_SELECT_KEYPAIR) != 0);
     return 0;
 }
 
@@ -1490,8 +1510,20 @@ static int ed301v1_public_codec_does_selection(
     (void)provider_context;
     return selection == 0
         || ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0
-            && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0);
+                && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0);
 }
+
+#if ED301V1_HAS_TEXT_ENCODER
+static int ed301v1_text_codec_does_selection(
+    void *provider_context,
+    int selection)
+{
+    (void)provider_context;
+    return selection == 0
+        || (ed301v1_selection_supported(selection)
+            && (selection & OSSL_KEYMGMT_SELECT_KEYPAIR) != 0);
+}
+#endif
 
 static const OSSL_PARAM *ed301v1_private_codec_settable_ctx_params(
     void *provider_context)
@@ -1736,6 +1768,84 @@ static int ed301v1_codec_get_key_bytes(
     return 0;
 }
 
+#if ED301V1_HAS_TEXT_ENCODER
+static int ed301v1_codec_print_labeled_bytes(
+    BIO *output,
+    const char *label,
+    const unsigned char *bytes,
+    size_t length)
+{
+    size_t index;
+
+    if (output == NULL || label == NULL || bytes == NULL
+            || BIO_printf(output, "%s\n", label) <= 0)
+        return 0;
+    for (index = 0; index < length; index++) {
+        if (index % 16 == 0) {
+            if (index != 0 && BIO_printf(output, "\n") <= 0)
+                return 0;
+            if (BIO_printf(output, "    ") <= 0)
+                return 0;
+        }
+        if (BIO_printf(output, "%02x%s", (unsigned int)bytes[index],
+                index + 1 == length ? "" : ":") <= 0)
+            return 0;
+    }
+    return BIO_printf(output, "\n") > 0;
+}
+
+static int ed301v1_codec_write_text(
+    const ED301V1_CODEC_CONTEXT *codec,
+    OSSL_CORE_BIO *output,
+    const void *key_data,
+    int selection)
+{
+    unsigned char private_key[ED301V1_SEED_BYTES] = { 0 };
+    unsigned char public_key[ED301V1_PUBLIC_KEY_BYTES] = { 0 };
+    BIO *bio = NULL;
+    int wants_private;
+    int result = 0;
+
+    if (codec == NULL || codec->provider == NULL
+            || codec->provider->libctx == NULL || output == NULL
+            || key_data == NULL)
+        goto cleanup;
+    if (selection == 0)
+        selection = OSSL_KEYMGMT_SELECT_KEYPAIR;
+    wants_private = ed301v1_wants_private(selection);
+    if (!wants_private && !ed301v1_wants_public(selection))
+        goto cleanup;
+    if (wants_private
+            && !ed301v1_codec_get_key_bytes(codec, key_data,
+                ED301V1_CODEC_PRIVATE_KEY_INFO, private_key))
+        goto cleanup;
+    if (!ed301v1_codec_get_key_bytes(codec, key_data,
+            ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO, public_key))
+        goto cleanup;
+
+    bio = BIO_new_from_core_bio(codec->provider->libctx, output);
+    if (bio == NULL)
+        goto cleanup;
+    if (BIO_printf(bio, "Ed301-EdDSA-v1 %s-Key:\n",
+            wants_private ? "Private" : "Public") <= 0)
+        goto cleanup;
+    if (wants_private
+            && !ed301v1_codec_print_labeled_bytes(
+                bio, "priv:", private_key, sizeof(private_key)))
+        goto cleanup;
+    if (!ed301v1_codec_print_labeled_bytes(
+            bio, "pub:", public_key, sizeof(public_key)))
+        goto cleanup;
+    result = 1;
+
+cleanup:
+    BIO_free(bio);
+    ed301v1_codec_cleanse(codec, private_key, sizeof(private_key));
+    ed301v1_codec_cleanse(codec, public_key, sizeof(public_key));
+    return result;
+}
+#endif
+
 static void *ed301v1_codec_import_object(
     void *codec_context,
     int selection,
@@ -1788,6 +1898,13 @@ static int ed301v1_codec_encode(
             || key_parameters != NULL
             || !ed301v1_codec_does_selection(codec, selection))
         goto cleanup;
+#if ED301V1_HAS_TEXT_ENCODER
+    if (codec->format == ED301V1_CODEC_FORMAT_TEXT) {
+        result = ed301v1_codec_write_text(
+            codec, output, key_data, selection);
+        goto cleanup;
+    }
+#endif
     prefix = ed301v1_codec_prefix(codec, &prefix_length, &encoded_length);
     if (prefix == NULL || encoded_length > sizeof(encoded)
             || !ed301v1_codec_get_key_bytes(
@@ -2056,6 +2173,12 @@ ED301V1_DEFINE_ENCODER_DISPATCH(
     ED301V1_SPKI_PEM_ENCODER_DISPATCH,
     ed301v1_spki_pem_codec_new_context,
     ed301v1_public_codec_does_selection);
+#if ED301V1_HAS_TEXT_ENCODER
+ED301V1_DEFINE_ENCODER_DISPATCH(
+    ED301V1_TEXT_ENCODER_DISPATCH,
+    ed301v1_text_codec_new_context,
+    ed301v1_text_codec_does_selection);
+#endif
 
 #if ED301V1_HAS_TEST_DECODER
 ED301V1_DEFINE_DECODER_DISPATCH(
@@ -2194,6 +2317,14 @@ static const OSSL_ALGORITHM ED301V1_SIGNATURE_ALGORITHMS[] = {
 };
 
 static const OSSL_ALGORITHM ED301V1_ENCODER_ALGORITHMS[] = {
+#if ED301V1_HAS_TEXT_ENCODER
+    {
+        ED301V1_OPERATION_ALGORITHM_NAMES,
+        "provider=" ED301V1_PROVIDER_BASENAME ",output=text",
+        ED301V1_TEXT_ENCODER_DISPATCH,
+        "Ed301-EdDSA-v1 key text encoder (TLS test-only)"
+    },
+#endif
     {
         ED301V1_ALGORITHM_NAMES,
         "provider=" ED301V1_PROVIDER_BASENAME ",output=der,structure=PrivateKeyInfo",

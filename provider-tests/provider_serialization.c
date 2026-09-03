@@ -1,8 +1,8 @@
 /*
  * Acceptance section 4 (serialization): PKCS#8 and SPKI round trips in DER
  * and PEM through provider encoders plus the mandatory project-owned,
- * complete-buffer import boundary, deliberate
- * absence of private text output, and rejection of the historical and X301
+ * complete-buffer import boundary, deliberate absence of private text output
+ * from the PKI-only artifact, and rejection of the historical and X301
  * OIDs, ASN.1 NULL parameters, wrong OIDs
  * and sizes, truncation, trailing data and malformed public keys.
  * Encrypted PKCS#8 (and its wrong-password rejection) is exercised through
@@ -690,7 +690,7 @@ int main(void)
         OPENSSL_free(pem);
     }
 
-    /* No bespoke text/hex encoder is exposed (F5). */
+    /* The PKI-only artifact exposes no text/hex encoder (F5). */
     {
         size_t text_len = 0;
         unsigned char *text = encode(pkey,
@@ -699,7 +699,7 @@ int main(void)
             "TEXT", NULL, &text_len);
 
         ED301V1_CHECK(text == NULL && text_len == 0,
-            "provider deliberately exposes no private text/hex encoder");
+            "PKI-only provider exposes no private text/hex encoder");
         ERR_clear_error();
         OPENSSL_free(text);
     }
