@@ -1,16 +1,16 @@
 %bcond_without tests
 
-%global commit 96e6b86a32faa87523cbb7827aeb048797bd8015
-%global shortcommit 96e6b86
-%global snapshot 20260902
-%global source_manifest_sha256 491d1034442a44b21d43cf18dc4d89e90eec385a4ba8939e7a9e24200393fc7e
+%global commit 69b30b6182765029d8e3b508bde81a3d9c6a3c15
+%global shortcommit 69b30b6
+%global snapshot 20260904
+%global source_manifest_sha256 324c1fb6378104d58de6afffb61f8f77c10b0eadafc05cdacb7f76ecb8bc596a
 %global openssl_fork_evr 1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           ed301-openssl-provider
 Version:        0.1.0
-Release:        0.9.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.10.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental Ed301-EdDSA provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
@@ -164,6 +164,15 @@ env OPENSSL_CONF=/dev/null \
     OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
     openssl pkey -provider default -provider ed301_eddsa_v1_tls_test \
     -in "$test_dir/ed301-pkcs8.pem" -check -noout
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
+    openssl pkey -provider default -provider ed301_eddsa_v1_tls_test \
+    -in "$test_dir/ed301-pkcs8.pem" -text -noout \
+    > "$test_dir/ed301-key-text.txt"
+grep -F 'Ed301-EdDSA-v1 Private-Key:' \
+    "$test_dir/ed301-key-text.txt" >/dev/null
+grep -F 'priv:' "$test_dir/ed301-key-text.txt" >/dev/null
+grep -F 'pub:' "$test_dir/ed301-key-text.txt" >/dev/null
 %endif
 
 %files
@@ -205,6 +214,9 @@ fi
 exit 0
 
 %changelog
+* Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.10.20260904git69b30b6
+- Add Ed25519/Ed448-style private and public key text output
+
 * Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.9.20260902git96e6b86
 - Enable fresh-process Ed301 X.509 verification
 
