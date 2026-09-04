@@ -11,6 +11,8 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
+#include <time.h>
+
 #include "harness_common.h"
 #include "strict_pki.h"
 #include "vectors.h"
@@ -56,6 +58,7 @@ static X509 *make_cert_with_digest(
     EVP_PKEY *issuer_key,
     int is_ca,
     long serial,
+    const char *ca_constraints,
     const EVP_MD *digest)
 {
     X509 *cert = X509_new();
@@ -75,7 +78,8 @@ static X509 *make_cert_with_digest(
         goto done;
     if (is_ca) {
         if (!add_extension(cert, NID_basic_constraints,
-                "critical,CA:TRUE")
+                ca_constraints != NULL
+                    ? ca_constraints : "critical,CA:TRUE")
                 || !add_extension(cert, NID_key_usage,
                     "critical,keyCertSign,cRLSign"))
             goto done;
@@ -108,7 +112,7 @@ static X509 *make_cert(
     long serial)
 {
     return make_cert_with_digest(subject_cn, issuer_name, subject_key,
-        issuer_key, is_ca, serial, NULL);
+        issuer_key, is_ca, serial, NULL, NULL);
 }
 
 static int algor_negative_controls(void)
@@ -231,6 +235,87 @@ static int verify_direct_chain(X509 *trust_anchor, X509 *leaf)
     return ok;
 }
 
+static X509_CRL *make_crl(
+    X509 *issuer,
+    EVP_PKEY *issuer_key,
+    X509 *revoked_certificate)
+{
+    X509_CRL *crl = X509_CRL_new();
+    X509_REVOKED *revoked = X509_REVOKED_new();
+    ASN1_INTEGER *serial = revoked_certificate == NULL ? NULL
+        : ASN1_INTEGER_dup(X509_get0_serialNumber(revoked_certificate));
+    ASN1_TIME *last_update = ASN1_TIME_adj(NULL, time(NULL), 0, -60);
+    ASN1_TIME *next_update = ASN1_TIME_adj(NULL, time(NULL), 0, 3600);
+    ASN1_TIME *revocation_time = ASN1_TIME_adj(NULL, time(NULL), 0, -30);
+    int ok = crl != NULL && revoked != NULL && serial != NULL
+        && last_update != NULL && next_update != NULL
+        && revocation_time != NULL;
+
+    if (ok)
+        ok = X509_CRL_set_version(crl, 1) == 1
+            && X509_CRL_set_issuer_name(
+                crl, X509_get_subject_name(issuer)) == 1
+            && X509_CRL_set1_lastUpdate(crl, last_update) == 1
+            && X509_CRL_set1_nextUpdate(crl, next_update) == 1
+            && X509_REVOKED_set_serialNumber(revoked, serial) == 1
+            && X509_REVOKED_set_revocationDate(
+                revoked, revocation_time) == 1
+            && X509_CRL_add0_revoked(crl, revoked) == 1;
+    if (ok) {
+        revoked = NULL;
+        ok = X509_CRL_sort(crl) == 1
+            && X509_CRL_sign(crl, issuer_key, NULL) > 0;
+    }
+    ASN1_TIME_free(revocation_time);
+    ASN1_TIME_free(next_update);
+    ASN1_TIME_free(last_update);
+    ASN1_INTEGER_free(serial);
+    X509_REVOKED_free(revoked);
+    if (!ok) {
+        X509_CRL_free(crl);
+        crl = NULL;
+    }
+    return crl;
+}
+
+static int verify_intermediate_chain(
+    X509 *root,
+    X509 *intermediate,
+    X509 *leaf,
+    X509_CRL *crl,
+    int expect_revoked)
+{
+    X509_STORE *store = X509_STORE_new();
+    X509_STORE_CTX *context = X509_STORE_CTX_new();
+    STACK_OF(X509) *untrusted = sk_X509_new_null();
+    int verify_result = -1;
+    int verify_error = X509_V_OK;
+    int ok = store != NULL && context != NULL && untrusted != NULL
+        && sk_X509_push(untrusted, intermediate) > 0
+        && X509_STORE_add_cert(store, root) == 1;
+
+    if (ok && crl != NULL)
+        ok = X509_STORE_add_crl(store, crl) == 1
+            && X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK) == 1;
+    if (ok && X509_STORE_CTX_init(
+            context, store, leaf, untrusted) == 1) {
+        verify_result = X509_verify_cert(context);
+        verify_error = X509_STORE_CTX_get_error(context);
+    } else {
+        ok = 0;
+    }
+    if (ok) {
+        ok = expect_revoked
+            ? verify_result == 0 && verify_error == X509_V_ERR_CERT_REVOKED
+            : verify_result == 1;
+    }
+    sk_X509_free(untrusted);
+    X509_STORE_CTX_free(context);
+    X509_STORE_free(store);
+    ERR_clear_error();
+    return ok;
+}
+
 int main(void)
 {
     ED301V1_REQUIRE_RUNTIME_BINDING();
@@ -239,12 +324,14 @@ int main(void)
     ed301v1_property = ED301V1_PKI_PROP;
     v1 = ed301v1_load_named(NULL, &deflt, ED301V1_PKI_PROVIDER);
     EVP_PKEY *ca_key = ed301v1_keygen(NULL);
+    EVP_PKEY *intermediate_key = ed301v1_keygen(NULL);
     EVP_PKEY *leaf_key = ed301v1_keygen(NULL);
 
     ED301V1_CHECK(deflt != NULL && v1 != NULL,
         "providers in the default context");
-    ED301V1_CHECK(ca_key != NULL && leaf_key != NULL, "test keys");
-    if (ca_key == NULL || leaf_key == NULL)
+    ED301V1_CHECK(ca_key != NULL && intermediate_key != NULL
+            && leaf_key != NULL, "test keys");
+    if (ca_key == NULL || intermediate_key == NULL || leaf_key == NULL)
         return ed301v1_summary("provider_pki");
 
     /*
@@ -626,11 +713,11 @@ int main(void)
             EVP_PKEY *ec_leaf_key = make_ec_key();
             X509 *ec_ca_cert = ec_ca_key == NULL ? NULL
                 : make_cert_with_digest("classic ECDSA test CA", NULL,
-                    ec_ca_key, ec_ca_key, 1, 101, EVP_sha256());
+                    ec_ca_key, ec_ca_key, 1, 101, NULL, EVP_sha256());
             X509 *ecdsa_to_ed_leaf = ec_ca_cert == NULL ? NULL
                 : make_cert_with_digest("Ed301 under ECDSA",
                     X509_get_subject_name(ec_ca_cert), leaf_key,
-                    ec_ca_key, 0, 102, EVP_sha256());
+                    ec_ca_key, 0, 102, NULL, EVP_sha256());
             X509 *ed_to_ecdsa_leaf = ec_leaf_key == NULL ? NULL
                 : make_cert("ECDSA under Ed301",
                     X509_get_subject_name(ca_cert), ec_leaf_key,
@@ -659,13 +746,100 @@ int main(void)
         X509_free(ca_cert);
     }
 
-    /*
-     * P6 (v1/provider scope): CRL and OCSP profiles are deliberately not
-     * synthesized here; the dated decision and revisit gate are recorded in
-     * docs/OPENSSL_PATTERN_DEVIATIONS.md.
-     */
+    /* Root -> intermediate -> leaf, plus the RFC 5280 CRL boundary. */
+    {
+        X509 *root = make_cert_with_digest("Ed301 root CA", NULL, ca_key,
+            ca_key, 1, 201, "critical,CA:TRUE,pathlen:1", NULL);
+        X509 *intermediate = root == NULL ? NULL
+            : make_cert_with_digest("Ed301 intermediate CA",
+                X509_get_subject_name(root), intermediate_key, ca_key,
+                1, 202, "critical,CA:TRUE,pathlen:0", NULL);
+        X509 *revoked_leaf = intermediate == NULL ? NULL
+            : make_cert("Ed301 revoked leaf",
+                X509_get_subject_name(intermediate), leaf_key,
+                intermediate_key, 0, 203);
+        X509 *valid_leaf = intermediate == NULL ? NULL
+            : make_cert("Ed301 valid leaf",
+                X509_get_subject_name(intermediate), leaf_key,
+                intermediate_key, 0, 204);
+        X509_CRL *crl = revoked_leaf == NULL ? NULL
+            : make_crl(intermediate, intermediate_key, revoked_leaf);
+        X509 *bad_intermediate = intermediate == NULL ? NULL
+            : X509_dup(intermediate);
+        X509_CRL *bad_crl = crl == NULL ? NULL : X509_CRL_dup(crl);
+
+        ED301V1_CHECK(root != NULL && intermediate != NULL
+                && revoked_leaf != NULL && valid_leaf != NULL
+                && ed301v1_pki_certificate_is_exact(root)
+                && ed301v1_pki_certificate_is_exact(intermediate)
+                && ed301v1_pki_certificate_is_exact(revoked_leaf)
+                && verify_intermediate_chain(
+                    root, intermediate, revoked_leaf, NULL, 0),
+            "three-level Ed301 root/intermediate/leaf chain verifies");
+        ED301V1_CHECK(root != NULL && revoked_leaf != NULL
+                && !verify_direct_chain(root, revoked_leaf),
+            "three-level chain rejects a missing intermediate");
+        ED301V1_CHECK(root != NULL && revoked_leaf != NULL
+                && !verify_intermediate_chain(
+                    root, root, revoked_leaf, NULL, 0),
+            "three-level chain rejects the wrong intermediate");
+
+        if (bad_intermediate != NULL) {
+            const ASN1_BIT_STRING *signature = NULL;
+            const X509_ALGOR *algorithm = NULL;
+
+            X509_get0_signature(
+                &signature, &algorithm, bad_intermediate);
+            if (signature != NULL
+                    && ed301v1_bit_string_length(signature) > 10)
+                ((unsigned char *)ASN1_STRING_get0_data(signature))[10] ^= 1;
+        }
+        ED301V1_CHECK(root != NULL && bad_intermediate != NULL
+                && revoked_leaf != NULL
+                && !verify_intermediate_chain(
+                    root, bad_intermediate, revoked_leaf, NULL, 0),
+            "three-level chain rejects a corrupted intermediate");
+
+        ED301V1_CHECK(crl != NULL && intermediate != NULL
+                && ed301v1_pki_crl_is_exact(crl)
+                && X509_CRL_verify(crl, intermediate_key) == 1,
+            "Ed301 intermediate CRL has exact identifiers and verifies");
+        ED301V1_CHECK(root != NULL && intermediate != NULL
+                && valid_leaf != NULL && crl != NULL
+                && verify_intermediate_chain(
+                    root, intermediate, valid_leaf, crl, 0),
+            "non-revoked Ed301 leaf passes CRL checking");
+        ED301V1_CHECK(root != NULL && intermediate != NULL
+                && revoked_leaf != NULL && crl != NULL
+                && verify_intermediate_chain(
+                    root, intermediate, revoked_leaf, crl, 1),
+            "revoked Ed301 leaf fails with CERT_REVOKED");
+
+        if (bad_crl != NULL) {
+            const ASN1_BIT_STRING *signature = NULL;
+            const X509_ALGOR *algorithm = NULL;
+
+            X509_CRL_get0_signature(bad_crl, &signature, &algorithm);
+            if (signature != NULL
+                    && ed301v1_bit_string_length(signature) > 10)
+                ((unsigned char *)ASN1_STRING_get0_data(signature))[10] ^= 1;
+        }
+        ED301V1_CHECK(bad_crl != NULL
+                && X509_CRL_verify(bad_crl, intermediate_key) != 1,
+            "corrupted Ed301 CRL signature is rejected");
+        ERR_clear_error();
+
+        X509_CRL_free(bad_crl);
+        X509_free(bad_intermediate);
+        X509_CRL_free(crl);
+        X509_free(valid_leaf);
+        X509_free(revoked_leaf);
+        X509_free(intermediate);
+        X509_free(root);
+    }
 
     EVP_PKEY_free(ca_key);
+    EVP_PKEY_free(intermediate_key);
     EVP_PKEY_free(leaf_key);
     OSSL_PROVIDER_unload(v1);
     OSSL_PROVIDER_unload(deflt);

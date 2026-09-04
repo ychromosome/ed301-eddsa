@@ -31,6 +31,7 @@ Local comparison sources:
 | D5 | The assigned Ed301 OID must be byte-exact and must map to the no-digest SIGID. Historical Ed301-Sig-v1, X301, and other OIDs are foreign. | Serialization OID negatives and the host-registry assertions in `provider_pki.c`. |
 | D6 | **Deliberate deviation:** v1 accepts only PKCS#8 `PrivateKeyInfo` version 0. RFC 5958 `OneAsymmetricKey` version 1, with or without embedded public key, is rejected. The seed uniquely derives the public key and KEYMGMT validates that relation, so accepting a second embedded copy adds mismatch policy without a profile requirement. Revisit only if a later Ed301 PKI profile normatively adopts OneAsymmetricKey. | Explicit version-1 and canonical embedded-public-key rejection tests. No mismatch-acceptance path exists. |
 | D7 | Ed301-EdDSA-v1 fixes the seed at 38 bytes. The nested private-key OCTET STRING accepts neither 37 nor 39 bytes. | Independently constructed DER objects carry 37- and 39-byte seeds in `provider_serialization.c`; both reject. |
+| D8 | Adopt OpenSSL's Ed448 encrypted-private-key pattern through public APIs. The provider supplies fresh salt and IV from a dedicated public-output DRBG, constructs PBES2 with `PKCS5_pbe2_set_iv_ex`, and delegates encryption to `PKCS8_set0_pbe_ex`. The requested cipher property query also constrains the cipher, KDF and digest fetches performed by the PBES2 path. | Direct DER/PEM `EncryptedPrivateKeyInfo`, property-query, fresh-output, missing-cipher, passphrase-failure, wrong-password, PKCS#12 and teardown tests. |
 
 The ordinary and PKI artifacts expose no decoder.  The private-use TLS
 integration artifact follows OpenSSL's Ed25519/Ed448 decoder shape: separate
@@ -50,19 +51,19 @@ libcrypto's public object APIs; no other SIGID role may use that NID. It adds
 no registry, lock or cache. Concurrent third-party changes to the
 process-global object database remain outside this artifact's control.
 OpenSSL's generic chain removes PEM and standard EncryptedPrivateKeyInfo
-wrappers before the Ed301 DER decoder runs; the provider contains no PEM,
-Base64, password or encryption parser.
+wrappers before the Ed301 DER decoder runs. The encoder uses OpenSSL's public
+PBES2, cipher, KDF, ASN.1 and PEM functions; it implements none of them.
 
 ## PKI matrix
 
 | ID | Decision and contract source | Enforcement |
 | --- | --- | --- |
 | P1 | Adopt the public X.509 round-trip pattern: a self-signed Ed301 CA certificate is DER-reparsed and verified. | `provider-tests/provider_pki.c`. |
-| P2 | The optional all-Ed301 profile supports a direct Ed301 CA -> Ed301 leaf chain through `X509_STORE`. | Strict profile and store verification test. |
+| P2 | The optional all-Ed301 profile supports direct CA -> leaf and root -> path-length-constrained intermediate -> leaf chains through `X509_STORE`. | Strict profile, missing/wrong/corrupted-intermediate and store-verification tests. |
 | P3 | Mixed-algorithm interoperability is supported through generic OpenSSL X.509 validation in both directions: classic P-256 ECDSA CA -> Ed301 leaf, and Ed301 CA -> classic P-256 ECDSA leaf. Such certificates intentionally fail the all-Ed301 profile predicate where their signature algorithm or SPKI is classic. | Two public-API chain tests; no ASN.1 byte mutation. |
 | P4 | Adopt the signed-TBS integrity pattern. A serial-number mutation through `X509_set_serialNumber()` after signing must invalidate verification. | Focused semantic TBS mutation test. |
 | P5 | An Ed301 CSR must sign and verify, survive DER and PEM reparsing, retain exact SPKI/signature identifiers, and reject signature/SPKI mutations. | CSR matrix in `provider_pki.c`. |
-| P6 | **Not supported in v1:** no Ed301 CRL-signing or OCSP-response profile is claimed. Their object identifiers, responder authorization, freshness and extension policies are not defined by the signature profile. Revisit only with a separate PKI profile and permanent identifiers; do not infer support merely because generic EVP signing could be wired to those containers. | Register-only negative scope decision; no synthetic CRL/OCSP test. |
+| P6 | X.509 CRLs use the same parameterless Ed301 signature identifier. An intermediate may sign a CRL and `X509_STORE` enforces leaf revocation. OCSP remains outside v1 because responder authorization, freshness and stapling are not specified. | Exact CRL identifier/signature, mutation, non-revoked and `CERT_REVOKED` tests. |
 
 ## SIGNATURE decisions reserved by the same register
 

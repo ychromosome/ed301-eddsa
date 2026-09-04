@@ -14,7 +14,7 @@ assigns number `66282` to Adiumentum GmbH. The ED301 project uses the subtree
 The `.301.4` OID binds the exact manifest-defined Ed301-EdDSA-v1 byte profile,
 including its Ed448-style native domain. It is used without
 `AlgorithmIdentifier` parameters for both the key algorithm in SPKI/PKCS#8
-and the signature algorithm in CSR and certificate objects. The fixed
+and the signature algorithm in CSR, certificate and CRL objects. The fixed
 encodings contain a 38-byte raw public key, a 38-byte private seed and a
 76-byte signature. The canonical DER sizes are 58 bytes for SPKI and 62 bytes
 for PKCS#8.

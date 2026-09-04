@@ -112,6 +112,30 @@ static inline int ed301v1_pki_certificate_is_exact(const X509 *certificate)
             X509_get_X509_PUBKEY((X509 *)certificate));
 }
 
+static inline int ed301v1_pki_crl_is_exact(const X509_CRL *crl)
+{
+    const ASN1_BIT_STRING *signature = NULL;
+    const X509_ALGOR *outer = NULL;
+
+    if (crl == NULL)
+        return 0;
+    X509_CRL_get0_signature(crl, &signature, &outer);
+    if (signature == NULL
+            || ed301v1_bit_string_length(signature) != ED301V1_SIG_BYTES
+            || !ed301v1_pki_algorithm_is_exact(outer))
+        return 0;
+#if OPENSSL_VERSION_MAJOR >= 4
+    {
+        const X509_ALGOR *tbs = X509_CRL_get0_tbs_sigalg(crl);
+
+        if (!ed301v1_pki_algorithm_is_exact(tbs)
+                || X509_ALGOR_cmp(outer, tbs) != 0)
+            return 0;
+    }
+#endif
+    return 1;
+}
+
 static inline int ed301v1_pki_verify_request(
     X509_REQ *request,
     EVP_PKEY *public_key)
