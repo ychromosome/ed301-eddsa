@@ -24,4 +24,12 @@ case $commit in
 esac
 test "${#commit}" -eq 40
 
+grep -F 'opensslcnf-zz-ed301.config.example' "$SPEC" >/dev/null
+if sed '/^%changelog/,$d' "$SPEC" \
+        | grep -F '%{_sysconfdir}/crypto-policies/local.d/' >/dev/null
+then
+    echo 'policy package still installs an active crypto-policy overlay' >&2
+    exit 1
+fi
+
 printf '%s\n' 'ed301_rpm_packaging=PASS'

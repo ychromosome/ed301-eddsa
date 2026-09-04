@@ -10,7 +10,7 @@
 
 Name:           ed301-openssl-provider
 Version:        0.1.0
-Release:        0.10.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.11.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental Ed301-EdDSA provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
@@ -48,17 +48,14 @@ standardized or FIPS validated.
 Summary:        Private-use Ed301 TLS experiment for the review environment
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 Requires:       openssl-libs%{?_isa} = %{openssl_fork_evr}
-Requires:       crypto-policies-scripts
+# Rebuild once after upgrading from releases that installed a local.d file.
 Requires(posttrans): crypto-policies-scripts
-Requires(postun): crypto-policies-scripts
 
 %description policy
 This laboratory package activates the separately named Ed301 TLS experiment
 provider. It advertises a private-use TLS signature scheme for the joint test.
-It also installs an explicit OpenSSL overlay that places the private-use Ed301
-TLS signature algorithm before the nonempty Fedora signature-algorithm list.
-The overlay is not a native crypto-policies module and must not be used with
-FIPS, BSI, EMPTY or another closed policy.
+It includes an inert OpenSSL policy-fragment example but does not change the
+selected Fedora crypto policy.
 
 %prep
 %setup -q -n ed301-eddsa-%{commit}
@@ -67,6 +64,7 @@ test "$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')" = \
 sha256sum --strict --quiet -c SOURCE_MANIFEST.sha256
 %autopatch -p1
 install -pm 0644 %{SOURCE3} README.crypto-policy
+install -pm 0644 %{SOURCE2} opensslcnf-zz-ed301.config.example
 pushd provider
 %cargo_prep -v ../vendor
 popd
@@ -105,8 +103,6 @@ install -Dpm 0755 target/rpm-package-modules/ed301_eddsa_v1_tls_test.so \
     %{buildroot}%{provider_modulesdir}/ed301_eddsa_v1_tls_test.so
 install -Dpm 0644 %{SOURCE1} \
     %{buildroot}%{_sysconfdir}/pki/tls/openssl.d/ed301-tls-experiment.conf
-install -Dpm 0644 %{SOURCE2} \
-    %{buildroot}%{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-ed301.config
 
 %check
 %if %{with tests}
@@ -184,9 +180,8 @@ grep -F 'pub:' "$test_dir/ed301-key-text.txt" >/dev/null
 %{provider_modulesdir}/ed301_eddsa_v1.so
 
 %files policy
-%doc README.crypto-policy
+%doc README.crypto-policy opensslcnf-zz-ed301.config.example
 %config(noreplace) %{_sysconfdir}/pki/tls/openssl.d/ed301-tls-experiment.conf
-%config(noreplace) %{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-ed301.config
 %{provider_modulesdir}/ed301_eddsa_v1_tls_test.so
 
 %posttrans
@@ -196,21 +191,11 @@ exit 0
 
 %posttrans policy
 if ! %{_bindir}/update-crypto-policies; then
-    echo 'error: failed to regenerate the selected crypto policy' >&2
+    echo 'error: failed to remove a previous Ed301 policy overlay' >&2
     exit 1
 fi
 echo 'WARNING: The private-use Ed301 TLS experiment is active for laboratory review.'
-echo 'The OpenSSL overlay places ed301_eddsa_v1_test before Fedora signature algorithms.'
-echo 'Remove this package before selecting FIPS, BSI, EMPTY or another closed policy.'
-exit 0
-
-%postun policy
-if [ "$1" -eq 0 ]; then
-    if ! %{_bindir}/update-crypto-policies; then
-        echo 'error: failed to regenerate crypto policy after removing Ed301 policy' >&2
-        exit 1
-    fi
-fi
+echo 'Fedora crypto-policy preferences were not changed.'
 exit 0
 
 %changelog
