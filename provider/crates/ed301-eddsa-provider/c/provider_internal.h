@@ -16,6 +16,7 @@
 #include <openssl/core.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 
 typedef struct ed301v1_signature_rust_api_st {
     uint32_t abi_version;
@@ -96,6 +97,9 @@ typedef struct ed301v1_signature_rust_api_st {
 typedef struct ed301v1_provider_context_st {
     const OSSL_CORE_HANDLE *handle;
     OSSL_LIB_CTX *libctx;
+    EVP_RAND_CTX *private_drbg;
+    EVP_RAND_CTX *public_drbg;
+    CRYPTO_RWLOCK *drbg_lock;
     OSSL_FUNC_CRYPTO_zalloc_fn *zalloc;
     OSSL_FUNC_CRYPTO_clear_free_fn *clear_free;
     OSSL_FUNC_core_new_error_fn *new_error;

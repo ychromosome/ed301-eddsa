@@ -22,6 +22,20 @@ static int unit_verify_init_result = 1;
 static unsigned char unit_context[ED301V1_MAX_CONTEXT_BYTES];
 static size_t unit_context_length;
 
+static void *unit_zalloc(size_t size, const char *file, int line)
+{
+    return CRYPTO_zalloc(size, file, line);
+}
+
+static void unit_clear_free(
+    void *pointer,
+    size_t size,
+    const char *file,
+    int line)
+{
+    CRYPTO_clear_free(pointer, size, file, line);
+}
+
 static int unit_signature_verify(
     const void *signature,
     const unsigned char *message,
@@ -351,9 +365,13 @@ int main(void)
 {
     ED301V1_SIGNATURE_RUST_API api;
     const OSSL_PARAM *settable;
+    ED301V1_PROVIDER_CONTEXT codec_provider = { 0 };
     ED301V1_CODEC_CONTEXT codec = { 0 };
-    OSSL_PARAM cipher[2];
+    OSSL_PARAM cipher[3];
+    OSSL_PARAM invalid_cipher[2];
+    OSSL_PARAM clear_cipher[2];
     OSSL_PARAM properties[2];
+    OSSL_PROVIDER *codec_default = NULL;
 
     ED301V1_REQUIRE_RUNTIME_BINDING();
     unit_fill_api(&api);
@@ -508,28 +526,62 @@ int main(void)
         "incomplete core version rejected");
 
     settable = ed301v1_private_codec_settable_ctx_params(NULL);
-    ED301V1_CHECK(settable != NULL && settable[0].key == NULL,
-        "private encoder advertises an empty settable list");
+    ED301V1_CHECK(settable != NULL
+            && strcmp(settable[0].key, OSSL_ENCODER_PARAM_CIPHER) == 0
+            && strcmp(settable[1].key, OSSL_ENCODER_PARAM_PROPERTIES) == 0
+            && settable[2].key == NULL,
+        "private encoder advertises cipher and property parameters");
 
+    codec_provider.libctx = OSSL_LIB_CTX_new();
+    codec_provider.zalloc = unit_zalloc;
+    codec_provider.clear_free = unit_clear_free;
+    codec_default = codec_provider.libctx == NULL ? NULL
+        : OSSL_PROVIDER_load(codec_provider.libctx, "default");
+    codec.provider = &codec_provider;
     codec.structure = ED301V1_CODEC_PRIVATE_KEY_INFO;
     cipher[0] = OSSL_PARAM_construct_utf8_string(
         OSSL_ENCODER_PARAM_CIPHER, "AES-256-CBC", 0);
-    cipher[1] = OSSL_PARAM_construct_end();
-    ED301V1_CHECK(ed301v1_private_codec_set_ctx_params(&codec, cipher) == 0,
-        "encoder cipher remains rejected");
-    ED301V1_CHECK(codec.invalid == 1,
-        "rejected encoder cipher poisons the context");
-    ERR_clear_error();
+    cipher[1] = OSSL_PARAM_construct_utf8_string(
+        OSSL_ENCODER_PARAM_PROPERTIES, "provider=default", 0);
+    cipher[2] = OSSL_PARAM_construct_end();
+    ED301V1_CHECK(codec_default != NULL
+            && ed301v1_private_codec_set_ctx_params(&codec, cipher) == 1
+            && codec.cipher != NULL && codec.cipher_intent
+            && codec.cipher_properties != NULL
+            && strcmp(codec.cipher_properties, "provider=default") == 0
+            && !codec.invalid,
+        "private encoder retains the requested cipher properties");
 
-    codec.invalid = 0;
     properties[0] = OSSL_PARAM_construct_utf8_string(
         OSSL_ENCODER_PARAM_PROPERTIES, "provider=default", 0);
     properties[1] = OSSL_PARAM_construct_end();
-    ED301V1_CHECK(ed301v1_private_codec_set_ctx_params(&codec, properties) == 0,
-        "encoder properties remain rejected");
-    ED301V1_CHECK(codec.invalid == 1,
-        "rejected encoder properties poison the context");
+    ED301V1_CHECK(ed301v1_private_codec_set_ctx_params(
+            &codec, properties) == 1 && !codec.invalid,
+        "properties without a cipher leave the encoder unchanged");
+
+    invalid_cipher[0] = OSSL_PARAM_construct_utf8_string(
+        OSSL_ENCODER_PARAM_CIPHER, "ED301-NO-SUCH-CIPHER", 0);
+    invalid_cipher[1] = OSSL_PARAM_construct_end();
+    ED301V1_CHECK(ed301v1_private_codec_set_ctx_params(
+            &codec, invalid_cipher) == 0 && codec.invalid,
+        "an unavailable cipher poisons the encoder context");
     ERR_clear_error();
+
+    clear_cipher[0] = OSSL_PARAM_construct_utf8_string(
+        OSSL_ENCODER_PARAM_CIPHER, NULL, 0);
+    clear_cipher[1] = OSSL_PARAM_construct_end();
+    ED301V1_CHECK(ed301v1_private_codec_set_ctx_params(
+            &codec, clear_cipher) == 1 && codec.cipher == NULL
+            && codec.cipher_properties == NULL
+            && codec.cipher_properties_length == 0
+            && !codec.cipher_intent && !codec.invalid,
+        "a NULL cipher resets the encoder to unencrypted output");
+
+    EVP_CIPHER_free(codec.cipher);
+    ed301v1_clear_free(&codec_provider, codec.cipher_properties,
+        codec.cipher_properties_length);
+    OSSL_PROVIDER_unload(codec_default);
+    OSSL_LIB_CTX_free(codec_provider.libctx);
 
     return ed301v1_summary("provider_shim_unit");
 }

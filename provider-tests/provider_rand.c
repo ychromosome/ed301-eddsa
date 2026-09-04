@@ -3,10 +3,10 @@
  * OpenSSL RAND policy through the provider child OSSL_LIB_CTX.
  *
  * A deterministic, host-owned RAND provider is loaded in the parent context
- * and selected with parent default properties.  Child-context mirroring must
- * make its CTR-DRBG implementation visible to RAND_priv_bytes_ex().  The
- * generated Ed301 private seed must be byte-exact, and an injected RAND
- * failure must make key generation fail closed and subsequently recover.
+ * and selected with parent default properties. Child-context mirroring makes
+ * it visible to the provider-owned, primary-parented CTR-DRBG. The generated
+ * seed must be byte-exact, and an injected failure must make key generation
+ * fail closed and subsequently recover.
  */
 
 #include <stdlib.h>
@@ -19,6 +19,7 @@
 
 #define TEST_RAND_PROVIDER "ed301_test_rand"
 #define TEST_RAND_PROPERTY "provider=ed301_test_rand"
+#define CONCURRENT_KEYGEN_THREADS 4
 
 typedef struct test_rand_context_st {
     int state;
@@ -39,6 +40,114 @@ typedef struct lifecycle_worker_st {
     int keygen_ok;
 } LIFECYCLE_WORKER;
 
+typedef struct concurrent_gate_st {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    unsigned int ready;
+    int start;
+} CONCURRENT_GATE;
+
+typedef struct concurrent_keygen_worker_st {
+    OSSL_LIB_CTX *libctx;
+    CONCURRENT_GATE *gate;
+    unsigned char public_key[ED301V1_PUB_BYTES];
+    int ok;
+} CONCURRENT_KEYGEN_WORKER;
+
+static void *concurrent_keygen_worker(void *argument)
+{
+    CONCURRENT_KEYGEN_WORKER *worker = argument;
+    EVP_PKEY *key;
+    size_t length = sizeof(worker->public_key);
+
+    pthread_mutex_lock(&worker->gate->mutex);
+    worker->gate->ready++;
+    pthread_cond_broadcast(&worker->gate->condition);
+    while (!worker->gate->start)
+        pthread_cond_wait(&worker->gate->condition, &worker->gate->mutex);
+    pthread_mutex_unlock(&worker->gate->mutex);
+
+    key = ed301v1_keygen(worker->libctx);
+    worker->ok = key != NULL
+        && EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
+            worker->public_key, sizeof(worker->public_key), &length) == 1
+        && length == sizeof(worker->public_key);
+    EVP_PKEY_free(key);
+    OPENSSL_thread_stop_ex(worker->libctx);
+    return NULL;
+}
+
+static int concurrent_default_keygen_is_distinct(void)
+{
+    OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *v1 = NULL;
+    CONCURRENT_GATE gate;
+    CONCURRENT_KEYGEN_WORKER workers[CONCURRENT_KEYGEN_THREADS];
+    pthread_t threads[CONCURRENT_KEYGEN_THREADS];
+    unsigned char zero[ED301V1_PUB_BYTES] = { 0 };
+    size_t created = 0;
+    size_t index;
+    size_t other;
+    int mutex_ready = 0;
+    int condition_ready = 0;
+    int result = 0;
+
+    memset(&gate, 0, sizeof(gate));
+    memset(workers, 0, sizeof(workers));
+    if (libctx == NULL
+            || (deflt = OSSL_PROVIDER_load(libctx, "default")) == NULL
+            || (v1 = OSSL_PROVIDER_load(libctx, ED301V1_PROVIDER)) == NULL)
+        goto done;
+    mutex_ready = pthread_mutex_init(&gate.mutex, NULL) == 0;
+    condition_ready = mutex_ready
+        && pthread_cond_init(&gate.condition, NULL) == 0;
+    if (!condition_ready)
+        goto done;
+    for (index = 0; index < CONCURRENT_KEYGEN_THREADS; index++) {
+        workers[index].libctx = libctx;
+        workers[index].gate = &gate;
+        if (pthread_create(&threads[index], NULL,
+                concurrent_keygen_worker, &workers[index]) != 0)
+            break;
+        created++;
+    }
+    pthread_mutex_lock(&gate.mutex);
+    while (gate.ready < created)
+        pthread_cond_wait(&gate.condition, &gate.mutex);
+    gate.start = 1;
+    pthread_cond_broadcast(&gate.condition);
+    pthread_mutex_unlock(&gate.mutex);
+    for (index = 0; index < created; index++)
+        pthread_join(threads[index], NULL);
+    if (created != CONCURRENT_KEYGEN_THREADS)
+        goto done;
+    result = 1;
+    for (index = 0; index < created; index++) {
+        if (!workers[index].ok
+                || CRYPTO_memcmp(workers[index].public_key,
+                    zero, sizeof(zero)) == 0)
+            result = 0;
+        for (other = 0; other < index; other++) {
+            if (CRYPTO_memcmp(workers[index].public_key,
+                    workers[other].public_key,
+                    sizeof(workers[index].public_key)) == 0)
+                result = 0;
+        }
+    }
+
+done:
+    if (condition_ready)
+        pthread_cond_destroy(&gate.condition);
+    if (mutex_ready)
+        pthread_mutex_destroy(&gate.mutex);
+    OSSL_PROVIDER_unload(v1);
+    OSSL_PROVIDER_unload(deflt);
+    OSSL_LIB_CTX_free(libctx);
+    ERR_clear_error();
+    return result;
+}
+
 static void *lifecycle_keygen_worker(void *argument)
 {
     LIFECYCLE_WORKER *worker = argument;
@@ -46,6 +155,8 @@ static void *lifecycle_keygen_worker(void *argument)
 
     worker->keygen_ok = key != NULL;
     EVP_PKEY_free(key);
+    /* Release application-context thread state, if any. */
+    OPENSSL_thread_stop_ex(worker->libctx);
     if (pthread_mutex_lock(&worker->mutex) != 0)
         return NULL;
     worker->ready = 1;
@@ -245,6 +356,37 @@ static int test_rand_provider_init(
     return 1;
 }
 
+static int ed301_first_load_has_no_child_fallback(void)
+{
+    OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *v1 = NULL;
+    EVP_PKEY *before = NULL;
+    EVP_PKEY *after = NULL;
+    int result = 0;
+
+    if (libctx == NULL
+            || (v1 = OSSL_PROVIDER_load(libctx, ED301V1_PROVIDER)) == NULL)
+        goto done;
+    ERR_clear_error();
+    before = ed301v1_keygen(libctx);
+    if (before != NULL || OSSL_PROVIDER_available(libctx, "default") != 0)
+        goto done;
+    ERR_clear_error();
+    deflt = OSSL_PROVIDER_load(libctx, "default");
+    after = deflt == NULL ? NULL : ed301v1_keygen(libctx);
+    result = after != NULL;
+
+done:
+    ERR_clear_error();
+    EVP_PKEY_free(after);
+    EVP_PKEY_free(before);
+    OSSL_PROVIDER_unload(v1);
+    OSSL_PROVIDER_unload(deflt);
+    OSSL_LIB_CTX_free(libctx);
+    return result;
+}
+
 int main(void)
 {
     ED301V1_REQUIRE_RUNTIME_BINDING();
@@ -257,6 +399,7 @@ int main(void)
     EVP_PKEY *weak_key = NULL;
     EVP_PKEY *failed_key = NULL;
     EVP_PKEY *recovered_key = NULL;
+    EVP_PKEY *warm_policy_key = NULL;
     unsigned char expected[ED301V1_SEED_BYTES];
     static const unsigned char expected_public[ED301V1_PUB_BYTES] = {
         0xca, 0x69, 0x43, 0x21, 0xce, 0x6f, 0xce, 0x86,
@@ -279,6 +422,12 @@ int main(void)
     int mutex_ready = 0;
     int condition_ready = 0;
     int synchronization_ready = 0;
+
+    ED301V1_CHECK(ed301_first_load_has_no_child_fallback(),
+        "Ed301-first load remains keygen-disabled until application RAND "
+        "becomes available");
+    ED301V1_CHECK(concurrent_default_keygen_is_distinct(),
+        "concurrent keygen uses the locked private DRBG and distinct keys");
 
     for (index = 0; index < sizeof(expected); index++)
         expected[index] = (unsigned char)(0xa0U + (index % 0x40U));
@@ -331,6 +480,15 @@ int main(void)
             && memcmp(actual_public, expected_public,
                 sizeof(actual_public)) == 0,
         "deterministic RAND seed derives the independently fixed public key");
+
+    ED301V1_CHECK(EVP_set_default_properties(libctx, ED301V1_PROP) == 1,
+        "application policy can tighten after DRBG creation");
+    warm_policy_key = ed301v1_keygen(libctx);
+    ED301V1_CHECK(warm_policy_key != NULL,
+        "warm provider DRBG remains usable after a policy change");
+    ED301V1_CHECK(EVP_set_default_properties(
+            libctx, TEST_RAND_PROPERTY) == 1,
+        "application RAND policy restored");
 
     /*
      * R1 -- PureEdDSA determinism and RAND separation.
@@ -426,6 +584,8 @@ int main(void)
 
         EVP_PKEY_free(recovered_key);
         recovered_key = NULL;
+        EVP_PKEY_free(warm_policy_key);
+        warm_policy_key = NULL;
         EVP_PKEY_free(failed_key);
         failed_key = NULL;
         EVP_PKEY_free(weak_key);
@@ -460,6 +620,7 @@ int main(void)
     OPENSSL_cleanse(expected, sizeof(expected));
     EVP_PKEY_free(weak_key);
     EVP_PKEY_free(recovered_key);
+    EVP_PKEY_free(warm_policy_key);
     EVP_PKEY_free(failed_key);
     EVP_PKEY_free(kat_key);
     EVP_PKEY_free(key);

@@ -28,10 +28,13 @@
 #include <openssl/core_names.h>
 #include <openssl/core_object.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 #include <openssl/opensslv.h>
 #include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/pem.h>
+#include <openssl/pkcs12.h>
+#include <openssl/provider.h>
 #include <openssl/rand.h>
 
 /*
@@ -71,6 +74,7 @@
 #define ED301V1_PUBLIC_KEY_BYTES ((size_t)38)
 #define ED301V1_SIGNATURE_BYTES ((size_t)76)
 #define ED301V1_MAX_CONTEXT_BYTES ((size_t)255)
+#define ED301V1_PKCS8_SALT_BYTES ((size_t)16)
 #define ED301V1_BITS 301
 #define ED301V1_SECURITY_BITS 149
 #define ED301V1_TLS_VERSION_1_3 0x0304
@@ -257,7 +261,8 @@ typedef struct ed301v1_signature_context_st {
 typedef enum ed301v1_codec_structure_st {
     ED301V1_CODEC_PRIVATE_KEY_INFO = 1,
     ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO = 2,
-    ED301V1_CODEC_KEY_TEXT = 3
+    ED301V1_CODEC_KEY_TEXT = 3,
+    ED301V1_CODEC_ENCRYPTED_PRIVATE_KEY_INFO = 4
 } ED301V1_CODEC_STRUCTURE;
 
 typedef enum ed301v1_codec_format_st {
@@ -270,6 +275,10 @@ typedef struct ed301v1_codec_context_st {
     ED301V1_PROVIDER_CONTEXT *provider;
     ED301V1_CODEC_STRUCTURE structure;
     ED301V1_CODEC_FORMAT format;
+    EVP_CIPHER *cipher;
+    char *cipher_properties;
+    size_t cipher_properties_length;
+    int cipher_intent;
     int selection;
     int invalid;
 } ED301V1_CODEC_CONTEXT;
@@ -882,6 +891,86 @@ static void *ed301v1_key_gen_init(
     return generation;
 }
 
+/* OpenSSL-owned DRBG with no child-context thread-local instance. */
+static EVP_RAND_CTX *ed301v1_drbg_new(OSSL_LIB_CTX *libctx)
+{
+    EVP_RAND_CTX *parent;
+    EVP_RAND *rand;
+    EVP_RAND_CTX *drbg;
+    OSSL_PARAM parameters[2];
+
+    parent = RAND_get0_primary(libctx);
+    if (parent == NULL)
+        return NULL;
+    rand = EVP_RAND_fetch(libctx, "CTR-DRBG", NULL);
+    if (rand == NULL)
+        return NULL;
+    drbg = EVP_RAND_CTX_new(rand, parent);
+    EVP_RAND_free(rand);
+    if (drbg == NULL)
+        return NULL;
+    parameters[0] = OSSL_PARAM_construct_utf8_string(
+        OSSL_DRBG_PARAM_CIPHER, (char *)"AES-256-CTR", 0);
+    parameters[1] = OSSL_PARAM_construct_end();
+    if (EVP_RAND_enable_locking(drbg) != 1
+            || EVP_RAND_instantiate(drbg, ED301V1_SECURITY_BITS, 0,
+                NULL, 0, parameters) != 1) {
+        EVP_RAND_CTX_free(drbg);
+        return NULL;
+    }
+    return drbg;
+}
+
+static void ed301v1_drbg_free(EVP_RAND_CTX *drbg)
+{
+    if (drbg == NULL)
+        return;
+    (void)EVP_RAND_uninstantiate(drbg);
+    EVP_RAND_CTX_free(drbg);
+}
+
+static EVP_RAND_CTX *ed301v1_drbg_get(
+    ED301V1_PROVIDER_CONTEXT *provider,
+    int private_output)
+{
+    EVP_RAND_CTX **slot;
+    EVP_RAND_CTX *drbg;
+
+    if (provider == NULL || provider->libctx == NULL
+            || provider->drbg_lock == NULL)
+        return NULL;
+    slot = private_output
+        ? &provider->private_drbg : &provider->public_drbg;
+    if (CRYPTO_THREAD_read_lock(provider->drbg_lock) != 1)
+        return NULL;
+    drbg = *slot;
+    CRYPTO_THREAD_unlock(provider->drbg_lock);
+    if (drbg != NULL)
+        return drbg;
+    if (CRYPTO_THREAD_write_lock(provider->drbg_lock) != 1)
+        return NULL;
+    drbg = *slot;
+    if (drbg == NULL) {
+        drbg = ed301v1_drbg_new(provider->libctx);
+        *slot = drbg;
+    }
+    CRYPTO_THREAD_unlock(provider->drbg_lock);
+    return drbg;
+}
+
+static int ed301v1_fill_random(
+    ED301V1_PROVIDER_CONTEXT *provider,
+    unsigned char *output,
+    size_t output_length,
+    int private_output)
+{
+    EVP_RAND_CTX *drbg = ed301v1_drbg_get(provider, private_output);
+
+    return drbg != NULL && output != NULL
+        && EVP_RAND_generate(drbg, output, output_length,
+            ED301V1_SECURITY_BITS, 0, NULL, 0) == 1;
+}
+
 static void *ed301v1_key_gen(
     void *generation_context,
     OSSL_CALLBACK *progress_callback,
@@ -903,11 +992,7 @@ static void *ed301v1_key_gen(
         return NULL;
     rust = provider->rust;
 
-    if (RAND_priv_bytes_ex(
-            provider->libctx,
-            seed,
-            sizeof(seed),
-            ED301V1_SECURITY_BITS) != 1) {
+    if (!ed301v1_fill_random(provider, seed, sizeof(seed), 1)) {
         ed301v1_raise(provider, ED301V1_R_INVALID_KEY,
             "OpenSSL private RAND failed during Ed301-EdDSA-v1 key generation");
         goto cleanup;
@@ -925,14 +1010,6 @@ cleanup:
     rust->cleanse(seed, sizeof(seed));
     if (inner != NULL)
         rust->key_free(inner);
-    /*
-     * RAND_priv_bytes_ex() may create private-DRBG state owned by this
-     * thread and keyed by the provider child OSSL_LIB_CTX.  Key generation
-     * is the provider's only child-context operation, and no such operation
-     * is live reentrantly here, so release that state on the same thread
-     * before provider teardown can free the child context.
-     */
-    OPENSSL_thread_stop_ex(provider->libctx);
     return key;
 }
 
@@ -1456,6 +1533,10 @@ static ED301V1_CODEC_CONTEXT *ed301v1_codec_new_context(
     codec->provider = provider;
     codec->structure = structure;
     codec->format = format;
+    codec->cipher = NULL;
+    codec->cipher_properties = NULL;
+    codec->cipher_properties_length = 0;
+    codec->cipher_intent = 0;
     codec->selection = 0;
     codec->invalid = 0;
     return codec;
@@ -1474,6 +1555,24 @@ static void *ed301v1_pkcs8_pem_codec_new_context(void *provider_context)
     return ed301v1_codec_new_context(
         provider_context,
         ED301V1_CODEC_PRIVATE_KEY_INFO,
+        ED301V1_CODEC_FORMAT_PEM);
+}
+
+static void *ed301v1_encrypted_pkcs8_der_codec_new_context(
+    void *provider_context)
+{
+    return ed301v1_codec_new_context(
+        provider_context,
+        ED301V1_CODEC_ENCRYPTED_PRIVATE_KEY_INFO,
+        ED301V1_CODEC_FORMAT_DER);
+}
+
+static void *ed301v1_encrypted_pkcs8_pem_codec_new_context(
+    void *provider_context)
+{
+    return ed301v1_codec_new_context(
+        provider_context,
+        ED301V1_CODEC_ENCRYPTED_PRIVATE_KEY_INFO,
         ED301V1_CODEC_FORMAT_PEM);
 }
 
@@ -1511,7 +1610,21 @@ static void ed301v1_codec_free_context(void *codec_context)
     if (codec == NULL)
         return;
     provider = codec->provider;
+    EVP_CIPHER_free(codec->cipher);
+    codec->cipher = NULL;
+    ed301v1_clear_free(provider, codec->cipher_properties,
+        codec->cipher_properties_length);
+    codec->cipher_properties = NULL;
+    codec->cipher_properties_length = 0;
     ed301v1_clear_free(provider, codec, sizeof(*codec));
+}
+
+static int ed301v1_codec_is_private(const ED301V1_CODEC_CONTEXT *codec)
+{
+    return codec != NULL
+        && (codec->structure == ED301V1_CODEC_PRIVATE_KEY_INFO
+            || codec->structure
+                == ED301V1_CODEC_ENCRYPTED_PRIVATE_KEY_INFO);
 }
 
 static int ed301v1_codec_required_selection(
@@ -1519,7 +1632,7 @@ static int ed301v1_codec_required_selection(
 {
     if (codec == NULL)
         return 0;
-    if (codec->structure == ED301V1_CODEC_PRIVATE_KEY_INFO)
+    if (ed301v1_codec_is_private(codec))
         return OSSL_KEYMGMT_SELECT_PRIVATE_KEY;
     if (codec->structure == ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO)
         return OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
@@ -1534,7 +1647,7 @@ static int ed301v1_codec_does_selection(void *codec_context, int selection)
 
     if (codec == NULL)
         return 0;
-    if (codec->structure == ED301V1_CODEC_PRIVATE_KEY_INFO)
+    if (ed301v1_codec_is_private(codec))
         return selection == 0
             || (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0;
     if (codec->structure == ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO)
@@ -1583,6 +1696,8 @@ static const OSSL_PARAM *ed301v1_private_codec_settable_ctx_params(
     void *provider_context)
 {
     static const OSSL_PARAM parameters[] = {
+        OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_CIPHER, NULL, 0),
+        OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_PROPERTIES, NULL, 0),
         OSSL_PARAM_END
     };
 
@@ -1595,21 +1710,74 @@ static int ed301v1_private_codec_set_ctx_params(
     const OSSL_PARAM parameters[])
 {
     ED301V1_CODEC_CONTEXT *codec = codec_context;
+    const OSSL_PARAM *cipher_parameter;
+    const OSSL_PARAM *properties_parameter;
+    const char *cipher_name = NULL;
+    const char *properties = NULL;
+    EVP_CIPHER *cipher;
+    char *properties_copy = NULL;
+    size_t properties_length = 0;
 
-    if (codec == NULL
-            || codec->structure != ED301V1_CODEC_PRIVATE_KEY_INFO)
+    if (!ed301v1_codec_is_private(codec) || codec->provider == NULL
+            || codec->provider->libctx == NULL)
         return 0;
     if (parameters == NULL)
         return 1;
-    if (OSSL_PARAM_locate_const(
-            parameters, OSSL_ENCODER_PARAM_CIPHER) != NULL
-            || OSSL_PARAM_locate_const(
-                parameters, OSSL_ENCODER_PARAM_PROPERTIES) != NULL) {
+    cipher_parameter = OSSL_PARAM_locate_const(
+        parameters, OSSL_ENCODER_PARAM_CIPHER);
+    if (cipher_parameter == NULL)
+        return 1;
+    properties_parameter = OSSL_PARAM_locate_const(
+        parameters, OSSL_ENCODER_PARAM_PROPERTIES);
+    if (!OSSL_PARAM_get_utf8_string_ptr(cipher_parameter, &cipher_name)
+            || (properties_parameter != NULL
+                && !OSSL_PARAM_get_utf8_string_ptr(
+                    properties_parameter, &properties))) {
         codec->invalid = 1;
         ed301v1_raise(codec->provider, ED301V1_R_SERIALIZATION_FAILURE,
-            "direct encrypted PKCS#8 is not supported by this encoder");
+            "invalid encrypted PKCS#8 cipher parameters");
         return 0;
     }
+    if (cipher_name == NULL) {
+        EVP_CIPHER_free(codec->cipher);
+        codec->cipher = NULL;
+        ed301v1_clear_free(codec->provider, codec->cipher_properties,
+            codec->cipher_properties_length);
+        codec->cipher_properties = NULL;
+        codec->cipher_properties_length = 0;
+        codec->cipher_intent = 0;
+        codec->invalid = 0;
+        return 1;
+    }
+    codec->cipher_intent = 1;
+    cipher = EVP_CIPHER_fetch(
+        codec->provider->libctx, cipher_name, properties);
+    if (cipher == NULL) {
+        codec->invalid = 1;
+        ed301v1_raise(codec->provider, ED301V1_R_SERIALIZATION_FAILURE,
+            "encrypted PKCS#8 cipher fetch failed");
+        return 0;
+    }
+    if (properties != NULL) {
+        properties_length = strlen(properties) + 1;
+        properties_copy = ed301v1_allocate(
+            codec->provider, properties_length);
+        if (properties_copy == NULL) {
+            EVP_CIPHER_free(cipher);
+            codec->invalid = 1;
+            ed301v1_raise(codec->provider, ED301V1_R_ALLOCATION_FAILURE,
+                "encrypted PKCS#8 property allocation failed");
+            return 0;
+        }
+        memcpy(properties_copy, properties, properties_length);
+    }
+    EVP_CIPHER_free(codec->cipher);
+    ed301v1_clear_free(codec->provider, codec->cipher_properties,
+        codec->cipher_properties_length);
+    codec->cipher = cipher;
+    codec->cipher_properties = properties_copy;
+    codec->cipher_properties_length = properties_length;
+    codec->invalid = 0;
     return 1;
 }
 
@@ -1621,7 +1789,7 @@ static const unsigned char *ed301v1_codec_prefix(
     if (prefix_length == NULL || encoded_length == NULL || codec == NULL)
         return NULL;
 
-    if (codec->structure == ED301V1_CODEC_PRIVATE_KEY_INFO) {
+    if (ed301v1_codec_is_private(codec)) {
         *prefix_length = sizeof(ED301V1_PKCS8_PREFIX);
         *encoded_length = sizeof(ED301V1_PKCS8_PREFIX)
             + ED301V1_SEED_BYTES;
@@ -1801,6 +1969,76 @@ static int ed301v1_codec_write_pem(
     return result;
 }
 
+/* OpenSSL's Ed448 encoder pattern, using only public PKCS#8 APIs. */
+static int ed301v1_codec_write_encrypted_pkcs8(
+    const ED301V1_CODEC_CONTEXT *codec,
+    OSSL_CORE_BIO *output,
+    const unsigned char *der,
+    size_t der_length,
+    OSSL_PASSPHRASE_CALLBACK *passphrase_callback,
+    void *passphrase_argument)
+{
+    char passphrase[PEM_BUFSIZE] = { 0 };
+    unsigned char salt[ED301V1_PKCS8_SALT_BYTES] = { 0 };
+    unsigned char iv[EVP_MAX_IV_LENGTH] = { 0 };
+    size_t passphrase_length = 0;
+    const unsigned char *cursor = der;
+    PKCS8_PRIV_KEY_INFO *private_key_info = NULL;
+    X509_ALGOR *pbe = NULL;
+    X509_SIG *encrypted = NULL;
+    BIO *bio = NULL;
+    int iv_length;
+    int result = 0;
+
+    if (codec == NULL || codec->provider == NULL
+            || codec->provider->libctx == NULL || codec->cipher == NULL
+            || output == NULL || der == NULL || der_length > LONG_MAX
+            || passphrase_callback == NULL)
+        goto cleanup;
+    private_key_info = d2i_PKCS8_PRIV_KEY_INFO(
+        NULL, &cursor, (long)der_length);
+    if (private_key_info == NULL || cursor != der + der_length
+            || passphrase_callback(passphrase, sizeof(passphrase),
+                &passphrase_length, NULL, passphrase_argument) != 1
+            || passphrase_length > INT_MAX)
+        goto cleanup;
+    iv_length = EVP_CIPHER_get_iv_length(codec->cipher);
+    if (iv_length <= 0 || (size_t)iv_length > sizeof(iv)
+            || !ed301v1_fill_random(
+                codec->provider, salt, sizeof(salt), 0)
+            || !ed301v1_fill_random(
+                codec->provider, iv, (size_t)iv_length, 0))
+        goto cleanup;
+    pbe = PKCS5_pbe2_set_iv_ex(codec->cipher, PKCS5_DEFAULT_ITER,
+        salt, (int)sizeof(salt), iv, -1, codec->provider->libctx);
+    if (pbe == NULL)
+        goto cleanup;
+    encrypted = PKCS8_set0_pbe_ex(passphrase, (int)passphrase_length,
+        private_key_info, pbe, codec->provider->libctx,
+        codec->cipher_properties);
+    if (encrypted == NULL)
+        goto cleanup;
+    pbe = NULL;
+    bio = BIO_new_from_core_bio(codec->provider->libctx, output);
+    if (bio == NULL)
+        goto cleanup;
+    if (codec->format == ED301V1_CODEC_FORMAT_DER)
+        result = i2d_PKCS8_bio(bio, encrypted);
+    else if (codec->format == ED301V1_CODEC_FORMAT_PEM)
+        result = PEM_write_bio_PKCS8(bio, encrypted);
+
+cleanup:
+    BIO_free(bio);
+    X509_SIG_free(encrypted);
+    X509_ALGOR_free(pbe);
+    PKCS8_PRIV_KEY_INFO_free(private_key_info);
+    ed301v1_codec_cleanse(codec, salt, sizeof(salt));
+    ed301v1_codec_cleanse(codec, iv, sizeof(iv));
+    ed301v1_codec_cleanse(
+        codec, (unsigned char *)passphrase, sizeof(passphrase));
+    return result;
+}
+
 static int ed301v1_codec_get_key_bytes(
     const ED301V1_CODEC_CONTEXT *codec,
     const void *key_data,
@@ -1813,7 +2051,8 @@ static int ed301v1_codec_get_key_bytes(
             || output == NULL || key->provider != codec->provider
             || key->inner == NULL || codec->provider->rust == NULL)
         return 0;
-    if (component == ED301V1_CODEC_PRIVATE_KEY_INFO)
+    if (component == ED301V1_CODEC_PRIVATE_KEY_INFO
+            || component == ED301V1_CODEC_ENCRYPTED_PRIVATE_KEY_INFO)
         return codec->provider->rust->key_get_private(
             key->inner, output, ED301V1_SEED_BYTES);
     if (component == ED301V1_CODEC_SUBJECT_PUBLIC_KEY_INFO)
@@ -1944,10 +2183,9 @@ static int ed301v1_codec_encode(
     const unsigned char *prefix;
     size_t prefix_length = 0;
     size_t encoded_length = 0;
+    ED301V1_CODEC_STRUCTURE key_component;
     int result = 0;
 
-    (void)passphrase_callback;
-    (void)passphrase_argument;
     if (codec == NULL || codec->invalid || output == NULL || key_data == NULL
             || key_parameters != NULL
             || !ed301v1_codec_does_selection(codec, selection))
@@ -1959,20 +2197,30 @@ static int ed301v1_codec_encode(
         goto cleanup;
     }
 #endif
+    key_component = ed301v1_codec_is_private(codec)
+        ? ED301V1_CODEC_PRIVATE_KEY_INFO : codec->structure;
     prefix = ed301v1_codec_prefix(codec, &prefix_length, &encoded_length);
     if (prefix == NULL || encoded_length > sizeof(encoded)
             || !ed301v1_codec_get_key_bytes(
-                codec, key_data, codec->structure, key_bytes))
+                codec, key_data, key_component, key_bytes))
         goto cleanup;
 
     memcpy(encoded, prefix, prefix_length);
     memcpy(encoded + prefix_length, key_bytes, ED301V1_SEED_BYTES);
-    if (codec->format == ED301V1_CODEC_FORMAT_DER)
+    if (ed301v1_codec_is_private(codec)
+            && (codec->cipher_intent
+                || codec->structure
+                    == ED301V1_CODEC_ENCRYPTED_PRIVATE_KEY_INFO)) {
+        result = ed301v1_codec_write_encrypted_pkcs8(
+            codec, output, encoded, encoded_length,
+            passphrase_callback, passphrase_argument);
+    } else if (codec->format == ED301V1_CODEC_FORMAT_DER) {
         result = ed301v1_codec_write_all(
             codec, output, encoded, encoded_length);
-    else if (codec->format == ED301V1_CODEC_FORMAT_PEM)
+    } else if (codec->format == ED301V1_CODEC_FORMAT_PEM) {
         result = ed301v1_codec_write_pem(
             codec, output, encoded, encoded_length);
+    }
 
 cleanup:
     ed301v1_codec_cleanse(codec, key_bytes, sizeof(key_bytes));
@@ -2219,6 +2467,14 @@ ED301V1_DEFINE_PRIVATE_ENCODER_DISPATCH(
     ED301V1_PKCS8_PEM_ENCODER_DISPATCH,
     ed301v1_pkcs8_pem_codec_new_context,
     ed301v1_private_codec_does_selection);
+ED301V1_DEFINE_PRIVATE_ENCODER_DISPATCH(
+    ED301V1_ENCRYPTED_PKCS8_DER_ENCODER_DISPATCH,
+    ed301v1_encrypted_pkcs8_der_codec_new_context,
+    ed301v1_private_codec_does_selection);
+ED301V1_DEFINE_PRIVATE_ENCODER_DISPATCH(
+    ED301V1_ENCRYPTED_PKCS8_PEM_ENCODER_DISPATCH,
+    ed301v1_encrypted_pkcs8_pem_codec_new_context,
+    ed301v1_private_codec_does_selection);
 ED301V1_DEFINE_ENCODER_DISPATCH(
     ED301V1_SPKI_DER_ENCODER_DISPATCH,
     ed301v1_spki_der_codec_new_context,
@@ -2381,6 +2637,18 @@ static const OSSL_ALGORITHM ED301V1_ENCODER_ALGORITHMS[] = {
 #endif
     {
         ED301V1_ALGORITHM_NAMES,
+        "provider=" ED301V1_PROVIDER_BASENAME ",output=der,structure=EncryptedPrivateKeyInfo",
+        ED301V1_ENCRYPTED_PKCS8_DER_ENCODER_DISPATCH,
+        "Ed301-EdDSA-v1 encrypted PKCS#8 DER encoder (test-only)"
+    },
+    {
+        ED301V1_ALGORITHM_NAMES,
+        "provider=" ED301V1_PROVIDER_BASENAME ",output=pem,structure=EncryptedPrivateKeyInfo",
+        ED301V1_ENCRYPTED_PKCS8_PEM_ENCODER_DISPATCH,
+        "Ed301-EdDSA-v1 encrypted PKCS#8 PEM encoder (test-only)"
+    },
+    {
+        ED301V1_ALGORITHM_NAMES,
         "provider=" ED301V1_PROVIDER_BASENAME ",output=der,structure=PrivateKeyInfo",
         ED301V1_PKCS8_DER_ENCODER_DISPATCH,
         "Ed301-EdDSA-v1 PKCS#8 DER encoder (test-only)"
@@ -2498,6 +2766,12 @@ static void ed301v1_provider_teardown(void *provider_context)
     ED301V1_PROVIDER_CONTEXT *provider = provider_context;
 
     if (provider != NULL) {
+        ed301v1_drbg_free(provider->private_drbg);
+        provider->private_drbg = NULL;
+        ed301v1_drbg_free(provider->public_drbg);
+        provider->public_drbg = NULL;
+        CRYPTO_THREAD_lock_free(provider->drbg_lock);
+        provider->drbg_lock = NULL;
         OSSL_LIB_CTX_free(provider->libctx);
         provider->libctx = NULL;
     }
@@ -2819,6 +3093,23 @@ int ed301_eddsa_v1_shim_init(
         clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
         return 0;
     }
+    {
+        OSSL_PROVIDER *null_provider = OSSL_PROVIDER_load(
+            provider->libctx, "null");
+
+        if (null_provider == NULL
+                || OSSL_PROVIDER_unload(null_provider) != 1) {
+            OSSL_LIB_CTX_free(provider->libctx);
+            clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
+            return 0;
+        }
+    }
+    provider->drbg_lock = CRYPTO_THREAD_lock_new();
+    if (provider->drbg_lock == NULL) {
+        OSSL_LIB_CTX_free(provider->libctx);
+        clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
+        return 0;
+    }
 #if ED301V1_REGISTER_PROCESS_OID
     if (core_obj_create(handle, ED301V1_OID, ED301V1_ALGORITHM_NAME,
             ED301V1_ALGORITHM_NAME) != 1
@@ -2827,6 +3118,8 @@ int ed301_eddsa_v1_shim_init(
             || !ed301v1_process_identity_is_exact()) {
         ed301v1_raise(provider, ED301V1_R_INVALID_STATE,
             "Ed301-EdDSA-v1 OID/SIGID registration is not exact");
+        CRYPTO_THREAD_lock_free(provider->drbg_lock);
+        provider->drbg_lock = NULL;
         OSSL_LIB_CTX_free(provider->libctx);
         provider->libctx = NULL;
         clear_free(provider, sizeof(*provider), __FILE__, __LINE__);

@@ -106,11 +106,13 @@ separately selected build. This choice does not alter secret arithmetic,
 transcript bytes or the verification language; it does change the additional
 fault-detection boundary and must remain explicit in downstream build records.
 
-Provider key generation requests 149 bits from the application-linked private
-RAND path in a child `OSSL_LIB_CTX`. A thread that uses that RAND path calls
-`OPENSSL_thread_stop_ex()` for the child context before provider teardown;
-the cross-thread unload regression keeps the worker alive while the final
-provider reference is released.
+Provider key generation uses a locked provider-owned `CTR-DRBG` parented by
+`RAND_get0_primary(child)`. Encrypted PKCS#8 salt and IV use a separate
+provider-owned instance. Neither creates child-context thread-local RAND
+state. The child primary uses its own seed source; application `rand.seed` and
+`seed_strict` settings do not propagate. Loading and unloading the `null`
+provider immediately after child creation disables child-local fallback.
+Later application-provider loads remain mirrored into the child.
 
 The deferred assurance work includes a fresh exact-revision full-scope source
 security scan, disassembly and secret-dependent branch/address review,

@@ -5,8 +5,8 @@
  * from the PKI-only artifact, and rejection of the historical and X301
  * OIDs, ASN.1 NULL parameters, wrong OIDs
  * and sizes, truncation, trailing data and malformed public keys.
- * Encrypted PKCS#8 (and its wrong-password rejection) is exercised through
- * the openssl CLI in run_matrix.sh, mirroring the historical route.
+ * Encrypted PKCS#8 is exercised through both provider encoders and the
+ * OpenSSL CLI, including wrong-password and teardown paths.
  */
 
 #ifndef _GNU_SOURCE
@@ -14,6 +14,9 @@
 #endif
 
 #include <openssl/encoder.h>
+#include <openssl/pkcs12.h>
+
+#include <pthread.h>
 
 #include "harness_common.h"
 #include "strict_serialization.h"
@@ -63,6 +66,195 @@ static unsigned char *encode(
         data = NULL;
     OSSL_ENCODER_CTX_free(ctx);
     return data;
+}
+
+static int reject_passphrase(
+    char *passphrase,
+    size_t passphrase_size,
+    size_t *passphrase_length,
+    const OSSL_PARAM parameters[],
+    void *argument)
+{
+    (void)passphrase;
+    (void)passphrase_size;
+    (void)passphrase_length;
+    (void)parameters;
+    (void)argument;
+    return 0;
+}
+
+static int pki_first_load_has_no_cipher_fallback(
+    const unsigned char seed[ED301V1_SEED_BYTES])
+{
+    OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *pki = NULL;
+    EVP_PKEY *key = NULL;
+    OSSL_ENCODER_CTX *encoder = NULL;
+    unsigned char *data = NULL;
+    size_t data_length = 0;
+    int rejected_without_default = 0;
+    int result = 0;
+
+    if (libctx == NULL
+            || (pki = OSSL_PROVIDER_load(
+                    libctx, ED301V1_PKI_PROVIDER)) == NULL)
+        goto done;
+    key = ed301v1_key_from_seed(libctx, seed);
+    encoder = key == NULL ? NULL : OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "DER",
+        "EncryptedPrivateKeyInfo", ED301V1_PKI_PROP);
+    if (encoder != NULL)
+        rejected_without_default = OSSL_ENCODER_CTX_set_cipher(
+            encoder, "AES-256-CBC", NULL) != 1;
+    OSSL_ENCODER_CTX_free(encoder);
+    encoder = NULL;
+    ERR_clear_error();
+    if (!rejected_without_default
+            || OSSL_PROVIDER_available(libctx, "default") != 0)
+        goto done;
+
+    deflt = OSSL_PROVIDER_load(libctx, "default");
+    encoder = deflt == NULL ? NULL : OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "DER",
+        "EncryptedPrivateKeyInfo", ED301V1_PKI_PROP);
+    result = encoder != NULL
+        && OSSL_ENCODER_CTX_set_cipher(
+            encoder, "AES-256-CBC", NULL) == 1
+        && OSSL_ENCODER_CTX_set_passphrase(
+            encoder, (const unsigned char *)"secret", 6) == 1
+        && OSSL_ENCODER_to_data(encoder, &data, &data_length) == 1
+        && data != NULL && data_length > ED301V1_PKCS8_DER_BYTES;
+
+done:
+    ERR_clear_error();
+    OPENSSL_free(data);
+    OSSL_ENCODER_CTX_free(encoder);
+    EVP_PKEY_free(key);
+    OSSL_PROVIDER_unload(pki);
+    OSSL_PROVIDER_unload(deflt);
+    OSSL_LIB_CTX_free(libctx);
+    return result;
+}
+
+typedef struct encrypted_lifecycle_worker_st {
+    OSSL_LIB_CTX *libctx;
+    EVP_PKEY *key;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    int ready;
+    int release;
+    int encode_ok;
+} ENCRYPTED_LIFECYCLE_WORKER;
+
+static void *encrypted_lifecycle_worker(void *argument)
+{
+    ENCRYPTED_LIFECYCLE_WORKER *worker = argument;
+    OSSL_ENCODER_CTX *encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        worker->key, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "DER",
+        "EncryptedPrivateKeyInfo", ED301V1_PKI_PROP);
+    unsigned char *data = NULL;
+    size_t data_length = 0;
+
+    worker->encode_ok = encoder != NULL
+        && OSSL_ENCODER_CTX_set_cipher(
+            encoder, "AES-256-CBC", NULL) == 1
+        && OSSL_ENCODER_CTX_set_passphrase(
+            encoder, (const unsigned char *)"secret", 6) == 1
+        && OSSL_ENCODER_to_data(encoder, &data, &data_length) == 1
+        && data != NULL && data_length > ED301V1_PKCS8_DER_BYTES;
+    OPENSSL_free(data);
+    OSSL_ENCODER_CTX_free(encoder);
+    OPENSSL_thread_stop_ex(worker->libctx);
+
+    if (pthread_mutex_lock(&worker->mutex) != 0)
+        return NULL;
+    worker->ready = 1;
+    pthread_cond_signal(&worker->condition);
+    while (!worker->release)
+        pthread_cond_wait(&worker->condition, &worker->mutex);
+    pthread_mutex_unlock(&worker->mutex);
+    return NULL;
+}
+
+static int encrypted_encode_survives_worker_teardown(
+    const unsigned char seed[ED301V1_SEED_BYTES])
+{
+    OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *pki = NULL;
+    EVP_PKEY *key = NULL;
+    ENCRYPTED_LIFECYCLE_WORKER worker;
+    pthread_t thread;
+    int mutex_ready = 0;
+    int condition_ready = 0;
+    int thread_started = 0;
+    int thread_joined = 0;
+    int contexts_freed = 0;
+    int result = 0;
+
+    memset(&worker, 0, sizeof(worker));
+    worker.libctx = libctx;
+    if (libctx == NULL
+            || (deflt = OSSL_PROVIDER_load(libctx, "default")) == NULL
+            || (pki = OSSL_PROVIDER_load(
+                    libctx, ED301V1_PKI_PROVIDER)) == NULL
+            || (key = ed301v1_key_from_seed(libctx, seed)) == NULL)
+        goto done;
+    worker.key = key;
+    mutex_ready = pthread_mutex_init(&worker.mutex, NULL) == 0;
+    condition_ready = mutex_ready
+        && pthread_cond_init(&worker.condition, NULL) == 0;
+    if (!condition_ready)
+        goto done;
+    thread_started = pthread_create(
+        &thread, NULL, encrypted_lifecycle_worker, &worker) == 0;
+    if (!thread_started)
+        goto done;
+
+    pthread_mutex_lock(&worker.mutex);
+    while (!worker.ready)
+        pthread_cond_wait(&worker.condition, &worker.mutex);
+    pthread_mutex_unlock(&worker.mutex);
+    result = worker.encode_ok;
+
+    EVP_PKEY_free(key);
+    key = NULL;
+    OSSL_PROVIDER_unload(pki);
+    pki = NULL;
+    OSSL_PROVIDER_unload(deflt);
+    deflt = NULL;
+    OSSL_LIB_CTX_free(libctx);
+    libctx = NULL;
+    contexts_freed = 1;
+
+    pthread_mutex_lock(&worker.mutex);
+    worker.release = 1;
+    pthread_cond_signal(&worker.condition);
+    pthread_mutex_unlock(&worker.mutex);
+    thread_joined = pthread_join(thread, NULL) == 0;
+    result = result && thread_joined;
+
+done:
+    if (thread_started && !thread_joined) {
+        pthread_mutex_lock(&worker.mutex);
+        worker.release = 1;
+        pthread_cond_signal(&worker.condition);
+        pthread_mutex_unlock(&worker.mutex);
+        pthread_join(thread, NULL);
+    }
+    if (!contexts_freed) {
+        EVP_PKEY_free(key);
+        OSSL_PROVIDER_unload(pki);
+        OSSL_PROVIDER_unload(deflt);
+        OSSL_LIB_CTX_free(libctx);
+    }
+    if (condition_ready)
+        pthread_cond_destroy(&worker.condition);
+    if (mutex_ready)
+        pthread_mutex_destroy(&worker.mutex);
+    ERR_clear_error();
+    return result;
 }
 
 static EVP_PKEY *decode(
@@ -210,6 +402,11 @@ int main(void)
     v1 = ed301v1_load_named(libctx, &deflt, ED301V1_PKI_PROVIDER);
     pkey = ed301v1_key_from_seed(libctx, base->seed);
     ED301V1_CHECK(v1 != NULL && pkey != NULL, "provider and key");
+    ED301V1_CHECK(pki_first_load_has_no_cipher_fallback(base->seed),
+        "PKI-first load cannot auto-load a child cipher provider and "
+        "recovers after the application loads default");
+    ED301V1_CHECK(encrypted_encode_survives_worker_teardown(base->seed),
+        "encrypted PKCS#8 leaves no child-context thread state at teardown");
 
     /*
      * D1 (provider serialization contract; OpenSSL endecode_test.c pattern):
@@ -704,28 +901,174 @@ int main(void)
         OPENSSL_free(text);
     }
 
-    /* Direct encrypted PKCS#8 through the provider encoder fails closed. */
+    /* OpenSSL Ed448 pattern: direct encrypted PKCS#8 in DER and PEM. */
     {
         OSSL_ENCODER_CTX *ctx = OSSL_ENCODER_CTX_new_for_pkey(
             pkey,
             OSSL_KEYMGMT_SELECT_PRIVATE_KEY
                 | OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
             "DER", "PrivateKeyInfo", ED301V1_PKI_PROP);
+        OSSL_ENCODER_CTX *second_ctx = OSSL_ENCODER_CTX_new_for_pkey(
+            pkey, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "DER",
+            "EncryptedPrivateKeyInfo", ED301V1_PKI_PROP);
         unsigned char *data = NULL;
+        unsigned char *second_data = NULL;
+        unsigned char *plain_der = NULL;
+        const unsigned char *cursor;
         size_t data_len = 0;
+        size_t second_data_len = 0;
+        X509_SIG *encrypted = NULL;
+        PKCS8_PRIV_KEY_INFO *decrypted = NULL;
+        PKCS8_PRIV_KEY_INFO *wrong_password = NULL;
         int set_ok = 0;
         int encode_result = 0;
+        int plain_der_length = 0;
 
         if (ctx != NULL) {
             set_ok = OSSL_ENCODER_CTX_set_cipher(
                 ctx, "AES-256-CBC", NULL) == 1;
-            OSSL_ENCODER_CTX_set_passphrase(
-                ctx, (const unsigned char *)"secret", 6);
+            if (set_ok)
+                set_ok = OSSL_ENCODER_CTX_set_passphrase(
+                    ctx, (const unsigned char *)"secret", 6) == 1;
             encode_result = OSSL_ENCODER_to_data(ctx, &data, &data_len);
         }
-        ED301V1_CHECK(ctx != NULL && set_ok != 1 && encode_result != 1,
-            "direct encrypted PKCS#8 fails closed (set_ok=%d encode=%d)",
-            set_ok, encode_result);
+        if (second_ctx != NULL
+                && OSSL_ENCODER_CTX_set_cipher(
+                    second_ctx, "AES-256-CBC", NULL) == 1
+                && OSSL_ENCODER_CTX_set_passphrase(
+                    second_ctx,
+                    (const unsigned char *)"secret", 6) == 1)
+            (void)OSSL_ENCODER_to_data(
+                second_ctx, &second_data, &second_data_len);
+        cursor = data;
+        if (data != NULL && data_len <= LONG_MAX)
+            encrypted = d2i_X509_SIG(NULL, &cursor, (long)data_len);
+        if (encrypted != NULL) {
+            decrypted = PKCS8_decrypt_ex(
+                encrypted, "secret", 6, libctx, NULL);
+            wrong_password = PKCS8_decrypt_ex(
+                encrypted, "wrong", 5, libctx, NULL);
+        }
+        if (decrypted != NULL)
+            plain_der_length = i2d_PKCS8_PRIV_KEY_INFO(
+                decrypted, &plain_der);
+        ED301V1_CHECK(ctx != NULL && set_ok && encode_result == 1
+                && data != NULL && data_len > ED301V1_PKCS8_DER_BYTES
+                && encrypted != NULL && cursor == data + data_len
+                && decrypted != NULL && wrong_password == NULL
+                && plain_der_length == ED301V1_PKCS8_DER_BYTES
+                && memcmp(plain_der, ED301V1_PKCS8_PREFIX,
+                    sizeof(ED301V1_PKCS8_PREFIX)) == 0
+                && memcmp(plain_der + sizeof(ED301V1_PKCS8_PREFIX),
+                    base->seed, ED301V1_SEED_BYTES) == 0,
+            "direct encrypted PKCS#8 DER round trip and wrong-password "
+            "rejection");
+        ED301V1_CHECK(second_data != NULL && second_data_len > 0
+                && (second_data_len != data_len
+                    || CRYPTO_memcmp(
+                        second_data, data, data_len) != 0),
+            "encrypted PKCS#8 uses fresh salt and IV");
+        ERR_clear_error();
+        OPENSSL_clear_free(plain_der,
+            plain_der_length > 0 ? (size_t)plain_der_length : 0);
+        PKCS8_PRIV_KEY_INFO_free(wrong_password);
+        PKCS8_PRIV_KEY_INFO_free(decrypted);
+        X509_SIG_free(encrypted);
+        OPENSSL_free(second_data);
+        OPENSSL_free(data);
+        OSSL_ENCODER_CTX_free(second_ctx);
+        OSSL_ENCODER_CTX_free(ctx);
+    }
+
+    {
+        OSSL_ENCODER_CTX *ctx = OSSL_ENCODER_CTX_new_for_pkey(
+            pkey, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "PEM",
+            "EncryptedPrivateKeyInfo", ED301V1_PKI_PROP);
+        unsigned char *data = NULL;
+        size_t data_len = 0;
+        int ok = ctx != NULL
+            && OSSL_ENCODER_CTX_set_cipher(
+                ctx, "AES-256-CBC", "provider=default") == 1
+            && OSSL_ENCODER_CTX_set_passphrase(
+                ctx, (const unsigned char *)"secret", 6) == 1
+            && OSSL_ENCODER_to_data(ctx, &data, &data_len) == 1;
+
+        ED301V1_CHECK(ok && data != NULL
+                && memmem(data, data_len,
+                    "BEGIN ENCRYPTED PRIVATE KEY", 27) != NULL,
+            "explicit EncryptedPrivateKeyInfo PEM encoder works");
+        OPENSSL_free(data);
+        OSSL_ENCODER_CTX_free(ctx);
+    }
+
+    {
+        OSSL_ENCODER_CTX *ctx = OSSL_ENCODER_CTX_new_for_pkey(
+            pkey, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "DER",
+            "EncryptedPrivateKeyInfo", ED301V1_PKI_PROP);
+        unsigned char *data = NULL;
+        size_t data_len = 0;
+        int encode_result = 0;
+
+        if (ctx != NULL) {
+            OSSL_ENCODER_CTX_set_passphrase_cb(
+                ctx, reject_passphrase, NULL);
+            if (OSSL_ENCODER_CTX_set_cipher(
+                    ctx, "AES-256-CBC", NULL) == 1)
+                encode_result = OSSL_ENCODER_to_data(
+                    ctx, &data, &data_len);
+        }
+        ED301V1_CHECK(ctx != NULL && encode_result != 1
+                && data == NULL && data_len == 0,
+            "passphrase failure emits no encrypted PKCS#8 output");
+        ERR_clear_error();
+        OPENSSL_free(data);
+        OSSL_ENCODER_CTX_free(ctx);
+    }
+
+    {
+        OSSL_ENCODER_CTX *ctx = OSSL_ENCODER_CTX_new_for_pkey(
+            pkey, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "DER",
+            "EncryptedPrivateKeyInfo", ED301V1_PKI_PROP);
+        unsigned char *data = NULL;
+        size_t data_len = 0;
+        int encode_result = 0;
+
+        if (ctx != NULL
+                && OSSL_ENCODER_CTX_set_passphrase(
+                    ctx, (const unsigned char *)"secret", 6) == 1)
+            encode_result = OSSL_ENCODER_to_data(ctx, &data, &data_len);
+        ED301V1_CHECK(ctx != NULL && encode_result != 1
+                && data == NULL && data_len == 0,
+            "encrypted PKCS#8 without a cipher emits no output");
+        ERR_clear_error();
+        OPENSSL_free(data);
+        OSSL_ENCODER_CTX_free(ctx);
+    }
+
+    {
+        OSSL_ENCODER_CTX *ctx = OSSL_ENCODER_CTX_new_for_pkey(
+            pkey, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, "DER",
+            "PrivateKeyInfo", ED301V1_PKI_PROP);
+        unsigned char *data = NULL;
+        size_t data_len = 0;
+        int set_ok = ctx != NULL
+            && OSSL_ENCODER_CTX_set_cipher(
+                ctx, "AES-256-CBC", "provider=default") == 1;
+        int reject_ok = set_ok
+            && OSSL_ENCODER_CTX_set_cipher(
+                ctx, "ED301-NO-SUCH-CIPHER", NULL) != 1;
+        int clear_ok = reject_ok
+            && OSSL_ENCODER_CTX_set_cipher(ctx, NULL, NULL) == 1;
+        int encode_result = clear_ok
+            ? OSSL_ENCODER_to_data(ctx, &data, &data_len) : 0;
+
+        ED301V1_CHECK(encode_result == 1 && data != NULL
+                && data_len == ED301V1_PKCS8_DER_BYTES
+                && memcmp(data, ED301V1_PKCS8_PREFIX,
+                    sizeof(ED301V1_PKCS8_PREFIX)) == 0
+                && memcmp(data + sizeof(ED301V1_PKCS8_PREFIX),
+                    base->seed, ED301V1_SEED_BYTES) == 0,
+            "a NULL cipher restores canonical unencrypted PKCS#8 output");
         ERR_clear_error();
         OPENSSL_free(data);
         OSSL_ENCODER_CTX_free(ctx);
