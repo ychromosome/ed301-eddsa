@@ -61,4 +61,46 @@ test "$fifo_rc" -eq 1 || {
     exit 1
 }
 
-printf 'build_input_hardening_regressions=PASS cases=4\n'
+# Exercise the provider's actual setup and EXIT cleanup without rebuilding it.
+PROVIDER=$ROOT/scripts/test-provider.sh
+SOURCE=$TMP/canonical-test-test
+RUNNER=$TMP/provider-source.sh
+{
+    printf '%s\n' '#!/bin/bash' 'set -Eeuo pipefail' \
+        'BUILD=$1' 'LANE=test' 'ED301_EXPECTED_SOURCE_MANIFEST_SHA256=test' \
+        'STATUS=$BUILD/status' 'CANONICAL_SOURCE='
+    awk '/^finish\(\) \{/ {copy=1} copy {print} copy && /^}/ {exit}' \
+        "$PROVIDER"
+    printf '%s\n' 'trap finish EXIT'
+    awk -v prefix="$TMP/canonical-" '
+        /^CANONICAL_(SOURCE|CANDIDATE)=\/tmp\/ed301-provider-source-/ {copy=1}
+        copy {sub(/\/tmp\/ed301-provider-source-/, prefix); print}
+        copy && /^mkdir -m 700 "\$CANONICAL_SOURCE\/scripts"/ {exit}
+    ' "$PROVIDER"
+} >"$RUNNER"
+mkdir "$TMP/existing-run" "$SOURCE"
+printf 'retained snapshot\n' >"$SOURCE/sentinel"
+chmod 500 "$SOURCE"
+if /usr/bin/bash "$RUNNER" "$TMP/existing-run" \
+        >"$TMP/existing-run.log" 2>&1; then
+    echo 'provider accepted an existing source directory' >&2
+    exit 1
+fi
+grep -Fx 'retained snapshot' "$SOURCE/sentinel" >/dev/null
+test "$(stat -c %a "$SOURCE")" = 500
+chmod 700 "$SOURCE"
+rm -rf -- "$SOURCE"
+
+mkdir "$TMP/failed-run" "$TMP/failed-run/canonical-cargo-home"
+if /usr/bin/bash "$RUNNER" "$TMP/failed-run" \
+        >"$TMP/failed-run.log" 2>&1; then
+    echo 'provider accepted an existing Cargo home' >&2
+    exit 1
+fi
+test ! -e "$SOURCE"
+mkdir "$TMP/successful-run"
+/usr/bin/bash "$RUNNER" "$TMP/successful-run" \
+    >"$TMP/successful-run.log" 2>&1
+test ! -e "$SOURCE"
+
+printf 'build_input_hardening_regressions=PASS cases=7\n'

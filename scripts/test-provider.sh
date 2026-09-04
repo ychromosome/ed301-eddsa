@@ -221,13 +221,15 @@ sha256sum --strict --quiet -c \
 sha256sum --strict --quiet -c \
     "$BUILD/evidence/provider-unit-executables.seal"
 
-CANONICAL_SOURCE=/tmp/ed301-provider-source-${LANE}-${ED301_EXPECTED_SOURCE_MANIFEST_SHA256}
+CANONICAL_CANDIDATE=/tmp/ed301-provider-source-${LANE}-${ED301_EXPECTED_SOURCE_MANIFEST_SHA256}
 CANONICAL_CARGO_HOME=$BUILD/canonical-cargo-home
-test ! -e "$CANONICAL_SOURCE" && test ! -L "$CANONICAL_SOURCE" || {
-    echo "deterministic provider source root already exists: $CANONICAL_SOURCE" >&2
+test ! -e "$CANONICAL_CANDIDATE" && test ! -L "$CANONICAL_CANDIDATE" || {
+    echo "deterministic provider source root already exists: $CANONICAL_CANDIDATE" >&2
     exit 1
 }
-mkdir -m 700 "$CANONICAL_SOURCE" "$CANONICAL_CARGO_HOME"
+mkdir -m 700 "$CANONICAL_CANDIDATE"
+CANONICAL_SOURCE=$CANONICAL_CANDIDATE
+mkdir -m 700 "$CANONICAL_CARGO_HOME"
 mkdir -m 700 "$CANONICAL_SOURCE/scripts"
 cp -a -- "$ROOT/Cargo.toml" "$ROOT/Cargo.lock" "$CANONICAL_SOURCE/"
 cp -a -- "$ROOT/crates" "$ROOT/provider" "$ROOT/secret-taint" \
