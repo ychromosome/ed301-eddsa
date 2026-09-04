@@ -9,6 +9,28 @@ elliptic curve.
 - locked, vendored and offline builds
 - v1 vectors and frozen draft-00 rejection boundaries
 
+## Curve
+
+Ed301 uses the twisted-Edwards curve
+
+```text
+2086388329*x^2 + y^2 = 1 + 301*x^2*y^2  over F_p,
+p = 2^301 - 2^99 + 947.
+```
+
+The curve has cofactor 4 and a 300-bit prime-order subgroup. Its quadratic
+twist has cofactor 4 and a 299-bit prime factor. The generic
+negation-optimized Pollard-rho work factor is approximately `2^149.3` group
+operations. Points, scalars and seeds use 38-byte encodings. The compressed
+base point is:
+
+```text
+6bf73f755a0c80653ce83fcf6d6ff7d7f347b1929224ac67552273419e6cf2c8a88a02d38898
+```
+
+Exact orders and certificates are recorded in
+`inputs/round4/upstream/ed301-v1/ed301-v1.json`.
+
 ## Curve provenance
 
 `evidence/curve-provenance/` contains the complete manifest-bound 2026-07-31
