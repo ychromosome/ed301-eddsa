@@ -29,6 +29,7 @@
 #include <openssl/core_object.h>
 #include <openssl/crypto.h>
 #include <openssl/opensslv.h>
+#include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
@@ -75,9 +76,9 @@
 #define ED301V1_TLS_VERSION_1_3 0x0304
 
 /*
- * Project-assigned OID for this exact profile.  Exact collision checks run in
- * the host integration harness against the loading libcrypto registry.  The
- * TLS SignatureScheme codepoint is a separate TEST-ONLY value from the
+ * Project-assigned OID for this exact profile.  The TLS integration artifact
+ * verifies the process OID and SIGID after registration.  The TLS
+ * SignatureScheme codepoint is a separate TEST-ONLY value from the
  * private-use range and deliberately differs from the historical 0xFE2D; it
  * exists only in separately named TLS test artifacts.
  */
@@ -144,6 +145,59 @@ static const char ED301V1_ALGORITHM_NAMES[] = "Ed301-EdDSA-v1";
 #endif
 static const char ED301V1_PROPERTY[] =
     "provider=" ED301V1_PROVIDER_BASENAME;
+
+#if ED301V1_REGISTER_PROCESS_OID
+static int ed301v1_process_identity_is_exact(void)
+{
+    char numeric_oid[96];
+    const int oid_nid = OBJ_txt2nid(ED301V1_OID_TEXT);
+    const ASN1_OBJECT *object;
+    const char *short_name;
+    const char *long_name;
+    int candidate_nid;
+    int digest_nid = NID_undef;
+    int found = 0;
+    int next_nid;
+    int public_key_nid = NID_undef;
+    int signature_nid = NID_undef;
+
+    if (oid_nid == NID_undef
+            || OBJ_sn2nid(ED301V1_ALGORITHM_NAME) != oid_nid
+            || OBJ_ln2nid(ED301V1_ALGORITHM_NAME) != oid_nid)
+        return 0;
+    object = OBJ_nid2obj(oid_nid);
+    short_name = OBJ_nid2sn(oid_nid);
+    long_name = OBJ_nid2ln(oid_nid);
+    if (object == NULL || short_name == NULL || long_name == NULL
+            || strcmp(short_name, ED301V1_ALGORITHM_NAME) != 0
+            || strcmp(long_name, ED301V1_ALGORITHM_NAME) != 0
+            || OBJ_obj2txt(numeric_oid, sizeof(numeric_oid), object, 1)
+                != (int)strlen(ED301V1_OID_TEXT)
+            || strcmp(numeric_oid, ED301V1_OID_TEXT) != 0)
+        return 0;
+
+    next_nid = OBJ_new_nid(0);
+    if (next_nid == NID_undef)
+        return 0;
+    for (candidate_nid = 1; candidate_nid < next_nid; candidate_nid++) {
+        if (OBJ_find_sigid_algs(
+                candidate_nid, &digest_nid, &public_key_nid) != 1)
+            continue;
+        if (candidate_nid != oid_nid && digest_nid != oid_nid
+                && public_key_nid != oid_nid)
+            continue;
+        if (candidate_nid != oid_nid || digest_nid != NID_undef
+                || public_key_nid != oid_nid || found)
+            return 0;
+        found = 1;
+    }
+    return found
+        && OBJ_find_sigid_by_algs(
+               &signature_nid, NID_undef, oid_nid) == 1
+        && signature_nid == oid_nid;
+}
+#endif
+
 #if ED301V1_HAS_TEST_TLS_CAPABILITY
 static const char ED301V1_OID[] = ED301V1_OID_TEXT;
 static const char ED301V1_TLS_SIGALG_CAPABILITY[] = "TLS-SIGALG";
@@ -2769,9 +2823,10 @@ int ed301_eddsa_v1_shim_init(
     if (core_obj_create(handle, ED301V1_OID, ED301V1_ALGORITHM_NAME,
             ED301V1_ALGORITHM_NAME) != 1
             || core_obj_add_sigid(
-                handle, ED301V1_OID, "", ED301V1_OID) != 1) {
+                handle, ED301V1_OID, "", ED301V1_OID) != 1
+            || !ed301v1_process_identity_is_exact()) {
         ed301v1_raise(provider, ED301V1_R_INVALID_STATE,
-            "core rejected Ed301-EdDSA-v1 OID/SIGID registration");
+            "Ed301-EdDSA-v1 OID/SIGID registration is not exact");
         OSSL_LIB_CTX_free(provider->libctx);
         provider->libctx = NULL;
         clear_free(provider, sizeof(*provider), __FILE__, __LINE__);

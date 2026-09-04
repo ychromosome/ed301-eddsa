@@ -43,10 +43,12 @@ the OID and its digestless SIGID mapping before generic X.509 use.  The
 ordinary, PKI, failpoint and collider artifacts retain their existing
 algorithm aliases and perform no such registration.
 
-The Core registration upcalls are non-transactional and treat existing
-registrations as success without proving that every name and SIGID role is
-identical.  This OpenSSL boundary is not replaced by provider-local registry,
-locking or collision logic.
+The Core registration upcalls are non-transactional and treat an existing
+registration as success.  Before publishing its dispatch table, the TLS
+artifact checks the resulting OID names and digestless SIGID through
+libcrypto's public object APIs; no other SIGID role may use that NID. It adds
+no registry, lock or cache. Concurrent third-party changes to the
+process-global object database remain outside this artifact's control.
 OpenSSL's generic chain removes PEM and standard EncryptedPrivateKeyInfo
 wrappers before the Ed301 DER decoder runs; the provider contains no PEM,
 Base64, password or encryption parser.

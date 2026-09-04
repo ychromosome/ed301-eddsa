@@ -1,10 +1,9 @@
 /*
- * Acceptance section 4 (collision handling): a host-side integration
- * preflight owns the registry transition in the loading libcrypto before
- * loading the separate PKI test artifact.  The ordinary signature provider
- * has no OID alias, encoder/decoder or registry side effect and remains
- * usable through its explicit EVP name even when the global registry is
- * conflicting.
+ * Acceptance section 4 (collision handling): the TLS integration artifact
+ * must verify the process-global OID and digestless SIGID after its Core
+ * registration upcalls.  The host-side preflight is tested separately; it is
+ * not used to load the TLS artifact below.  The ordinary signature provider
+ * has no OID alias, encoder/decoder or registry side effect.
  * Each mode runs in a fresh process (the object database is process-global).
  *
  * Modes:
@@ -30,6 +29,7 @@ int main(int argc, char **argv)
     OSSL_PROVIDER *ordinary;
     OSSL_PROVIDER *v1;
     const char *mode = argc > 1 ? argv[1] : "";
+    int expect_preflight_success = 0;
     int expect_load_success = 0;
     int prepared = 0;
     int queue_ok;
@@ -74,15 +74,18 @@ int main(int argc, char **argv)
             && OBJ_add_sigid(foreign, NID_sha256, nid) == 1;
     } else if (strcmp(mode, "free") == 0) {
         prepared = 1;
+        expect_preflight_success = 1;
         expect_load_success = 1;
     } else if (strcmp(mode, "object-only") == 0) {
         prepared = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG)
             != NID_undef;
+        expect_load_success = 1;
     } else if (strcmp(mode, "exact") == 0) {
         int nid = OBJ_create(ED301V1_OID_TEXT, ED301V1_ALG, ED301V1_ALG);
 
         prepared = nid != NID_undef
             && OBJ_add_sigid(nid, NID_undef, nid) == 1;
+        expect_preflight_success = 1;
         expect_load_success = 1;
     } else {
         fprintf(stderr, "usage: provider_oid_collision "
@@ -99,7 +102,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    ED301V1_CHECK(ed301v1_registry_preflight_ok() == expect_load_success,
+    ED301V1_CHECK(ed301v1_registry_preflight_ok() == expect_preflight_success,
         "%s: host preflight classifies the registry", mode);
 
     ed301v1_seed_error_sentinel();
@@ -120,22 +123,25 @@ int main(int argc, char **argv)
         OSSL_PROVIDER_unload(ordinary);
     }
 
-    ed301v1_seed_error_sentinel();
-    v1 = ed301v1_load_named(NULL, NULL, ED301V1_PKI_PROVIDER);
-    queue_ok = ed301v1_queue_is_sentinel_only();
+    v1 = OSSL_PROVIDER_load(NULL, ED301V1_TLS_PROVIDER);
     if (expect_load_success) {
         ED301V1_CHECK(v1 != NULL,
-            "%s: provider load succeeds after a clean host preflight",
-            mode);
+            "%s: TLS provider accepts the resulting exact identity", mode);
         if (v1 != NULL) {
+            int nid = NID_undef;
+            int digest_nid = NID_undef;
+            int public_key_nid = NID_undef;
             EVP_SIGNATURE *alg =
-                EVP_SIGNATURE_fetch(NULL, ED301V1_ALG, ED301V1_PKI_PROP);
+                EVP_SIGNATURE_fetch(NULL, ED301V1_OID_TEXT, ED301V1_TLS_PROP);
 
             ED301V1_CHECK(alg != NULL, "%s: algorithm fetch", mode);
-            ED301V1_CHECK(queue_ok,
-                "%s: caller queue preserved on successful load", mode);
-            ED301V1_CHECK(ed301v1_registry_is_exact(),
-                "%s: object and forward/reverse sigid are exact", mode);
+            ED301V1_CHECK(
+                ed301v1_registry_identity_state(&nid)
+                        == ED301V1_REGISTRY_EXACT
+                    && OBJ_find_sigid_algs(
+                           nid, &digest_nid, &public_key_nid) == 1
+                    && digest_nid == NID_undef && public_key_nid == nid,
+                "%s: object names and digestless SIGID are exact", mode);
             ED301V1_CHECK(ed301v1_provider_has_reason_dispatch(v1),
                 "%s: provider exports reason-string dispatch", mode);
             EVP_SIGNATURE_free(alg);
@@ -143,10 +149,7 @@ int main(int argc, char **argv)
         }
     } else {
         ED301V1_CHECK(v1 == NULL,
-            "%s: host preflight blocks the optional PKI test artifact",
-            mode);
-        ED301V1_CHECK(queue_ok,
-            "%s: host preflight preserves the caller error queue", mode);
+            "%s: TLS provider rejects a conflicting process identity", mode);
         if (v1 != NULL)
             OSSL_PROVIDER_unload(v1);
     }
