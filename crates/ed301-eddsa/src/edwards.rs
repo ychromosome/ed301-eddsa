@@ -8,7 +8,7 @@
 use crypto_bigint::Choice;
 
 use crate::{
-    field_5x64::Fe301 as FieldElement,
+    field_5x64::{Fe301 as FieldElement, Fe301Lazy as Lazy},
     parameters::{FIELD_BITS, FIELD_BYTES},
     scalar::Scalar,
     secret_taint::declassify,
@@ -199,59 +199,96 @@ impl EdwardsPoint {
     }
 
     /// Add two valid extended points with the complete twisted-Edwards formula.
+    ///
+    /// Intermediate products stay lazily reduced below `2p` and sums or
+    /// differences below `4p` (`Fe301Lazy`, `Fe301LazyLinear`); only the four
+    /// returned coordinates are canonicalised.  The formula and its operation
+    /// order are unchanged from the canonical `add_const`.
     pub(crate) fn add(self, rhs: Self) -> Self {
-        let xx = self.x.mul(rhs.x);
-        let yy = self.y.mul(rhs.y);
-        let dt = self.t.mul_small(EDWARDS_D).mul(rhs.t);
-        let zz = self.z.mul(rhs.z);
-        let cross = self.x.add(self.y).mul(rhs.x.add(rhs.y)).sub(xx).sub(yy);
-        let difference = zz.sub(dt);
-        let sum = zz.add(dt);
-        let twisted = yy.sub(xx.mul_small(EDWARDS_A));
+        let (x, y, z, t) = (
+            Lazy::from_fe301(self.x),
+            Lazy::from_fe301(self.y),
+            Lazy::from_fe301(self.z),
+            Lazy::from_fe301(self.t),
+        );
+        let (rx, ry, rz, rt) = (
+            Lazy::from_fe301(rhs.x),
+            Lazy::from_fe301(rhs.y),
+            Lazy::from_fe301(rhs.z),
+            Lazy::from_fe301(rhs.t),
+        );
+        let xx = x.mul(rx);
+        let yy = y.mul(ry);
+        let dt = t.mul_small(EDWARDS_D).mul(rt);
+        let zz = z.mul(rz);
+        let cross = x
+            .add_loose(y)
+            .mul(rx.add_loose(ry))
+            .sub_loose(xx.add_loose(yy).tighten());
+        let difference = zz.sub_loose(dt);
+        let sum = zz.add_loose(dt);
+        let twisted = yy.sub_loose(xx.mul_small(EDWARDS_A));
 
         Self {
-            x: cross.mul(difference),
-            y: sum.mul(twisted),
-            z: difference.mul(sum),
-            t: cross.mul(twisted),
+            x: cross.mul(difference).canonical(),
+            y: sum.mul(twisted).canonical(),
+            z: difference.mul(sum).canonical(),
+            t: cross.mul(twisted).canonical(),
         }
     }
 
     /// Add an affine precomputed point using the complete mixed formula.
     pub(crate) fn add_affine(self, rhs: AffineNielsPoint) -> Self {
-        let xx = self.x.mul(rhs.x);
-        let yy = self.y.mul(rhs.y);
-        let dt = self.t.mul(rhs.dt);
-        let cross = self.x.add(self.y).mul(rhs.xy).sub(xx).sub(yy);
-        let difference = self.z.sub(dt);
-        let sum = self.z.add(dt);
-        let twisted = yy.sub(xx.mul_small(EDWARDS_A));
+        let (x, y, z, t) = (
+            Lazy::from_fe301(self.x),
+            Lazy::from_fe301(self.y),
+            Lazy::from_fe301(self.z),
+            Lazy::from_fe301(self.t),
+        );
+        let xx = x.mul(Lazy::from_fe301(rhs.x));
+        let yy = y.mul(Lazy::from_fe301(rhs.y));
+        let dt = t.mul(Lazy::from_fe301(rhs.dt));
+        let cross = x
+            .add_loose(y)
+            .mul_tight(Lazy::from_fe301(rhs.xy))
+            .sub_loose(xx.add_loose(yy).tighten());
+        let difference = z.sub_loose(dt);
+        let sum = z.add_loose(dt);
+        let twisted = yy.sub_loose(xx.mul_small(EDWARDS_A));
 
         Self {
-            x: cross.mul(difference),
-            y: sum.mul(twisted),
-            z: difference.mul(sum),
-            t: cross.mul(twisted),
+            x: cross.mul(difference).canonical(),
+            y: sum.mul(twisted).canonical(),
+            z: difference.mul(sum).canonical(),
+            t: cross.mul(twisted).canonical(),
         }
     }
 
     /// Double a valid extended point with the complete dedicated formula.
     pub(crate) fn double(self) -> Self {
-        let xx = self.x.square();
-        let yy = self.y.square();
-        let zz = self.z.square();
-        let two_zz = zz.add(zz);
+        let (x, y, z) = (
+            Lazy::from_fe301(self.x),
+            Lazy::from_fe301(self.y),
+            Lazy::from_fe301(self.z),
+        );
+        let xx = x.square();
+        let yy = y.square();
+        let zz = z.square();
+        let two_zz = zz.add_loose(zz).tighten();
         let twisted_xx = xx.mul_small(EDWARDS_A);
-        let cross = self.x.add(self.y).square().sub(xx).sub(yy);
-        let sum = twisted_xx.add(yy);
-        let difference = sum.sub(two_zz);
-        let twisted_difference = twisted_xx.sub(yy);
+        let cross = x
+            .add_loose(y)
+            .square()
+            .sub_loose(xx.add_loose(yy).tighten());
+        let sum = twisted_xx.add_loose(yy);
+        let difference = sum.tighten().sub_loose(two_zz);
+        let twisted_difference = twisted_xx.sub_loose(yy);
 
         Self {
-            x: cross.mul(difference),
-            y: sum.mul(twisted_difference),
-            z: difference.mul(sum),
-            t: cross.mul(twisted_difference),
+            x: cross.mul(difference).canonical(),
+            y: sum.mul(twisted_difference).canonical(),
+            z: difference.mul(sum).canonical(),
+            t: cross.mul(twisted_difference).canonical(),
         }
     }
 

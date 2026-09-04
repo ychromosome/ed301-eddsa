@@ -580,8 +580,11 @@ check_optional_field_symbol field_multiply \
 check_branch_free point_double \
     '<ed301_eddsa::edwards::EdwardsPoint>::double' 20 35 no \
     'ed301_eddsa::field_5x64::(reduce_wide|square_wide|multiply_wide)' allow
+# The lazily reduced formulas canonicalise only their four outputs, so the
+# full addition carries fewer conditional corrections than the canonical
+# lowering (reviewed shape on Rust 1.98.0: sbb=31 cmov=35).
 check_branch_free point_add \
-    '<ed301_eddsa::edwards::EdwardsPoint>::add' 25 45 no \
+    '<ed301_eddsa::edwards::EdwardsPoint>::add' 25 35 no \
     'ed301_eddsa::field_5x64::(reduce_wide|multiply_wide)' allow
 check_branch_free point_add_affine \
     '<ed301_eddsa::edwards::EdwardsPoint>::add_affine' 20 30 no \

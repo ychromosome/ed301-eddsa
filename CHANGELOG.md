@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The group formulas (`double`, `add`, `add_affine`) keep intermediate
+  products lazily reduced below `2p` and sums or differences below `4p`, as
+  the X301 ladder does, and canonicalise only their returned coordinates.
+  Same formulas and operation order; about 10% faster signing, key
+  generation, verification and key import on x86-64 on top of the inlining
+  below (about 16% together). New field differential
+  test with explicit bound checks.
 - Inlined the five-limb field product, square and reduction helpers, as in the
   X301 crate. No arithmetic change; about 5% faster signing, verification and
   key import on x86-64. The final codegen gate now accepts these helpers as
