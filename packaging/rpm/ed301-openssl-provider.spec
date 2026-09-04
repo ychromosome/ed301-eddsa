@@ -1,16 +1,16 @@
 %bcond_without tests
 
-%global commit 61002713de7b152dc209d0d3266b727e80216cf4
-%global shortcommit 6100271
+%global commit 28da7cb2c3369e4b77357100ab27d2976f1433ec
+%global shortcommit 28da7cb
 %global snapshot 20260904
-%global source_manifest_sha256 b9e8a85c9da4c3708994b386f270ed9a4fdf10b45bc17c938907cb98192ef67d
+%global source_manifest_sha256 a62186288547f2aca9803e0aec162a34e46c27e802223e61fbb6a78cf7f9da7d
 %global openssl_fork_evr 1:4.1.0~dev.1-0.4.git9bbfc53%{?dist}
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           ed301-openssl-provider
 Version:        0.1.0
-Release:        0.11.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.12.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental Ed301-EdDSA provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
@@ -169,6 +169,17 @@ grep -F 'Ed301-EdDSA-v1 Private-Key:' \
     "$test_dir/ed301-key-text.txt" >/dev/null
 grep -F 'priv:' "$test_dir/ed301-key-text.txt" >/dev/null
 grep -F 'pub:' "$test_dir/ed301-key-text.txt" >/dev/null
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
+    openssl pkey -provider default -provider ed301_eddsa_v1_tls_test \
+    -in "$test_dir/ed301-pkcs8.pem" -aes-256-cbc \
+    -passout pass:ed301-rpm-test \
+    -out "$test_dir/ed301-pkcs8-encrypted.pem"
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES="$PWD/target/rpm-package-modules" \
+    openssl pkey -provider default -provider ed301_eddsa_v1_tls_test \
+    -in "$test_dir/ed301-pkcs8-encrypted.pem" \
+    -passin pass:ed301-rpm-test -check -noout
 %endif
 
 %files
@@ -177,6 +188,7 @@ grep -F 'pub:' "$test_dir/ed301-key-text.txt" >/dev/null
 %license provider/cargo-vendor.txt
 %doc README.md
 %doc THIRD_PARTY_NOTICES.md
+%doc docs/PROVIDER_USAGE.md
 %{provider_modulesdir}/ed301_eddsa_v1.so
 
 %files policy
@@ -199,6 +211,10 @@ echo 'Fedora crypto-policy preferences were not changed.'
 exit 0
 
 %changelog
+* Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.12.20260904git28da7cb
+- Add encrypted PKCS#8 output and extended PKI and TLS regressions
+- Remove child-context thread-local RAND state
+
 * Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.11.20260904git6100271
 - Reject conflicting process OID and SIGID identities
 - Keep Fedora policy overlays inert
