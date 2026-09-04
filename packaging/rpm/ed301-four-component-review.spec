@@ -1,8 +1,8 @@
-%global openssl_fork_evr 1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}
+%global openssl_fork_evr 1:4.1.0~dev.1-0.4.git9bbfc53%{?dist}
 
 Name:           ed301-four-component-review
 Version:        0.1.0
-Release:        0.8%{?dist}
+Release:        0.9%{?dist}
 Summary:        Four-component Ed301 laboratory review environment
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/ed301-eddsa
@@ -10,12 +10,12 @@ BuildArch:      noarch
 
 Requires:       openssl = %{openssl_fork_evr}
 Requires:       openssl-libs%{?_isa} = %{openssl_fork_evr}
-Requires:       ed301-openssl-provider = 0.1.0-0.10.20260904git69b30b6%{?dist}
-Requires:       ed301-openssl-provider-policy = 0.1.0-0.10.20260904git69b30b6%{?dist}
-Requires:       x301-openssl-provider = 0.1.0-0.8.20260902git73b30af%{?dist}
-Requires:       x301-openssl-provider-policy = 0.1.0-0.8.20260902git73b30af%{?dist}
-Requires:       g301-openssl-provider = 0.1.0-0.5.20260902git07da4c8%{?dist}
-Requires:       g301-openssl-provider-policy = 0.1.0-0.5.20260902git07da4c8%{?dist}
+Requires:       ed301-openssl-provider = 0.1.0-0.11.20260904git6100271%{?dist}
+Requires:       ed301-openssl-provider-policy = 0.1.0-0.11.20260904git6100271%{?dist}
+Requires:       x301-openssl-provider = 0.1.0-0.9.20260904git1f0a9f4%{?dist}
+Requires:       x301-openssl-provider-policy = 0.1.0-0.9.20260904git1f0a9f4%{?dist}
+Requires:       g301-openssl-provider = 0.1.0-0.6.20260904git267a171%{?dist}
+Requires:       g301-openssl-provider-policy = 0.1.0-0.6.20260904git267a171%{?dist}
 
 %description
 This package contains no files. It installs the exact RPM set used by the
@@ -30,11 +30,15 @@ mkdir -p %{buildroot}%{_datadir}
 
 %check
 test "%{openssl_fork_evr}" = \
-    "1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}"
+    "1:4.1.0~dev.1-0.4.git9bbfc53%{?dist}"
 
 %files
 
 %changelog
+* Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.9
+- Pin the HR4 OpenSSL, Ed301, X301 and G301 package set
+- Keep all optional policy packages inert
+
 * Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.8
 - Require Ed301 key text encoding
 
