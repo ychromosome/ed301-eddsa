@@ -306,7 +306,7 @@ int main(void)
 
             X509_REQ_get0_signature(req, &signature, &algorithm);
             ED301V1_CHECK(signature != NULL
-                    && ASN1_STRING_length(signature) == 76,
+                    && ed301v1_bit_string_length(signature) == 76,
                 "CSR carries a 76-byte Ed301-EdDSA-v1 signature");
             if (algorithm != NULL) {
                 char oid_text[96] = { 0 };
@@ -319,7 +319,8 @@ int main(void)
                 ED301V1_CHECK(algorithm->parameter == NULL,
                     "CSR AlgorithmIdentifier is parameterless");
             }
-            if (signature != NULL && ASN1_STRING_length(signature) > 0) {
+            if (signature != NULL
+                    && ed301v1_bit_string_length(signature) > 0) {
                 /* Corrupt one signature byte in place. */
                 unsigned char *bytes =
                     (unsigned char *)ASN1_STRING_get0_data(signature);
@@ -371,13 +372,13 @@ int main(void)
                     X509_REQ_get0_signature(
                         mutated, &mutated_signature, NULL);
                     if (mutated_signature != NULL
-                            && ASN1_STRING_length(mutated_signature)
-                                == (int)ED301V1_SIG_BYTES) {
+                            && ed301v1_bit_string_length(mutated_signature)
+                                == ED301V1_SIG_BYTES) {
                         memcpy(shortened,
                             ASN1_STRING_get0_data(mutated_signature),
                             sizeof(shortened));
-                        set_ok = ASN1_STRING_set(
-                            (ASN1_STRING *)mutated_signature,
+                        set_ok = ed301v1_bit_string_set(
+                            (ASN1_BIT_STRING *)mutated_signature,
                             shortened, sizeof(shortened));
                     }
                 }
@@ -522,7 +523,7 @@ int main(void)
 
                 X509_get0_signature(&signature, &algorithm, leaf_cert);
                 if (signature != NULL
-                        && ASN1_STRING_length(signature) > 10) {
+                        && ed301v1_bit_string_length(signature) > 10) {
                     unsigned char *bytes = (unsigned char *)
                         ASN1_STRING_get0_data(signature);
 

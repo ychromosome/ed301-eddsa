@@ -1,6 +1,8 @@
 #ifndef ED301V1_STRICT_PKI_H
 #define ED301V1_STRICT_PKI_H
 
+#include <limits.h>
+
 /*
  * Mandatory verification boundary for the test-only Ed301 PKI profile.
  * OpenSSL's generic X.509 verification accepts some AlgorithmIdentifier
@@ -14,6 +16,35 @@
 #include <openssl/x509_vfy.h>
 
 #include "harness_common.h"
+
+static inline size_t ed301v1_bit_string_length(const ASN1_BIT_STRING *value)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    size_t length = 0;
+    int unused_bits = 0;
+
+    if (ASN1_BIT_STRING_get_length(value, &length, &unused_bits) != 1
+            || unused_bits != 0)
+        return SIZE_MAX;
+    return length;
+#else
+    return (size_t)ASN1_STRING_length((const ASN1_STRING *)value);
+#endif
+}
+
+static inline int ed301v1_bit_string_set(
+    ASN1_BIT_STRING *value,
+    const unsigned char *data,
+    size_t length)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    return ASN1_BIT_STRING_set1(value, data, length, 0);
+#else
+    if (length > INT_MAX)
+        return 0;
+    return ASN1_BIT_STRING_set(value, (unsigned char *)data, (int)length);
+#endif
+}
 
 static inline int ed301v1_pki_algorithm_is_exact(const X509_ALGOR *algorithm)
 {
@@ -56,7 +87,7 @@ static inline int ed301v1_pki_request_is_exact(const X509_REQ *request)
         return 0;
     X509_REQ_get0_signature(request, &signature, &outer);
     return signature != NULL
-        && ASN1_STRING_length(signature) == (int)ED301V1_SIG_BYTES
+        && ed301v1_bit_string_length(signature) == ED301V1_SIG_BYTES
         && ed301v1_pki_algorithm_is_exact(outer)
         && ed301v1_pki_public_key_is_exact(
             X509_REQ_get_X509_PUBKEY((X509_REQ *)request));
@@ -73,7 +104,7 @@ static inline int ed301v1_pki_certificate_is_exact(const X509 *certificate)
     X509_get0_signature(&signature, &outer, certificate);
     tbs = X509_get0_tbs_sigalg(certificate);
     return signature != NULL
-        && ASN1_STRING_length(signature) == (int)ED301V1_SIG_BYTES
+        && ed301v1_bit_string_length(signature) == ED301V1_SIG_BYTES
         && ed301v1_pki_algorithm_is_exact(outer)
         && ed301v1_pki_algorithm_is_exact(tbs)
         && X509_ALGOR_cmp(outer, tbs) == 0
