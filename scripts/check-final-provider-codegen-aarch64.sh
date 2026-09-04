@@ -108,7 +108,7 @@ forbidden_straight_line() {
 check_symbol() {
     label=$1
     symbol=$2
-    require_borrow=$3
+    require_subtract=$3
     output=$EVIDENCE/$label.asm
 
     extract_symbol "$symbol" "$output"
@@ -134,16 +134,16 @@ check_symbol() {
         }
         END { print count + 0 }
     ' "$output")
-    borrows=$(/usr/bin/awk '
-        /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^(sbc|sbcs)$/ { count++ }
+    subtracts=$(/usr/bin/awk '
+        /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^(subs|sbc|sbcs)$/ { count++ }
         END { print count + 0 }
     ' "$output")
     test "$selects" -gt 0
-    if [ "$require_borrow" = yes ]; then
-        test "$borrows" -gt 0
+    if [ "$require_subtract" = yes ]; then
+        test "$subtracts" -gt 0
     fi
-    printf 'PASS aarch64_symbol=%s conditional_select=%s subtract_carry=%s branches=0 calls=0 indexed_memory=0\n' \
-        "$symbol" "$selects" "$borrows" | tee -a "$SUMMARY"
+    printf 'PASS aarch64_symbol=%s conditional_select=%s subtract=%s branches=0 calls=0 indexed_memory=0\n' \
+        "$symbol" "$selects" "$subtracts" | tee -a "$SUMMARY"
 }
 
 check_symbol point_double \
