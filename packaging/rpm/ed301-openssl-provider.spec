@@ -1,10 +1,10 @@
 %bcond_without tests
 
-%global commit 69b30b6182765029d8e3b508bde81a3d9c6a3c15
-%global shortcommit 69b30b6
+%global commit 61002713de7b152dc209d0d3266b727e80216cf4
+%global shortcommit 6100271
 %global snapshot 20260904
-%global source_manifest_sha256 324c1fb6378104d58de6afffb61f8f77c10b0eadafc05cdacb7f76ecb8bc596a
-%global openssl_fork_evr 1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}
+%global source_manifest_sha256 b9e8a85c9da4c3708994b386f270ed9a4fdf10b45bc17c938907cb98192ef67d
+%global openssl_fork_evr 1:4.1.0~dev.1-0.4.git9bbfc53%{?dist}
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
@@ -199,6 +199,10 @@ echo 'Fedora crypto-policy preferences were not changed.'
 exit 0
 
 %changelog
+* Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.11.20260904git6100271
+- Reject conflicting process OID and SIGID identities
+- Keep Fedora policy overlays inert
+
 * Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.10.20260904git69b30b6
 - Add Ed25519/Ed448-style private and public key text output
 
