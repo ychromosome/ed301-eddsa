@@ -453,6 +453,7 @@ static int pump_handshake(SSL *server, SSL *client)
 
 typedef struct tls_options_st {
     int mutual;
+    int resume;
     int force_tls12;
     const char *client_sigalgs;
     const char *expected_hostname; /* NULL: use SERVER_NAME */
@@ -468,11 +469,90 @@ typedef struct tls_outcome_st {
     int cv_trace_ok;
     int cv_provider_ok;
     int no_hrr;
+    int session_resumed;
     char handshake_digest_name[32];
     GLOBAL_TRACE trace;
     unsigned char application_byte;
     char error_reason[256];   /* first error-stack reason on failure */
 } TLS_OUTCOME;
+
+static int create_ssl_pair(
+    SSL_CTX *server_context,
+    SSL_CTX *client_context,
+    SSL **server_output,
+    SSL **client_output)
+{
+    SSL *server = SSL_new(server_context);
+    SSL *client = SSL_new(client_context);
+    BIO *server_bio = NULL;
+    BIO *client_bio = NULL;
+
+    if (server_output == NULL || client_output == NULL
+            || server == NULL || client == NULL
+            || BIO_new_bio_pair(&server_bio, 0, &client_bio, 0) != 1)
+        goto error;
+    SSL_set_bio(server, server_bio, server_bio);
+    SSL_set_bio(client, client_bio, client_bio);
+    SSL_set_accept_state(server);
+    SSL_set_connect_state(client);
+    *server_output = server;
+    *client_output = client;
+    return 1;
+
+error:
+    BIO_free(server_bio);
+    BIO_free(client_bio);
+    SSL_free(server);
+    SSL_free(client);
+    return 0;
+}
+
+static int set_client_server_name(SSL *client, const char *server_name)
+{
+    if (client == NULL || server_name == NULL
+            || SSL_set_tlsext_host_name(client, server_name) != 1)
+        return 0;
+#if OPENSSL_VERSION_NUMBER >= 0x40000000L
+    return SSL_set1_dnsname(client, server_name) == 1;
+#else
+    return SSL_set1_host(client, server_name) == 1;
+#endif
+}
+
+static int resume_tls13_session(
+    SSL_CTX *server_context,
+    SSL_CTX *client_context,
+    SSL *first_client,
+    const char *server_name)
+{
+    SSL_SESSION *session = SSL_get1_session(first_client);
+    SSL *server = NULL;
+    SSL *client = NULL;
+    unsigned char sent = 0x51;
+    unsigned char received = 0;
+    int result = 0;
+
+    if (session == NULL || SSL_SESSION_is_resumable(session) != 1
+            || !create_ssl_pair(
+                server_context, client_context, &server, &client)
+            || SSL_set_session(client, session) != 1
+            || !set_client_server_name(client, server_name)
+            || !pump_handshake(server, client))
+        goto done;
+    result = SSL_session_reused(client) == 1
+        && SSL_session_reused(server) == 1
+        && SSL_get_verify_result(client) == X509_V_OK
+        && SSL_write(client, &sent, 1) == 1
+        && SSL_read(server, &received, 1) == 1
+        && received == sent;
+
+done:
+    SSL_free(client);
+    SSL_free(server);
+    SSL_SESSION_free(session);
+    ERR_clear_error();
+    return result;
+}
 
 static int hash_sha256(
     const unsigned char *bytes,
@@ -748,8 +828,6 @@ static int run_tls(
     SSL_CTX *client_ctx = SSL_CTX_new(TLS_client_method());
     SSL *server = NULL;
     SSL *client = NULL;
-    BIO *server_bio = NULL;
-    BIO *client_bio = NULL;
     X509_STORE *client_store;
     const char *stage = "context";
     CAPTURE client_capture = { 'C', &outcome->trace };
@@ -760,6 +838,15 @@ static int run_tls(
     outcome->verify_result = -1;
     if (server_ctx == NULL || client_ctx == NULL)
         goto done;
+    {
+        static const unsigned char session_id_context[] = "ed301-tls-test";
+
+        if (SSL_CTX_set_num_tickets(server_ctx, 1) != 1
+                || SSL_CTX_set_session_id_context(server_ctx,
+                    session_id_context,
+                    sizeof(session_id_context) - 1) != 1)
+            goto done;
+    }
 
     stage = "server credentials";
     if (SSL_CTX_use_certificate(server_ctx, server_cert) != 1
@@ -822,30 +909,14 @@ static int run_tls(
     SSL_CTX_set_msg_callback_arg(server_ctx, &server_capture);
 
     stage = "ssl objects";
-    server = SSL_new(server_ctx);
-    client = SSL_new(client_ctx);
-    if (server == NULL || client == NULL
-            || BIO_new_bio_pair(&server_bio, 0, &client_bio, 0) != 1)
+    if (!create_ssl_pair(server_ctx, client_ctx, &server, &client))
         goto done;
-    SSL_set_bio(server, server_bio, server_bio);
-    SSL_set_bio(client, client_bio, client_bio);
-    SSL_set_accept_state(server);
-    SSL_set_connect_state(client);
 
     stage = "hostname";
-#if OPENSSL_VERSION_NUMBER >= 0x40000000L
-    /* SSL_set1_host is deprecated in OpenSSL 4.0; the hostname under
-     * test is always a DNS name here. */
-    if (SSL_set1_dnsname(client,
+    if (!set_client_server_name(client,
             options->expected_hostname != NULL
-                ? options->expected_hostname : SERVER_NAME) != 1)
+                ? options->expected_hostname : SERVER_NAME))
         goto done;
-#else
-    if (SSL_set1_host(client,
-            options->expected_hostname != NULL
-                ? options->expected_hostname : SERVER_NAME) != 1)
-        goto done;
-#endif
 
     stage = NULL;
     ok = 1;
@@ -883,6 +954,14 @@ static int run_tls(
                     && SSL_read(client, &byte, 1) == 1)
                 outcome->application_byte = byte;
         }
+        if (options->resume) {
+            SSL_CTX_set_msg_callback(client_ctx, NULL);
+            SSL_CTX_set_msg_callback(server_ctx, NULL);
+            outcome->session_resumed = resume_tls13_session(
+                server_ctx, client_ctx, client,
+                options->expected_hostname != NULL
+                    ? options->expected_hostname : SERVER_NAME);
+        }
     }
 
 done:
@@ -896,6 +975,113 @@ done:
     SSL_CTX_free(client_ctx);
     ERR_clear_error();
     return ok;
+}
+
+typedef struct sni_switch_st {
+    SSL_CTX *target;
+    const char *expected_name;
+    unsigned int accepted;
+    unsigned int rejected;
+} SNI_SWITCH;
+
+static int sni_switch_callback(SSL *ssl, int *alert, void *argument)
+{
+    SNI_SWITCH *state = argument;
+    const char *name = SSL_get_servername(
+        ssl, TLSEXT_NAMETYPE_host_name);
+
+    if (state != NULL && name != NULL
+            && strcmp(name, state->expected_name) == 0
+            && SSL_set_SSL_CTX(ssl, state->target) != NULL) {
+        state->accepted++;
+        return SSL_TLSEXT_ERR_OK;
+    }
+    if (state != NULL)
+        state->rejected++;
+    if (alert != NULL)
+        *alert = SSL_AD_UNRECOGNIZED_NAME;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+static int configure_tls13_context(SSL_CTX *context)
+{
+    return context != NULL
+        && SSL_CTX_set_min_proto_version(context, TLS1_3_VERSION) == 1
+        && SSL_CTX_set_max_proto_version(context, TLS1_3_VERSION) == 1
+        && SSL_CTX_set1_groups_list(context, "X25519") == 1;
+}
+
+static int sni_selects_ed301_certificate(
+    X509 *trust_anchor,
+    X509 *default_certificate,
+    X509 *selected_certificate,
+    EVP_PKEY *server_key)
+{
+    SSL_CTX *default_context = SSL_CTX_new(TLS_server_method());
+    SSL_CTX *selected_context = SSL_CTX_new(TLS_server_method());
+    SSL_CTX *client_context = SSL_CTX_new(TLS_client_method());
+    SSL *server = NULL;
+    SSL *client = NULL;
+    X509 *peer = NULL;
+    X509_STORE *store;
+    SNI_SWITCH state = { selected_context, SERVER_NAME, 0, 0 };
+    int positive = 0;
+    int negative = 0;
+    int result = 0;
+
+    if (!configure_tls13_context(default_context)
+            || !configure_tls13_context(selected_context)
+            || !configure_tls13_context(client_context)
+            || SSL_CTX_use_certificate(
+                default_context, default_certificate) != 1
+            || SSL_CTX_use_PrivateKey(default_context, server_key) != 1
+            || SSL_CTX_use_certificate(
+                selected_context, selected_certificate) != 1
+            || SSL_CTX_use_PrivateKey(selected_context, server_key) != 1
+            || SSL_CTX_set_tlsext_servername_callback(
+                default_context, sni_switch_callback) != 1
+            || SSL_CTX_set_tlsext_servername_arg(
+                default_context, &state) != 1)
+        goto done;
+    store = SSL_CTX_get_cert_store(client_context);
+    if (store == NULL || X509_STORE_add_cert(store, trust_anchor) != 1)
+        goto done;
+    SSL_CTX_set_verify(client_context, SSL_VERIFY_PEER, NULL);
+
+    if (!create_ssl_pair(
+            default_context, client_context, &server, &client)
+            || !set_client_server_name(client, SERVER_NAME)
+            || !pump_handshake(server, client))
+        goto done;
+    peer = SSL_get1_peer_certificate(client);
+    positive = state.accepted == 1 && state.rejected == 0
+        && SSL_get_SSL_CTX(server) == selected_context
+        && SSL_get_verify_result(client) == X509_V_OK
+        && peer != NULL && X509_cmp(peer, selected_certificate) == 0;
+    X509_free(peer);
+    peer = NULL;
+    SSL_free(client);
+    client = NULL;
+    SSL_free(server);
+    server = NULL;
+
+    if (!create_ssl_pair(
+            default_context, client_context, &server, &client)
+            || !set_client_server_name(client, "unknown.v1.test.example"))
+        goto done;
+    negative = !pump_handshake(server, client)
+        && state.accepted == 1 && state.rejected == 1;
+    result = positive && negative;
+
+done:
+    X509_free(peer);
+    SSL_free(client);
+    SSL_free(server);
+    SSL_CTX_free(client_context);
+    SSL_CTX_free(selected_context);
+    SSL_CTX_free(default_context);
+    ERR_clear_error();
+    return result;
 }
 
 int main(void)
@@ -969,6 +1155,7 @@ int main(void)
 
     /* Server authentication over X25519 with hostname validation. */
     memset(&options, 0, sizeof(options));
+    options.resume = 1;
     ED301V1_CHECK(run_tls(ca_cert, server_cert, server_key, NULL, NULL,
             &options, &outcome) == 1,
         "TLS run executes");
@@ -986,6 +1173,8 @@ int main(void)
         "server CertificateVerify TBS/wire independently reconstructed and "
         "verified through the provider");
     ED301V1_CHECK(outcome.application_byte == 0x42, "application data flows");
+    ED301V1_CHECK(outcome.session_resumed,
+        "TLS 1.3 session resumes after the Ed301-authenticated handshake");
 
     /*
      * FBL-09: exact expected CertificateVerify sequence.  The server
@@ -1200,6 +1389,20 @@ int main(void)
                 outcome.verify_result);
             X509_free(corrupt);
         }
+    }
+
+    {
+        X509 *default_sni_certificate = issue_cert(
+            "Ed301-EdDSA-v1 default SNI leaf",
+            "default.v1.test.example", "serverAuth", ca_cert,
+            server_key, ca_key, 0, 10);
+
+        ED301V1_CHECK(default_sni_certificate != NULL
+                && sni_selects_ed301_certificate(ca_cert,
+                    default_sni_certificate, server_cert, server_key),
+            "SNI selects the matching Ed301 certificate and rejects an "
+            "unknown name");
+        X509_free(default_sni_certificate);
     }
 
     /*
