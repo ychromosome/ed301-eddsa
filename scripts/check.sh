@@ -41,6 +41,15 @@ TMPDIR=/var/tmp sh "$ROOT/scripts/test-source-tree-gate.sh"
 sh "$ROOT/scripts/test-build-input-hardening.sh"
 sh "$ROOT/scripts/test-rustc-profile-guard.sh"
 sh "$ROOT/scripts/check-blind-reference.sh"
+/usr/bin/bash -n "$ROOT/scripts/run-performance-receipt.sh"
+/usr/bin/python3 -I -B -c \
+    'import pathlib; p = pathlib.Path(__import__("sys").argv[1]); compile(p.read_bytes(), str(p), "exec")' \
+    "$ROOT/performance/summarize.py"
+printf 'round\tposition\talgorithm\toperation\tcount\tmean_ns\tlog\n1\ttarget\tEd301\texpand\t1\t10\ta\n1\ttarget\tEd301\tsign\t1\t20\tb\n1\ttarget\tEd301\tverify\t1\t30\tc\n1\ttarget\tEd301\timport\t1\t40\td\n1\tpre\tED25519\tkeygen\t1\t5\te\n1\tpre\tED25519\tsign\t1\t10\tf\n1\tpre\tED25519\tverify\t1\t15\tg\n1\tpre\tED448\tkeygen\t1\t20\th\n1\tpre\tED448\tsign\t1\t40\ti\n1\tpre\tED448\tverify\t1\t60\tj\n' \
+    >"$WORK/performance-fixture.tsv"
+/usr/bin/python3 -I -B "$ROOT/performance/summarize.py" \
+    "$WORK/performance-fixture.tsv" >"$WORK/performance-summary.txt"
+grep -F 'Ed301/Ed25519=2.000000' "$WORK/performance-summary.txt" >/dev/null
 
 clean_env /usr/bin/cargo --version --verbose
 clean_env /usr/bin/rustc --version --verbose
@@ -49,6 +58,8 @@ clean_env /usr/bin/cargo-clippy --version
 
 cargo_clean metadata --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --format-version=1 >/dev/null
+cargo_clean check --manifest-path "$ROOT/performance/ed301-bench/Cargo.toml" \
+    --locked --offline
 cargo_clean fmt --manifest-path "$ROOT/Cargo.toml" --all -- --check
 cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets -- -D warnings

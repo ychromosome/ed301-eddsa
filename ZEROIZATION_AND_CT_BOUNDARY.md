@@ -115,10 +115,11 @@ provider immediately after child creation disables child-local fallback.
 Later application-provider loads remain mirrored into the child.
 
 The deferred assurance work includes a fresh exact-revision full-scope source
-security scan, disassembly and secret-dependent branch/address review,
-multi-architecture timing and cache tests, fault injection, and a decision on
-a stricter non-`Copy` secret-arithmetic ownership model. Until those gates are
-complete, this candidate must not process production keys.
+security scan, cache testing, fault injection, and a decision on a stricter
+non-`Copy` secret-arithmetic ownership model. The checked-in timing lane is
+statistical evidence for its recorded input classes and machines, not a
+constant-time proof. Until the remaining gates are complete, this candidate
+must not process production keys.
 
 The source-bound `crypto-bigint 0.7.5` fork uses explicit wrapping operations
 at six bounded arithmetic sites where workspace-wide overflow checks added

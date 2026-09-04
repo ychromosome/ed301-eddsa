@@ -78,6 +78,17 @@ disabled-by-default test artifacts. The TLS integration module registers and
 checks its OID and digestless SIGID before publishing its dispatch table.
 See `docs/PROVIDER_USAGE.md` for commands and supported formats.
 
+The provider lane also runs the dudect-based timing check. A separate pinned
+performance receipt is produced with:
+
+```sh
+scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
+    performance-receipt /private/lane-root/inst/3.5.8 2 /tmp/ed301-performance
+```
+
+Timing and benchmark results apply only to the recorded CPU, binaries and
+toolchain.
+
 The compatibility minima remain OpenSSL 3.5.7 for ABI major 3 and OpenSSL
 4.0.1 for ABI major 4. The authoritative matrix uses the current security
 patch releases. Later releases in the same major are accepted; earlier

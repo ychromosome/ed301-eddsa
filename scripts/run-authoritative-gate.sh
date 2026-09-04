@@ -81,6 +81,18 @@ case "$GATE" in
     check-secret-taint)
         TARGET=$ROOT/scripts/check-secret-taint.sh
         ;;
+    check-provider-timing)
+        if [ "${1:-}" = --measurements ] && [ "$#" -ge 2 ]; then
+            ED301_TIMING_MEASUREMENTS=$2
+            export ED301_TIMING_MEASUREMENTS
+            shift 2
+        fi
+        TARGET=$ROOT/scripts/check-provider-timing.sh
+        ;;
+    performance-receipt)
+        TARGET=$ROOT/scripts/run-performance-receipt.sh
+        TARGET_SHELL=/bin/bash
+        ;;
     review-tests)
         TARGET=$ROOT/review-tests/run.sh
         [ "$#" -eq 0 ] || usage

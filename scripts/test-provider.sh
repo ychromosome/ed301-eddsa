@@ -30,7 +30,17 @@ verify_lane() {
     sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
         "$LANE_ROOT_ARG" "$LANE" "$LANE_EVIDENCE"
 }
-BUILD=$(mktemp -d "/tmp/ed301-provider-${LANE}.XXXXXX")
+if [[ -n ${ED301_PROVIDER_RESULT_ROOT:-} ]]; then
+    BUILD=$ED301_PROVIDER_RESULT_ROOT
+    [[ ! -e $BUILD && ! -L $BUILD ]] || {
+        printf 'provider result root already exists: %s\n' "$BUILD" >&2
+        exit 2
+    }
+    mkdir -m 700 -- "$BUILD"
+    BUILD=$(readlink -f -- "$BUILD")
+else
+    BUILD=$(mktemp -d "/tmp/ed301-provider-${LANE}.XXXXXX")
+fi
 if ! sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
         "$LANE_ROOT_ARG" "$LANE" "$LANE_EVIDENCE" \
         "$BUILD/openssl-lane"; then
@@ -856,6 +866,10 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     ED301V1_RUST_ALLOC_ONLY=1 /usr/bin/valgrind --error-exitcode=99 \
     --errors-for-leak-kinds=definite --leak-check=full --quiet \
     "$BUILD/bin/provider_hardening"
+
+sh "$ROOT/scripts/check-provider-timing.sh" \
+    "$OPENSSL_PREFIX" "$BUILD/modules" \
+    "$BUILD/evidence/provider-timing"
 
 (cd "$BUILD" && sha256sum --strict --quiet -c \
     evidence/pre-execution-artifacts.sha256)

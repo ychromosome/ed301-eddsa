@@ -46,16 +46,17 @@ The required matrix is:
 - `scripts/check.sh`;
 - `review-tests/run.sh`;
 - provider matrices for OpenSSL 3.5.8 and 4.0.2;
-- final-DSO code-generation checks in both lanes;
+- final-DSO code-generation checks on x86-64 and AArch64 in both lanes;
+- dudect timing checks with a positive control on both architectures;
 - byte-identical provider rebuilds from a manifest-derived source root;
 - the EVP secret-taint matrix;
 - ASan, UBSan, static analysis and Valgrind paths in `scripts/test-provider.sh`.
 
-The final-codegen checker accepts a bounded set of x86-64 per-symbol shapes
-observed under Rust 1.97.1 and Fedora Rust 1.98.0. This is not a whole-toolchain
-allowlist. A separate `multiply_wide` symbol, when emitted, is checked
-independently. Every compiler change requires fresh disassembly and taint
-evidence.
+The x86-64 final-codegen checker accepts bounded per-symbol shapes observed
+under Rust 1.97.1 and Fedora Rust 1.98.0. The AArch64 checker independently
+rejects conditional control flow, calls and indexed memory in the affected
+straight-line point operations. Every compiler change requires fresh
+disassembly, timing and taint evidence.
 
 This file does not certify that a gate passed. Only revision-bound logs and
 digests do.
@@ -70,7 +71,7 @@ digests do.
   security forks. Their local changes and update gates are documented in
   `vendor/crypto-bigint/ED301_PATCHES.md` and
   `vendor/cpufeatures/ED301_PATCHES.md`.
-- Native AArch64 provider/DSO codegen, a fresh full-repository deep scan and
-  an independent cryptography/FFI/side-channel audit remain open.
+- A fresh full-repository deep scan and an independent
+  cryptography/FFI/side-channel audit remain open.
 - Required checks, branch protection and signed release tags remain external
   release gates; this branch does not enforce them by itself.

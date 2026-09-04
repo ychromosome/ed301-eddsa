@@ -33,6 +33,11 @@ case "$VER" in
 esac
 UPSTREAM_ARG=$2
 ROOT_ARG=$3
+case "$(uname -m)" in
+  x86_64) OPENSSL_CONFIG_TARGET=linux-x86_64 ;;
+  aarch64|arm64) OPENSSL_CONFIG_TARGET=linux-aarch64 ;;
+  *) printf 'unsupported lane architecture: %s\n' "$(uname -m)" >&2; exit 2 ;;
+esac
 if printf '%s\n' "$UPSTREAM_ARG" "$ROOT_ARG" | grep -q '[[:cntrl:]]'; then
   printf 'upstream or lane-root path contains a control character\n' >&2
   exit 2
@@ -217,6 +222,7 @@ record_toolchain_identity() {
   {
     printf 'PATH=%s\n' "$PATH"
     printf 'OPENSSL_BUILD_JOBS=not-supported; canonical nproc used\n'
+    printf 'OPENSSL_CONFIG_TARGET=%s\n' "$OPENSSL_CONFIG_TARGET"
     printf 'CC=%s\n' "${CC:-UNSET}"
     printf 'CFLAGS=%s\n' "${CFLAGS:-UNSET}"
     printf 'CPPFLAGS=%s\n' "${CPPFLAGS:-UNSET}"
@@ -694,7 +700,7 @@ run_step linker_selection write_linker_selection
 cd "$SRC"
 JOBS=$(/usr/bin/nproc)
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]
-run_step configure ./Configure linux-x86_64 shared --prefix="$INST" --libdir=lib \
+run_step configure ./Configure "$OPENSSL_CONFIG_TARGET" shared --prefix="$INST" --libdir=lib \
   --openssldir="$INST/ssl" -DPURIFY "-L$INST/lib" "-Wl,-rpath,$INST/lib"
 run_step make make -j"$JOBS"
 run_step install make install_sw install_ssldirs

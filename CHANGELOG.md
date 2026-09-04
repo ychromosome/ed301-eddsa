@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added independent `[0,4p)` field tests, x86-64/AArch64 final-codegen rules,
+  dudect timing checks and reproducible performance receipts. The existing
+  forced field-helper inlining remains within its measured `.text` budget.
 - The group formulas (`double`, `add`, `add_affine`) keep intermediate
   products lazily reduced below `2p` and sums or differences below `4p`, as
   the X301 ladder does, and canonicalise only their returned coordinates.

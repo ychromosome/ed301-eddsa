@@ -31,6 +31,11 @@ test -s "$TOOLCHAIN" && test ! -L "$TOOLCHAIN" || {
     echo "missing regular toolchain marker: $TOOLCHAIN" >&2
     exit 2
 }
+if /usr/bin/readelf -h "$MODULE" \
+        | /usr/bin/grep -Eq 'Machine:[[:space:]]+AArch64$'; then
+    exec "$ROOT/scripts/check-final-provider-codegen-aarch64.sh" \
+        "$MODULE" "$TOOLCHAIN" "$EVIDENCE"
+fi
 test ! -e "$EVIDENCE" || {
     echo "codegen evidence directory already exists: $EVIDENCE" >&2
     exit 2

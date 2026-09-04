@@ -130,6 +130,12 @@ as evidence and reported as targeted checks. They do not instrument the
 OpenSSL shared libraries, every harness, every provider entry path, or the
 whole matrix, and they do not establish a general memory-safety claim.
 
+The provider matrix runs on x86-64 and AArch64. Architecture-specific
+final-DSO checks cover the straight-line secret point operations. The dudect
+lane measures prepared signing and private-seed import and requires its
+positive control to trigger; its complete raw log and binary identities are
+stored with the lane result.
+
 The ordinary provider is built twice from a manifest-derived source root into
 separate clean targets. Rust and C source paths are remapped to
 `/usr/src/ed301-eddsa`; both module bytes must match and the module may not
