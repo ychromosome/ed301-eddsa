@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Inlined the five-limb field product, square and reduction helpers, as in the
+  X301 crate. No arithmetic change; about 5% faster signing, verification and
+  key import on x86-64. The final codegen gate now accepts these helpers as
+  either local branch-free symbols or inlined bodies.
 - Added OpenSSL-backed encrypted PKCS#8 output, PKCS#12 coverage,
   root/intermediate/leaf and CRL tests, and TLS 1.3 SNI/resumption tests.
   Key seeds and public salt/IV values use separate locked child-primary-backed

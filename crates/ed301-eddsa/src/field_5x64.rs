@@ -422,6 +422,7 @@ fn sub_with_borrow_runtime(left: u64, right: u64, borrow: u64) -> (u64, u64) {
     (difference, next_borrow as u64)
 }
 
+#[inline(always)]
 const fn multiply_wide(left: [u64; LIMBS], right: [u64; LIMBS]) -> [u64; LIMBS * 2] {
     let mut output = [0_u64; LIMBS * 2];
     let mut left_index = 0;
@@ -443,6 +444,7 @@ const fn multiply_wide(left: [u64; LIMBS], right: [u64; LIMBS]) -> [u64; LIMBS *
     output
 }
 
+#[inline(always)]
 const fn multiply_five_by_u32(value: [u64; LIMBS], multiplier: u32) -> [u64; LIMBS + 1] {
     let mut output = [0_u64; LIMBS + 1];
     let mut carry = 0_u64;
@@ -457,6 +459,7 @@ const fn multiply_five_by_u32(value: [u64; LIMBS], multiplier: u32) -> [u64; LIM
     output
 }
 
+#[inline(always)]
 const fn square_wide(value: [u64; LIMBS]) -> [u64; LIMBS * 2] {
     let mut output = [0_u64; LIMBS * 2];
     let mut accumulator = [0_u64; 3];
@@ -489,11 +492,13 @@ const fn square_wide(value: [u64; LIMBS]) -> [u64; LIMBS * 2] {
     output
 }
 
+#[inline(always)]
 const fn accumulate_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
     let product = left as u128 * right as u128;
     accumulate_192(accumulator, product as u64, (product >> 64) as u64, 0);
 }
 
+#[inline(always)]
 const fn accumulate_double_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
     let product = left as u128 * right as u128;
     let low = product as u64;
@@ -501,6 +506,7 @@ const fn accumulate_double_product(accumulator: &mut [u64; 3], left: u64, right:
     accumulate_192(accumulator, low << 1, (high << 1) | (low >> 63), high >> 63);
 }
 
+#[inline(always)]
 const fn accumulate_192(accumulator: &mut [u64; 3], low: u64, middle: u64, high: u64) {
     let sum = accumulator[0] as u128 + low as u128;
     accumulator[0] = sum as u64;
@@ -511,6 +517,7 @@ const fn accumulate_192(accumulator: &mut [u64; 3], low: u64, middle: u64, high:
         .wrapping_add((sum >> 64) as u64);
 }
 
+#[inline(always)]
 const fn emit_square_column(
     output: &mut [u64; LIMBS * 2],
     column: usize,
@@ -522,6 +529,7 @@ const fn emit_square_column(
     accumulator[2] = 0;
 }
 
+#[inline(always)]
 fn reduce_wide(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
     conditional_subtract_modulus_ct(reduce_wide_unreduced(product))
 }
@@ -539,6 +547,7 @@ const fn reduce_wide_const(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
 /// reachable wide product below `2^602` the first fold fits seven limbs, the
 /// remaining high part fits two limbs, and the final value stays below `2p`,
 /// so the callers' single conditional subtraction suffices.
+#[inline(always)]
 const fn reduce_wide_unreduced(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
     let low = [
         product[0],
@@ -583,6 +592,7 @@ const FOLD_CONSTANT_HIGH: u64 = (1_u64 << 35) - 1;
 /// Every loop bound is a compile-time constant and every carry is propagated
 /// through the full remaining width, so the instruction schedule is
 /// independent of the operand values.
+#[inline(always)]
 const fn accumulate_fold<const HIGH: usize, const OUTPUT: usize>(
     low: &[u64],
     high: &[u64; HIGH],

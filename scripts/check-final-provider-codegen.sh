@@ -539,30 +539,44 @@ check_all_branch_free() {
 # These are the actual Thin-LTO symbols in the loadable provider. Minimum
 # counts bind the accepted Rust-1.97 lowering shape: any materially different
 # compiler result fails closed and requires manual review.
-check_branch_free field_reduce \
-    'ed301_eddsa::field_5x64::reduce_wide' 2 5 no '^$' allow
-check_branch_free field_square \
-    'ed301_eddsa::field_5x64::square_wide' 0 0 no '^$' allow
-multiply_symbol='ed301_eddsa::field_5x64::multiply_wide'
-multiply_instances=$(symbol_instance_count "$multiply_symbol")
-case "$multiply_instances" in
-    0)
-        if contains_call_target "$DUMP" 'field_5x64::multiply_wide'; then
-            echo 'FAIL multiply_wide call exists without a local checked symbol' >&2
+# The five-limb field helpers are `#[inline(always)]` since the lazy-reduction
+# port; the compiler may still emit a local symbol.  Either disposition is
+# accepted: an emitted symbol must be branch-free, and an inlined helper must
+# not be called from anywhere (its body is then checked inside the point
+# arithmetic symbols below).
+check_optional_field_symbol() {
+    label=$1
+    symbol=$2
+    minimum_sbb=$3
+    minimum_cmov=$4
+    instances=$(symbol_instance_count "$symbol")
+    case "$instances" in
+        0)
+            if contains_call_target "$DUMP" "${symbol#ed301_eddsa::}"; then
+                printf 'FAIL %s call exists without a local checked symbol\n' \
+                    "$symbol" >&2
+                exit 1
+            fi
+            printf 'PASS optional_symbol=%s disposition=inlined\n' "$label" \
+                | tee -a "$SUMMARY"
+            ;;
+        1)
+            check_branch_free "$label" "$symbol" "$minimum_sbb" \
+                "$minimum_cmov" no '^$' allow
+            ;;
+        *)
+            printf 'FAIL unexpected final-binary instances of %s: %s\n' \
+                "$symbol" "$instances" >&2
             exit 1
-        fi
-        printf '%s\n' 'PASS optional_symbol=field_multiply disposition=inlined' \
-            | tee -a "$SUMMARY"
-        ;;
-    1)
-        check_branch_free field_multiply "$multiply_symbol" 0 0 no '^$' allow
-        ;;
-    *)
-        printf 'FAIL unexpected final-binary instances of %s: %s\n' \
-            "$multiply_symbol" "$multiply_instances" >&2
-        exit 1
-        ;;
-esac
+            ;;
+    esac
+}
+check_optional_field_symbol field_reduce \
+    'ed301_eddsa::field_5x64::reduce_wide' 2 5
+check_optional_field_symbol field_square \
+    'ed301_eddsa::field_5x64::square_wide' 0 0
+check_optional_field_symbol field_multiply \
+    'ed301_eddsa::field_5x64::multiply_wide' 0 0
 check_branch_free point_double \
     '<ed301_eddsa::edwards::EdwardsPoint>::double' 20 35 no \
     'ed301_eddsa::field_5x64::(reduce_wide|square_wide|multiply_wide)' allow
