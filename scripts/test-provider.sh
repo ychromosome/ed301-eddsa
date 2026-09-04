@@ -827,7 +827,7 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         "$BUILD/evidence/cli-ed301-leaf.crt"
 
 for harness in provider_signature provider_keymgmt provider_serialization \
-        val01_decoder_bio provider_load provider_rand provider_lifecycle \
+        provider_pki val01_decoder_bio provider_load provider_rand provider_lifecycle \
         provider_tls; do
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
