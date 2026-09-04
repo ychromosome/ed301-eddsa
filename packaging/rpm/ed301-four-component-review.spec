@@ -40,7 +40,7 @@ test "%{openssl_fork_evr}" = \
 
 * Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.9
 - Pin the HR4 OpenSSL, Ed301, X301 and G301 package set
-- Keep all optional policy packages inert
+- Keep algorithm-preference examples inert; Ed301 policy activates its provider
 
 * Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.8
 - Require Ed301 key text encoding
