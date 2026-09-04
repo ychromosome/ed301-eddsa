@@ -87,7 +87,8 @@ scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
 ```
 
 Timing and benchmark results apply only to the recorded CPU, binaries and
-toolchain.
+toolchain. Performance ratios compare Ed301 Rust-core calls with OpenSSL EVP
+controls; `expand/keygen` compares deterministic expansion with random keygen.
 
 The compatibility minima remain OpenSSL 3.5.7 for ABI major 3 and OpenSSL
 4.0.1 for ABI major 4. The authoritative matrix uses the current security

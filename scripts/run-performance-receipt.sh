@@ -50,6 +50,8 @@ C_BENCH=$OUTPUT/openssl-signature-benchmark
 
 {
     printf 'format=ed301-performance-receipt-v1\n'
+    printf 'target_api=Ed301 Rust core\ncontrol_api=OpenSSL EVP\n'
+    printf 'expand_control=deterministic seed expansion versus random EVP keygen\n'
     printf 'timestamp_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'source_manifest_sha256=%s\n' \
         "$ED301_EXPECTED_SOURCE_MANIFEST_SHA256"
