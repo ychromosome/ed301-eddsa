@@ -18,6 +18,21 @@ also records the unavoidable historical limit: no public pre-search commitment
 exists, so the evidence is reproducible after-the-fact provenance rather than
 a retroactive nothing-up-my-sleeve proof.
 
+## Performance
+
+Median time in microseconds on a Ryzen 9 5950X, pinned to one CPU, seven
+samples, Rust 1.98.0 and OpenSSL 3.5.8:
+
+| Operation | Ed25519 EVP | Ed301 Rust core | Ed448 EVP |
+| --- | ---: | ---: | ---: |
+| Key setup | 25.36 | 27.77 | 146.97 |
+| Sign | 23.97 | 29.01 | 146.86 |
+| Verify | 78.53 | 86.63 | 157.26 |
+
+Ed301 uses direct Rust-core calls; Ed25519 and Ed448 use OpenSSL EVP. Key setup
+compares deterministic Ed301 seed expansion with random EVP key generation.
+The receipt is in `performance/receipts/2026-09-04-ryzen5950x/`.
+
 ## Test
 
 Authoritative gates run only from a caller-created, read-only source snapshot.
@@ -86,9 +101,7 @@ scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
     performance-receipt /private/lane-root/inst/3.5.8 2 /tmp/ed301-performance
 ```
 
-Timing and benchmark results apply only to the recorded CPU, binaries and
-toolchain. Performance ratios compare Ed301 Rust-core calls with OpenSSL EVP
-controls; `expand/keygen` compares deterministic expansion with random keygen.
+Timing results apply only to the recorded CPU, binaries and toolchain.
 
 The compatibility minima remain OpenSSL 3.5.7 for ABI major 3 and OpenSSL
 4.0.1 for ABI major 4. The authoritative matrix uses the current security
