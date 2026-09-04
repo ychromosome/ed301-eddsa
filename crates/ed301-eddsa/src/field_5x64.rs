@@ -1031,6 +1031,152 @@ mod tests {
     }
 
     #[test]
+    fn full_lazy_domain_matches_independent_wide_oracle() {
+        fn below(left: [u64; LIMBS], right: [u64; LIMBS]) -> bool {
+            subtract_limbs(left, right).1 == 1
+        }
+
+        fn random_below(state: &mut u64, bound: [u64; LIMBS]) -> [u64; LIMBS] {
+            loop {
+                let mut value = [0_u64; LIMBS];
+                let mut index = 0;
+                while index < LIMBS {
+                    value[index] = splitmix64(state);
+                    index += 1;
+                }
+                value[4] &= (1_u64 << 47) - 1;
+                if below(value, bound) {
+                    return value;
+                }
+            }
+        }
+
+        fn minus_one(mut value: [u64; LIMBS]) -> [u64; LIMBS] {
+            let mut index = 0;
+            loop {
+                let (word, borrow) = value[index].overflowing_sub(1);
+                value[index] = word;
+                if !borrow {
+                    return value;
+                }
+                index += 1;
+            }
+        }
+
+        fn oracle_reduce_wide(wide: [u64; LIMBS * 2]) -> [u8; FIELD_BYTES] {
+            let mut radix_bytes = [0_u8; FIELD_BYTES];
+            radix_bytes[8] = 1;
+            let radix =
+                Oracle::from_canonical_bytes(&radix_bytes).expect_copied("2^64 is canonical");
+            let mut value = Oracle::ZERO;
+            let mut index = LIMBS * 2;
+            while index != 0 {
+                index -= 1;
+                value = value.mul(radix).add(Oracle::from_u64(wide[index]));
+            }
+            value.to_canonical_bytes()
+        }
+
+        fn oracle_from_words(words: [u64; LIMBS]) -> Oracle {
+            let mut wide = [0_u64; LIMBS * 2];
+            wide[..LIMBS].copy_from_slice(&words);
+            Oracle::from_canonical_bytes(&oracle_reduce_wide(wide))
+                .expect_copied("wide oracle output is canonical")
+        }
+
+        fn assert_reduced_wide(wide: [u64; LIMBS * 2]) {
+            let reduced = reduce_wide_unreduced(wide);
+            assert!(below(reduced, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced)).to_canonical_bytes(),
+                oracle_reduce_wide(wide)
+            );
+        }
+
+        fn assert_reduced_product(left: [u64; LIMBS], right: [u64; LIMBS]) {
+            let wide = multiply_wide(left, right);
+            let reduced = reduce_wide_unreduced(wide);
+            assert!(below(reduced, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced)).to_canonical_bytes(),
+                oracle_from_words(left)
+                    .mul(oracle_from_words(right))
+                    .to_canonical_bytes()
+            );
+        }
+
+        let (four_p, carry) = add_limbs(MODULUS_TIMES_TWO, MODULUS_TIMES_TWO);
+        assert_eq!(carry, 0);
+        let (three_p, carry) = add_limbs(MODULUS_TIMES_TWO, MODULUS);
+        assert_eq!(carry, 0);
+        let directed = [
+            [0_u64; LIMBS],
+            [1, 0, 0, 0, 0],
+            minus_one(MODULUS),
+            MODULUS,
+            minus_one(MODULUS_TIMES_TWO),
+            MODULUS_TIMES_TWO,
+            minus_one(three_p),
+            three_p,
+            minus_one(four_p),
+        ];
+        for left in directed {
+            for right in directed {
+                assert_reduced_product(left, right);
+            }
+        }
+
+        for bit in 0..606 {
+            let mut wide = [0_u64; LIMBS * 2];
+            wide[bit / 64] = 1_u64 << (bit % 64);
+            assert_reduced_wide(wide);
+        }
+
+        let mut state = 0x4852_2d46_554c_4c34_u64;
+        for _ in 0..100_000 {
+            let left = random_below(&mut state, four_p);
+            let right = random_below(&mut state, four_p);
+            assert_reduced_product(left, right);
+
+            let square = square_wide(left);
+            let reduced_square = reduce_wide_unreduced(square);
+            assert!(below(reduced_square, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced_square)).to_canonical_bytes(),
+                oracle_from_words(left).square().to_canonical_bytes()
+            );
+
+            let lazy = random_below(&mut state, MODULUS_TIMES_TWO);
+            let multiplier = splitmix64(&mut state) as u32;
+            let sparse = multiply_five_by_u32(lazy, multiplier);
+            let reduced_small = reduce_small_product_unreduced(sparse);
+            assert!(below(reduced_small, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced_small)).to_canonical_bytes(),
+                oracle_from_words(lazy)
+                    .mul(Oracle::from_u64(multiplier as u64))
+                    .to_canonical_bytes()
+            );
+
+            let tightened = Fe301LazyLinear(left).tighten();
+            assert!(below(tightened.0, MODULUS_TIMES_TWO));
+            let mut raw_wide = [0_u64; LIMBS * 2];
+            raw_wide[..LIMBS].copy_from_slice(&left);
+            assert_eq!(
+                tightened.canonical().to_canonical_bytes(),
+                oracle_reduce_wide(raw_wide)
+            );
+
+            let mut arbitrary_wide = [0_u64; LIMBS * 2];
+            for word in &mut arbitrary_wide {
+                *word = splitmix64(&mut state);
+            }
+            arbitrary_wide[9] &= (1_u64 << 30) - 1;
+            assert_reduced_wide(arbitrary_wide);
+        }
+    }
+
+    #[test]
     fn specialized_inversion_and_square_root_retain_oracle_results() {
         fn assert_inversion_paths_match(value: Fe301) {
             let safegcd = value.invert();

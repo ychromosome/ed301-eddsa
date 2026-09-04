@@ -886,7 +886,7 @@ mod tests {
     /// drive coordinates to zero or to `p - 1`.
     #[test]
     fn lazy_formulas_match_the_canonical_constant_formulas() {
-        const RANDOM_POINTS: usize = 200;
+        const RANDOM_POINTS: usize = 5_000;
         const FIXED_POINTS: usize = 7;
 
         fn affine_niels(point: EdwardsPoint) -> (AffineNielsPoint, EdwardsPoint) {
