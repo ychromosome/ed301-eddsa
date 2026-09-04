@@ -145,10 +145,9 @@ jobs:
           lane_digest=$(sha256sum \
             "$work/lane/logs/$version/evidence_manifest.sha256" \
             | awk '{ print $1 }')
-          ED301_PROVIDER_RESULT_ROOT="$PWD/provider-result"
-          export ED301_PROVIDER_RESULT_ROOT
           "$snapshot/scripts/run-authoritative-gate.sh" archive "$digest" \
-            test-provider "$work/lane" "$version" "$lane_digest"
+            test-provider --result-root "$PWD/provider-result" \
+            "$work/lane" "$version" "$lane_digest"
       - name: Preserve timing and code-generation receipts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

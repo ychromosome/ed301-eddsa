@@ -105,6 +105,11 @@ case "$GATE" in
         TARGET=$ROOT/scripts/verify-openssl-provider-lane.sh
         ;;
     test-provider)
+        if [ "${1:-}" = --result-root ] && [ "$#" -ge 2 ]; then
+            ED301_PROVIDER_RESULT_ROOT=$2
+            export ED301_PROVIDER_RESULT_ROOT
+            shift 2
+        fi
         TARGET=$ROOT/scripts/test-provider.sh
         TARGET_SHELL=/bin/bash
         ;;
