@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added OpenSSL-backed encrypted PKCS#8 output, PKCS#12 coverage,
+  root/intermediate/leaf and CRL tests, and TLS 1.3 SNI/resumption tests.
+  Key seeds and public salt/IV values use separate locked child-primary-backed
+  DRBGs without child-context thread-local RAND state.
 - Moved authoritative provider evidence to patched OpenSSL 3.5.8 and 4.0.2;
   compatibility minima remain 3.5.7 and 4.0.1.
 - Preserved private material on matching public-only import and made KEYPAIR

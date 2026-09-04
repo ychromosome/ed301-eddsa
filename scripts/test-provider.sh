@@ -401,8 +401,8 @@ done
     -lcrypto -lssl -lpthread -ldl
 
 for harness in provider_signature provider_keymgmt provider_serialization \
-        val01_decoder_bio provider_load provider_rand provider_lifecycle \
-        provider_tls; do
+        provider_pki val01_decoder_bio provider_load provider_rand \
+        provider_lifecycle provider_tls; do
     /usr/bin/clang -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g \
         -fsanitize=address,undefined -fno-sanitize-recover=all \
         -I"$OPENSSL_PREFIX/include" -I"$BUILD/generated" \
@@ -608,6 +608,51 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         -inform DER -in "$BUILD/evidence/cli-generated-key.der" \
         -check -noout
 
+# Both OpenSSL's direct encoder path and its generic PKCS#8 wrapper must
+# produce encrypted keys that the normal decoder chain can reload.
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key.pem" \
+        -aes-256-cbc -passout pass:ed301-test \
+        -out "$BUILD/evidence/cli-generated-key-encrypted.pem"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key-encrypted.pem" \
+        -passin pass:ed301-test -check -noout
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkcs8 -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -topk8 -in "$BUILD/evidence/cli-generated-key.pem" \
+        -v2 aes-256-cbc -passout pass:ed301-test \
+        -out "$BUILD/evidence/cli-generated-key-pkcs8.pem"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key-pkcs8.pem" \
+        -passin pass:ed301-test -check -noout
+set +e
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-generated-key-encrypted.pem" \
+        -passin pass:wrong -check -noout \
+        >"$BUILD/evidence/cli-encrypted-wrong-password.log" 2>&1
+WRONG_PASSWORD_RC=$?
+set -e
+test "$WRONG_PASSWORD_RC" -ne 0
+
 # Every command below is a fresh process.  No test registry helper or SSL_CTX
 # can pre-register the Ed301 OID/SIGID before the TLS artifact initializes.
 for provider in ed301_eddsa_v1 ed301_eddsa_v1_failpoint \
@@ -679,6 +724,66 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
     LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkcs12 -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -export -inkey "$BUILD/evidence/cli-generated-key.pem" \
+        -in "$BUILD/evidence/cli-ed301-ca.crt" \
+        -passout pass:ed301-test \
+        -out "$BUILD/evidence/cli-ed301-ca.p12"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkcs12 -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-ed301-ca.p12" \
+        -passin pass:ed301-test -nocerts -noenc \
+        -out "$BUILD/evidence/cli-ed301-ca-p12-key.pem"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-ed301-ca-p12-key.pem" -check -noout
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkey -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-ed301-ca-p12-key.pem" -pubout \
+        -out "$BUILD/evidence/cli-ed301-ca-p12-key.pub"
+cmp "$BUILD/evidence/cli-generated-key.pub" \
+    "$BUILD/evidence/cli-ed301-ca-p12-key.pub"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkcs12 -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-ed301-ca.p12" \
+        -passin pass:ed301-test -nokeys \
+        -out "$BUILD/evidence/cli-ed301-ca-p12-cert.pem"
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" verify -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -CAfile "$BUILD/evidence/cli-ed301-ca.crt" \
+        "$BUILD/evidence/cli-ed301-ca-p12-cert.pem"
+set +e
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" pkcs12 -provider-path "$BUILD/modules" \
+        -provider default -provider ed301_eddsa_v1_tls_test \
+        -in "$BUILD/evidence/cli-ed301-ca.p12" \
+        -passin pass:wrong -noout \
+        >"$BUILD/evidence/cli-pkcs12-wrong-password.log" 2>&1
+WRONG_PKCS12_PASSWORD_RC=$?
+set -e
+test "$WRONG_PKCS12_PASSWORD_RC" -ne 0
+
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
+    LD_LIBRARY_PATH="$OPENSSL_LIB" \
     "$OPENSSL_BIN" genpkey -provider-path "$BUILD/modules" \
         -provider default -provider ed301_eddsa_v1_pki_test \
         -algorithm Ed301-EdDSA-v1 \
@@ -721,8 +826,9 @@ for harness in provider_signature provider_keymgmt provider_serialization \
         UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
         /usr/bin/timeout 240 "$BUILD/bin/${harness}_asan"
 done
-for harness in provider_signature provider_serialization val01_decoder_bio \
-        provider_load provider_rand provider_lifecycle; do
+for harness in provider_signature provider_serialization provider_pki \
+        val01_decoder_bio provider_load provider_rand provider_lifecycle \
+        provider_tls; do
     env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
         OPENSSL_MODULES="$BUILD/modules" OPENSSL_CONF=/dev/null \
         LD_LIBRARY_PATH="$OPENSSL_LIB" \

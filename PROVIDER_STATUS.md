@@ -23,12 +23,15 @@ Test-artifact surfaces are separate:
 
 | Artifact | Additional surface |
 | --- | --- |
-| PKI | PKCS#8/SPKI DER and PEM encoders; no decoder |
-| TLS integration | PKI encoders, TLS-SIGALG, and strict DER decoders for PKCS#8 PrivateKeyInfo and SPKI |
+| PKI | PKCS#8, encrypted PKCS#8 and SPKI DER/PEM encoders; no decoder |
+| TLS integration | PKI/text encoders, TLS-SIGALG, and strict DER decoders for PKCS#8 PrivateKeyInfo and SPKI |
 | TLS collider | PKI encoders, TLS-SIGALG collision fixture, and SPKI decoder; no private decoder |
 | Failpoint | injected provider-owned failure paths only |
 
 PEM and EncryptedPrivateKeyInfo input use OpenSSL's generic decoder chain.
+The tested PKI surface includes PKCS#10, PKCS#12, a root/intermediate/leaf
+chain and CRL verification. `OneAsymmetricKey` version 1, CMS and OCSP remain
+outside v1.
 
 ## Required gates
 

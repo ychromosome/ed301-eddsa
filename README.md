@@ -74,8 +74,9 @@ scripts/run-authoritative-gate.sh archive <trusted-manifest-sha256> \
 Repeat with `4.0.2` for OpenSSL 4. The ordinary module exposes only `KEYMGMT`
 and `SIGNATURE`: no OID alias, encoder, decoder, PKI registration, or TLS
 capability. PKI encoders and the private-use TLS proof are separately named,
-disabled-by-default test artifacts whose registry setup belongs to the host
-harness.
+disabled-by-default test artifacts. The TLS integration module registers and
+checks its OID and digestless SIGID before publishing its dispatch table.
+See `docs/PROVIDER_USAGE.md` for commands and supported formats.
 
 The compatibility minima remain OpenSSL 3.5.7 for ABI major 3 and OpenSSL
 4.0.1 for ABI major 4. The authoritative matrix uses the current security
