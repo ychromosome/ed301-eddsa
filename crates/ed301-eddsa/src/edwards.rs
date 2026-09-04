@@ -880,6 +880,95 @@ mod tests {
             .expect_copied("test scalar must be canonically encoded below q")
     }
 
+    /// The lazily reduced runtime formulas must agree with the canonical
+    /// compile-time formulas on random prime-order points, on the small-order
+    /// points, on the identity and on inverse pairs, including the cases that
+    /// drive coordinates to zero or to `p - 1`.
+    #[test]
+    fn lazy_formulas_match_the_canonical_constant_formulas() {
+        const RANDOM_POINTS: usize = 200;
+        const FIXED_POINTS: usize = 7;
+
+        fn affine_niels(point: EdwardsPoint) -> (AffineNielsPoint, EdwardsPoint) {
+            let inverse_z = point
+                .z
+                .invert()
+                .expect_copied("test points have a nonzero Z coordinate");
+            let niels = AffineNielsPoint::from_projective(point, inverse_z);
+            let affine = EdwardsPoint::from_affine(point.x.mul(inverse_z), point.y.mul(inverse_z));
+            (niels, affine)
+        }
+        fn assert_same(index: usize, operation: &str, lazy: EdwardsPoint, canonical: EdwardsPoint) {
+            assert!(
+                lazy.is_valid().to_bool(),
+                "point {index} {operation}: lazy result invalid"
+            );
+            assert!(
+                lazy.ct_eq(&canonical).to_bool(),
+                "point {index} {operation}: lazy and canonical differ"
+            );
+            for coordinate in [lazy.x, lazy.y, lazy.z, lazy.t] {
+                assert!(
+                    FieldElement::from_canonical_bytes(&coordinate.to_canonical_bytes())
+                        .is_some()
+                        .to_bool(),
+                    "point {index} {operation}: lazy result coordinate is not canonical"
+                );
+            }
+        }
+
+        let mut points = [EdwardsPoint::IDENTITY; FIXED_POINTS + RANDOM_POINTS];
+        points[1] = EdwardsPoint::BASEPOINT;
+        points[2] = EdwardsPoint::BASEPOINT.negate();
+        points[3] = EdwardsPoint::decode(&ORDER_TWO_ENCODING).expect("order-two point decodes");
+        points[4] = EdwardsPoint::decode(&ORDER_FOUR_ENCODING).expect("order-four point decodes");
+        points[5] = EdwardsPoint::decode(&MIXED_ORDER_TWO_ENCODING).expect("mixed point decodes");
+        points[6] = EdwardsPoint::decode(&MIXED_ORDER_FOUR_ENCODING).expect("mixed point decodes");
+        let mut state: u64 = 0x4c41_5a59_4544_5753;
+        for point in points.iter_mut().skip(FIXED_POINTS) {
+            let mut bytes = [0_u8; FIELD_BYTES];
+            for byte in bytes.iter_mut() {
+                *byte = splitmix64(&mut state) as u8;
+            }
+            bytes[FIELD_BYTES - 1] &= 0x1f;
+            *point = EdwardsPoint::BASEPOINT.scalar_mul_encoded(&bytes);
+        }
+
+        let mut previous = EdwardsPoint::BASEPOINT;
+        for (index, point) in points.iter().copied().enumerate() {
+            assert_same(index, "double", point.double(), point.double_const());
+            assert_same(index, "add", point.add(previous), point.add_const(previous));
+            assert_same(
+                index,
+                "add negation",
+                point.add(point.negate()),
+                point.add_const(point.negate()),
+            );
+            assert!(point.add(point.negate()).is_identity().to_bool());
+            let (niels, affine) = affine_niels(previous);
+            assert_same(
+                index,
+                "add_affine",
+                point.add_affine(niels),
+                point.add_const(affine),
+            );
+            assert_same(
+                index,
+                "add_affine negated",
+                point.add_affine(niels.negate()),
+                point.add_const(affine.negate()),
+            );
+            let (self_niels, self_affine) = affine_niels(point);
+            assert_same(
+                index,
+                "add_affine self",
+                point.add_affine(self_niels),
+                point.add_const(self_affine),
+            );
+            previous = point;
+        }
+    }
+
     #[test]
     fn basepoint_constant_roundtrips_and_has_exact_prime_order() {
         assert!(EdwardsPoint::BASEPOINT.is_valid().to_bool());
