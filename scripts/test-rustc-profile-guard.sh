@@ -1,0 +1,186 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+GUARD=$ROOT/scripts/rustc-profile-guard.sh
+CHECK=$ROOT/scripts/check-profile-markers.sh
+ENV_GUARD=$ROOT/scripts/check-rust-build-environment.sh
+LAUNCHER=$ROOT/scripts/run-authoritative-gate.sh
+TMP=$(mktemp -d /tmp/ed301-profile-guard-test.XXXXXX)
+cleanup() {
+    rm -rf -- "$TMP"
+}
+trap cleanup EXIT HUP INT TERM
+
+printf '%s\n' '#![no_std]' >"$TMP/valid.rs"
+printf '%s\n' 'this is not Rust' >"$TMP/invalid.rs"
+
+run_pass() {
+    crate=$1
+    shift
+    markers=$TMP/pass-$crate-$$
+    mkdir -p "$markers"
+    ED301_PROFILE_MARKER_DIR=$markers \
+        sh "$GUARD" /usr/bin/rustc --crate-name "$crate" \
+            --crate-type lib "$TMP/valid.rs" \
+            --emit metadata -o "$markers/$crate.rmeta" "$@"
+    printf '%s\n' /usr/bin/rustc >"$markers/toolchain.txt"
+    sh "$CHECK" "$markers" "$crate=on"
+}
+
+run_fail() {
+    crate=$1
+    shift
+    markers=$TMP/fail-$crate-$$
+    mkdir -p "$markers"
+    if ED301_PROFILE_MARKER_DIR=$markers \
+            sh "$GUARD" /usr/bin/rustc --crate-name "$crate" \
+                --crate-type lib "$TMP/valid.rs" \
+                --emit metadata -o "$markers/$crate.rmeta" "$@" \
+                >"$markers/output.log" 2>&1; then
+        echo "profile guard accepted an unsafe case for $crate" >&2
+        exit 1
+    fi
+    if find "$markers" -name '*.success' -print -quit | grep -q .; then
+        echo "failed compiler/profile case produced a success marker" >&2
+        exit 1
+    fi
+}
+
+run_pass ed301_eddsa -Coverflow-checks=on \
+    -Cpanic=unwind -Copt-level=3 -Ccodegen-units=1
+run_pass crypto_bigint -Coverflow-checks=on \
+    -Cpanic=unwind -Copt-level=3 -Ccodegen-units=1
+run_fail ed301_eddsa -Coverflow-checks=off
+run_fail ed301_eddsa -Cpanic=abort
+run_fail ed301_eddsa -Copt-level=2
+run_fail ed301_eddsa -Ccodegen-units=2
+run_fail ed301_eddsa -Cdebug-assertions=yes
+
+# The former dependency-specific overflow bypass is no longer accepted.
+markers=$TMP/profile-exception
+mkdir -p "$markers"
+if ED301_PROFILE_MARKER_DIR=$markers \
+   ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+        sh "$GUARD" /usr/bin/rustc --crate-name crypto_bigint \
+            --crate-type lib "$TMP/valid.rs" --emit metadata \
+            -o "$markers/crypto_bigint.rmeta" >/dev/null 2>&1; then
+    echo "profile guard accepted a dependency overflow exception" >&2
+    exit 1
+fi
+if find "$markers" -name '*.success' -print -quit | grep -q .; then
+    echo "rejected profile exception produced a success marker" >&2
+    exit 1
+fi
+
+# An unlisted linked dependency receives the secure default, not a bypass.
+markers=$TMP/default-dependency
+mkdir -p "$markers"
+ED301_PROFILE_MARKER_DIR=$markers \
+    sh "$GUARD" /usr/bin/rustc --crate-name dependency_crate \
+        --crate-type lib "$TMP/valid.rs" --emit metadata \
+        -o "$markers/dependency.rmeta"
+printf '%s\n' /usr/bin/rustc >"$markers/toolchain.txt"
+sh "$CHECK" "$markers" dependency_crate=on
+
+# Cargo normally supplies the bare compiler name.  It must resolve through
+# the gate's pinned PATH to the same canonical compiler.
+markers=$TMP/bare-compiler
+mkdir -p "$markers"
+ED301_PROFILE_MARKER_DIR=$markers \
+    sh "$GUARD" rustc --crate-name bare_compiler \
+        --crate-type lib "$TMP/valid.rs" --emit metadata \
+        -o "$markers/bare.rmeta"
+printf '%s\n' /usr/bin/rustc >"$markers/toolchain.txt"
+sh "$CHECK" "$markers" bare_compiler=on
+
+# A compiler failure can never create successful profile evidence.
+markers=$TMP/compiler-failure
+mkdir -p "$markers"
+if ED301_PROFILE_MARKER_DIR=$markers \
+        sh "$GUARD" /usr/bin/rustc --crate-name invalid_crate \
+            --crate-type lib "$TMP/invalid.rs" --emit metadata \
+            -o "$markers/invalid.rmeta" >/dev/null 2>&1; then
+    echo "invalid Rust unexpectedly compiled" >&2
+    exit 1
+fi
+if find "$markers" -name '*.success' -print -quit | grep -q .; then
+    echo "failed rustc invocation produced a success marker" >&2
+    exit 1
+fi
+
+# A wrapper-selected executable cannot replace the canonical compiler.
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$TMP/fake-rustc"
+chmod +x "$TMP/fake-rustc"
+markers=$TMP/fake-compiler
+mkdir -p "$markers"
+if ED301_PROFILE_MARKER_DIR=$markers \
+        sh "$GUARD" "$TMP/fake-rustc" --crate-name fake \
+            "$TMP/valid.rs" >/dev/null 2>&1; then
+    echo "profile guard accepted a noncanonical compiler" >&2
+    exit 1
+fi
+
+manifest_digest=$(/usr/bin/sha256sum "$ROOT/SOURCE_MANIFEST.sha256" \
+    | /usr/bin/awk '{ print $1 }')
+"$LAUNCHER" archive "$manifest_digest" environment-check >/dev/null
+env_case_count=0
+for name in RUSTFLAGS CARGO_HOME CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER \
+        CC CFLAGS AR LDFLAGS PYTHONPATH PYTHONSTARTUP LD_PRELOAD \
+        OPENSSL_LIB_DIR TMPDIR BASH_ENV ENV TAR_OPTIONS PERL5OPT PERL5LIB \
+        PERLLIB PERL_LOCAL_LIB_ROOT PERL_MB_OPT PERL_MM_OPT MAKEFILES \
+        GNUMAKEFLAGS GCC_EXEC_PREFIX COMPILER_PATH HOST_CFLAGS \
+        TARGET_CFLAGS ARFLAGS HOST_ARFLAGS TARGET_ARFLAGS; do
+    env_case_count=$((env_case_count + 1))
+    if env -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C \
+            ED301_HERMETIC_LAUNCH=1 ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$manifest_digest" \
+            "$name=unsafe" /bin/sh "$ENV_GUARD" \
+            >"$TMP/env-$name.log" 2>&1; then
+        echo "environment guard accepted override: $name" >&2
+        exit 1
+    fi
+    grep -F "$name=<redacted>" "$TMP/env-$name.log" >/dev/null || {
+        echo "environment guard did not identify override: $name" >&2
+        exit 1
+    }
+done
+
+startup_hook=$TMP/bash-env
+startup_sentinel=$TMP/bash-env-executed
+printf '/usr/bin/printf injected > "%s"\n' "$startup_sentinel" \
+    >"$startup_hook"
+/usr/bin/env BASH_ENV="$startup_hook" ENV="$startup_hook" \
+    TAR_OPTIONS=--warning=no-all PERL5OPT=-Mstrict \
+    PERL5LIB=/tmp/ed301-invalid MAKEFILES=/tmp/ed301-invalid \
+    GNUMAKEFLAGS=-n GCC_EXEC_PREFIX=/tmp/ed301-invalid \
+    COMPILER_PATH=/tmp/ed301-invalid \
+    'BASH_FUNC_sha256sum%%=() { return 0; }' \
+    "$LAUNCHER" archive "$manifest_digest" environment-check >/dev/null
+if [ -e "$startup_sentinel" ]; then
+    echo "hermetic launcher executed inherited shell startup code" >&2
+    exit 1
+fi
+
+rm -f "$startup_sentinel"
+/usr/bin/env BASH_ENV="$startup_hook" ENV="$startup_hook" \
+    /bin/sh "$LAUNCHER" archive "$manifest_digest" \
+    environment-check >/dev/null
+if [ -e "$startup_sentinel" ]; then
+    echo "sh-invoked launcher propagated inherited shell startup code" >&2
+    exit 1
+fi
+
+if "$LAUNCHER" archive "$manifest_digest" review-tests \
+        /tmp/unverified-prefix /tmp/unverified-modules \
+        >"$TMP/review-tests-arguments.log" 2>&1; then
+    echo "launcher accepted unverified review-test inputs" >&2
+    exit 1
+fi
+
+printf 'rustc_profile_guard_regressions=PASS profile_cases=11 env_cases=%s launcher_cases=3\n' \
+    "$env_case_count"

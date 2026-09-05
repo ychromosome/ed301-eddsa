@@ -1,0 +1,26 @@
+format=ed301-performance-receipt-v1
+timestamp_utc=2026-09-04T15:53:57Z
+source_manifest_sha256=c15c0f5d6cb5debc844f87fb1ceca9c7557ec9052734fdb621c0c158f31e8616
+cpu=2
+affinity=2
+repetitions=7
+cpu_model=AMD Ryzen 9 5950X 16-Core Processor
+kernel=Linux 7.2.2-300.fc43.x86_64 #1 SMP PREEMPT_DYNAMIC Sat Aug 29 17:49:21 UTC 2026 x86_64 GNU/Linux
+loadavg_before=1.58 1.28 1.25 3/3026 352
+rust_bench_sha256=4d93b10b41e6df503ebdf9caa0eba1459ac45a1d71c11a33b89e90af9bb21f70
+control_bench_sha256=db1409a3fb4d3e37c7ebdb40967ea6ccacb7794f8dce539b56e812a26d6ee19a
+libcrypto_sha256=4b62f599ed205d01c8eb66c7dd80ba73be8bc964841f5e665870a127e9e7dc9d
+rustc=rustc 1.98.0 (88d9e12ae 2026-08-18) (Fedora 1.98.0-1.fc43)
+cargo=cargo 1.98.0 (797e8a9bc 2026-08-05) (Fedora 1.98.0-1.fc43)
+cc=cc (GCC) 15.3.1 20260722 (Red Hat 15.3.1-1)
+OpenSSL 3.5.8 25 Aug 2026 (Library: OpenSSL 3.5.8 25 Aug 2026)
+built on: Fri Sep  4 12:30:53 2026 UTC
+platform: linux-x86_64
+options:  bn(64,64)
+compiler: /usr/bin/gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG -DPURIFY
+OPENSSLDIR: "/tmp/ed301/lane3.vOYJUW/lane/inst/3.5.8/ssl"
+ENGINESDIR: "/tmp/ed301/lane3.vOYJUW/lane/inst/3.5.8/lib/engines-3"
+MODULESDIR: "/tmp/ed301/lane3.vOYJUW/lane/inst/3.5.8/lib/ossl-modules"
+Seeding source: os-specific
+CPUINFO: OPENSSL_ia32cap=0x7ef8320b078bffff:0x0040069c219c95a9:0x0000000000000000:0x0000000000000000:0x0000000000000000
+loadavg_after=1.65 1.30 1.26 5/3036 580

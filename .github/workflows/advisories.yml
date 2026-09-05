@@ -1,0 +1,57 @@
+name: advisory-ci
+
+on:
+  push:
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/advisories.yml"
+  pull_request:
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/advisories.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustsec:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.98.0
+      - name: Audit Rust lockfiles
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --file Cargo.lock
+          cargo audit --file provider/Cargo.lock
+
+  openssl-patch-level:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require current OpenSSL patch releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_series() {
+            local series=$1 expected=$2 latest
+            latest=$(git ls-remote --refs --tags \
+              https://github.com/openssl/openssl.git \
+              "refs/tags/openssl-${series}.*" \
+              | awk '{ sub("refs/tags/openssl-", "", $2); print $2 }' \
+              | grep -E "^${series}\\.[0-9]+$" \
+              | sort -V | tail -n 1)
+            test "$latest" = "$expected" || {
+              printf 'OpenSSL %s lane is stale: expected %s, latest %s\n' \
+                "$series" "$expected" "$latest" >&2
+              exit 1
+            }
+          }
+          check_series 3.5 3.5.8
+          check_series 4.0 4.0.2

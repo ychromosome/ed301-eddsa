@@ -1,0 +1,20 @@
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "wire-negative-matrix"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.91"
+publish = false
+
+[dependencies]
+ed301-eddsa = { path = "../../crates/ed301-eddsa" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+overflow-checks = true

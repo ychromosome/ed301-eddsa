@@ -1,0 +1,17 @@
+[workspace]
+
+[package]
+name = "ed301-benchmark"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ed301-eddsa = { path = "../../crates/ed301-eddsa" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+overflow-checks = true

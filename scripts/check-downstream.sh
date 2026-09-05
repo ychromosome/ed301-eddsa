@@ -1,0 +1,66 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+FIXTURE=$ROOT/integration/downstream-workspace
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+sh "$ROOT/scripts/require-verified-snapshot.sh"
+for manifest in "$ROOT/Cargo.toml" "$ROOT/provider/Cargo.toml" \
+        "$ROOT/secret-taint/Cargo.toml" "$FIXTURE/Cargo.toml"; do
+    if grep -F '[profile.release.package."crypto-bigint' "$manifest" \
+            >/dev/null; then
+        echo "consumer-specific crypto-bigint profile override: $manifest" >&2
+        exit 1
+    fi
+done
+
+WORK=$(mktemp -d /tmp/ed301-downstream-gate.XXXXXX)
+HOME_DIR=$WORK/home
+CARGO_HOME_DIR=$WORK/cargo-home
+ANALYSIS_TARGET_DIR=$WORK/analysis-target
+TARGET_DIR=$WORK/target
+MARKERS=$WORK/profile-markers
+mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$ANALYSIS_TARGET_DIR" \
+    "$TARGET_DIR" "$MARKERS"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor"
+printf 'cargo_config_sha256=%s\n' \
+    "$(sha256sum "$CARGO_HOME_DIR/config.toml" | awk '{print $1}')"
+cleanup() {
+    rm -rf -- "$WORK"
+}
+trap cleanup EXIT HUP INT TERM
+
+run_cargo() {
+    (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        CARGO_HOME="$CARGO_HOME_DIR" \
+        CARGO_TARGET_DIR="$ANALYSIS_TARGET_DIR" \
+        CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+        /usr/bin/cargo "$@")
+}
+run_guarded_cargo() {
+    (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+        CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$TARGET_DIR" \
+        CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+        ED301_PROFILE_MARKER_DIR="$MARKERS" \
+        RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+        /usr/bin/cargo "$@")
+}
+
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
+run_guarded_cargo build --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release
+run_cargo fmt --manifest-path "$FIXTURE/Cargo.toml" -- --check
+run_cargo clippy --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release --all-targets -- -D warnings
+run_guarded_cargo test --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release
+run_guarded_cargo run --manifest-path "$FIXTURE/Cargo.toml" \
+    --locked --offline --release
+sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
+    crypto_bigint=on ed301_eddsa=on ed301_eddsa_downstream_check=on
+sh "$ROOT/scripts/require-verified-snapshot.sh"

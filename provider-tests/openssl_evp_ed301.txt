@@ -1,0 +1,32 @@
+Title = Ed301-EdDSA-v1 whole-message contract
+
+PrivateKeyRaw = ED301-V1-1:Ed301-EdDSA-v1:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425
+
+PublicKeyRaw = ED301-V1-1-PUBLIC:Ed301-EdDSA-v1:8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890
+
+PrivPubKeyPair = ED301-V1-1:ED301-V1-1-PUBLIC
+
+Sign-Message = Ed301-EdDSA-v1:ED301-V1-1
+Input = ""
+Output = cc1a59719a20680baf3c78afce09b2ffec2072af5966cbbe67d4403c5d41f59c24ac74242a0e4fab53485a56455e195e71deda3152d8347eb08d4f7e8cd3a83aea25c7072ba872b8aa519800
+
+Verify-Message-Public = Ed301-EdDSA-v1:ED301-V1-1-PUBLIC
+Input = ""
+Output = cc1a59719a20680baf3c78afce09b2ffec2072af5966cbbe67d4403c5d41f59c24ac74242a0e4fab53485a56455e195e71deda3152d8347eb08d4f7e8cd3a83aea25c7072ba872b8aa519800
+
+Verify-Message-Public = Ed301-EdDSA-v1:ED301-V1-1-PUBLIC
+Input = 01
+Output = cc1a59719a20680baf3c78afce09b2ffec2072af5966cbbe67d4403c5d41f59c24ac74242a0e4fab53485a56455e195e71deda3152d8347eb08d4f7e8cd3a83aea25c7072ba872b8aa519800
+Result = VERIFY_ERROR
+
+# Pure EdDSA accepts a complete message only.  The pre-digested TBS API must
+# not silently create an undocumented Ed301ph instance.
+Sign = Ed301-EdDSA-v1:ED301-V1-1
+Input = ""
+Output = cc1a59719a20680baf3c78afce09b2ffec2072af5966cbbe67d4403c5d41f59c24ac74242a0e4fab53485a56455e195e71deda3152d8347eb08d4f7e8cd3a83aea25c7072ba872b8aa519800
+Result = KEYOP_INIT_ERROR
+
+Verify = Ed301-EdDSA-v1:ED301-V1-1-PUBLIC
+Input = ""
+Output = cc1a59719a20680baf3c78afce09b2ffec2072af5966cbbe67d4403c5d41f59c24ac74242a0e4fab53485a56455e195e71deda3152d8347eb08d4f7e8cd3a83aea25c7072ba872b8aa519800
+Result = KEYOP_INIT_ERROR

@@ -1,0 +1,9 @@
+# Ed301 laboratory OpenSSL overlay
+
+Installing `ed301-openssl-provider-policy` activates the private-use Ed301 TLS
+test provider. It does not change Fedora's crypto policy. The packaged
+`opensslcnf-zz-ed301.config.example` is an inert laboratory example because
+Fedora's `.pmod` vocabulary does not contain Ed301.
+
+The ordinary `ed301_eddsa_v1.so` provider remains globally inactive and is
+available only through explicit application loading.
