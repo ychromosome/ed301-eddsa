@@ -4,6 +4,11 @@
 //! backend may exploit the sparse shape of the modulus, but it must remain
 //! differentially equivalent to this implementation.
 
+#![allow(
+    dead_code,
+    reason = "retained Montgomery oracle also supplies optimized-backend inversion"
+)]
+
 use crypto_bigint::{
     Choice, CtAssign, CtEq, CtLt, CtOption, U320, const_monty_form, const_monty_params,
     modular::ConstMontyParams,
@@ -20,6 +25,13 @@ use crate::parameters::FIELD_BYTES;
 const SQRT_EXPONENT_BITS: u32 = 301;
 const SQRT_EXPONENT: U320 = U320::from_be_hex(
     "000007fffffffffffffffffffffffffffffffffffffffffffffffffe0000000000000000000000ed",
+);
+
+// (p - 3) / 4.  For p = 3 (mod 4), a square root of u / v can be
+// computed as u * (u * v)^((p - 3) / 4).  This combines the inversion and
+// square-root exponentiations needed by compressed Edwards-point decoding.
+const SQRT_RATIO_EXPONENT: U320 = U320::from_be_hex(
+    "000007fffffffffffffffffffffffffffffffffffffffffffffffffe0000000000000000000000ec",
 );
 
 const_monty_params!(
@@ -63,7 +75,6 @@ impl FieldElement {
     }
 
     /// Construct a field element from a small canonical integer.
-    #[allow(dead_code, reason = "used by the forthcoming Edwards implementation")]
     pub(crate) const fn from_u64(value: u64) -> Self {
         Self(MontgomeryFieldElement::new(&U320::from_u64(value)))
     }
@@ -97,7 +108,6 @@ impl FieldElement {
     }
 
     /// Negate a field element.
-    #[allow(dead_code, reason = "used by the forthcoming Edwards implementation")]
     pub(crate) const fn neg(self) -> Self {
         Self(self.0.neg())
     }
@@ -128,6 +138,27 @@ impl FieldElement {
     pub(crate) fn sqrt(self) -> CtOption<Self> {
         let candidate = Self(self.0.pow_bounded_exp(&SQRT_EXPONENT, SQRT_EXPONENT_BITS));
         CtOption::new(candidate, candidate.square().ct_eq(&self))
+    }
+
+    /// Return a square root of `numerator / denominator` when it exists.
+    ///
+    /// The result is computed with one fixed-exponent operation and verified
+    /// without first inverting `denominator`.  A zero denominator is always
+    /// rejected, including the otherwise ambiguous `0 / 0` case.
+    pub(crate) fn sqrt_ratio(numerator: Self, denominator: Self) -> CtOption<Self> {
+        let product = numerator.mul(denominator);
+        let factor = Self(
+            product
+                .0
+                .pow_bounded_exp(&SQRT_RATIO_EXPONENT, SQRT_EXPONENT_BITS),
+        );
+        let candidate = numerator.mul(factor);
+        let is_root = candidate
+            .square()
+            .mul(denominator)
+            .ct_eq(&numerator)
+            .and(denominator.is_zero().not());
+        CtOption::new(candidate, is_root)
     }
 
     /// Return whether the canonical representative is odd.
@@ -178,27 +209,11 @@ impl Default for FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::decode_hex_array;
 
-    const BASE_U_BYTES: [u8; FIELD_BYTES] =
-        hex_le_38(b"5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308");
-
-    const fn hex_le_38(hex: &[u8; FIELD_BYTES * 2]) -> [u8; FIELD_BYTES] {
-        let mut output = [0_u8; FIELD_BYTES];
-        let mut i = 0;
-        while i < FIELD_BYTES {
-            output[i] = (hex_nibble(hex[i * 2]) << 4) | hex_nibble(hex[i * 2 + 1]);
-            i += 1;
-        }
-        output
-    }
-
-    const fn hex_nibble(value: u8) -> u8 {
-        match value {
-            b'0'..=b'9' => value - b'0',
-            b'a'..=b'f' => value - b'a' + 10,
-            _ => panic!("invalid test hex"),
-        }
-    }
+    const BASE_U_BYTES: [u8; FIELD_BYTES] = decode_hex_array(
+        b"5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+    );
 
     fn le38(integer: U320) -> [u8; FIELD_BYTES] {
         let encoded = integer.to_le_bytes();

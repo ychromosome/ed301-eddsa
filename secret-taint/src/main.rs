@@ -86,10 +86,13 @@ fn run_sign(mode: Mode) -> Result<(), String> {
     let expected = required_array::<SIGNATURE_BYTES>(EXPECTED_SIGNATURE_ENV)?;
     apply_mode(mode, &mut seed);
     let key = SigningKey::from_seed(&seed).map_err(|_| "key import failed")?;
-    let signature = key.sign(b"").map_err(|_| "signing failed")?.to_bytes();
-    require_public_vbits(mode, &signature)?;
+    let signature = key.sign(b"").map_err(|_| "signing failed")?;
+    if std::mem::size_of_val(&signature) != SIGNATURE_BYTES {
+        return Err("public signature retains non-wire state".into());
+    }
+    require_public_vbits(mode, signature.as_bytes())?;
     make_defined(&mut seed);
-    if signature != expected {
+    if signature.to_bytes() != expected {
         return Err("signature KAT mismatch".into());
     }
     Ok(())

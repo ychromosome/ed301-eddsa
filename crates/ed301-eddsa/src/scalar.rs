@@ -1,8 +1,9 @@
 //! Constant-time scalar arithmetic modulo the ED301 prime subgroup order.
 
+#[cfg(test)]
+use crypto_bigint::Choice;
 use crypto_bigint::{
-    Choice, CtLt, CtOption, NonZero, U320, const_monty_form, const_monty_params,
-    modular::ConstMontyParams,
+    CtLt, CtOption, NonZero, U320, const_monty_form, const_monty_params, modular::ConstMontyParams,
 };
 use zeroize::Zeroize;
 
@@ -27,7 +28,8 @@ const MODULUS: U320 = U320::from_be_hex(
     "00000800000000000000000000000000000000000016dcc80892809847fb4a312602e3a1d0be9603",
 );
 const NONZERO_MODULUS: NonZero<U320> = NonZero::<U320>::new_unwrap(MODULUS);
-const RADIX_64: MontgomeryScalar = MontgomeryScalar::new(&U320::from_words([0, 1, 0, 0, 0]));
+const RADIX_304: MontgomeryScalar =
+    MontgomeryScalar::new(&U320::from_words([0, 0, 0, 0, 1_u64 << 48]));
 
 /// Internal canonical scalar in `0 <= x < L`.
 #[derive(Clone, Copy)]
@@ -49,54 +51,30 @@ impl Scalar {
 
     /// Reduce an exact pruned 38-byte little-endian secret scalar modulo `L`.
     pub(crate) fn reduce_pruned_le(bytes: &[u8; SCALAR_BYTES]) -> Secret<Self> {
-        let mut words = secret([0_u64; 5]);
-        let mut index = 0;
-        while index < 4 {
-            let offset = index * 8;
-            let mut encoded = secret([0_u8; 8]);
-            encoded.copy_from_slice(&bytes[offset..offset + 8]);
-            words[index] = u64::from_le_bytes(*encoded);
-            index += 1;
-        }
-        let mut high = secret([0_u8; 8]);
-        high[..6].copy_from_slice(&bytes[32..38]);
-        words[4] = u64::from_le_bytes(*high);
-        Self::reduce_words(&words)
+        let integer = secret(uint_from_le38(bytes));
+        let reduced = secret(MontgomeryScalar::new(&integer));
+        secret(Self(reduced.retrieve()))
     }
 
     /// Reduce the full 76-byte (608-bit) SHAKE256 result modulo `L`.
     ///
-    /// The fixed ten-word schedule processes nine complete little-endian
-    /// `u64` words and one top word whose only significant bytes are 72..75.
+    /// The fixed schedule groups the input into two 304-bit chunks and
+    /// combines their existing Montgomery reductions without a division
+    /// path.
     #[inline(never)]
     pub(crate) fn reduce_hash_le(bytes: &[u8; HASH_BYTES]) -> Secret<Self> {
-        let mut words = secret([0_u64; 10]);
-        let mut index = 0;
-        while index < 9 {
-            let offset = index * 8;
-            let mut encoded = secret([0_u8; 8]);
-            encoded.copy_from_slice(&bytes[offset..offset + 8]);
-            words[index] = u64::from_le_bytes(*encoded);
-            index += 1;
-        }
-        let mut high = secret([0_u8; 8]);
-        high[..4].copy_from_slice(&bytes[72..76]);
-        words[9] = u64::from_le_bytes(*high);
-        Self::reduce_words(&words)
-    }
+        let mut low_bytes = secret([0_u8; SCALAR_BYTES]);
+        let mut high_bytes = secret([0_u8; SCALAR_BYTES]);
+        low_bytes.copy_from_slice(&bytes[..SCALAR_BYTES]);
+        high_bytes.copy_from_slice(&bytes[SCALAR_BYTES..]);
 
-    fn reduce_words<const N: usize>(words: &[u64; N]) -> Secret<Self> {
-        let mut accumulator = secret(MontgomeryScalar::ZERO);
-        let mut index = N;
-        while index != 0 {
-            index -= 1;
-            let word = secret(words[index]);
-            let integer = secret(U320::from_u64(*word));
-            let addend = secret(MontgomeryScalar::new(&integer));
-            let product = secret(accumulator.mul(&RADIX_64));
-            accumulator = secret(product.add(&addend));
-        }
-        secret(Self(accumulator.retrieve()))
+        let low = secret(uint_from_le38(&low_bytes));
+        let high = secret(uint_from_le38(&high_bytes));
+        let low_reduced = secret(MontgomeryScalar::new(&low));
+        let high_reduced = secret(MontgomeryScalar::new(&high));
+        let high_shifted = secret(high_reduced.mul(&RADIX_304));
+        let combined = secret(high_shifted.add(&low_reduced));
+        secret(Self(combined.retrieve()))
     }
 
     /// Encode as the canonical 38-byte little-endian representation.
@@ -140,9 +118,49 @@ impl Scalar {
     }
 
     /// Read one bit for the fixed 301-round scalar multiplier.
+    #[cfg(test)]
     pub(crate) const fn bit(&self, index: usize) -> Choice {
         debug_assert!(index < FIELD_BITS);
         self.0.bit(index as u32)
+    }
+
+    /// Recode a public scalar as width-`w` non-adjacent form.
+    ///
+    /// This routine is deliberately variable-time and may only be used by
+    /// public verification paths.  Widths used by the point core are fixed
+    /// at compile-time call sites and keep every digit within `i8`.
+    pub(crate) fn vartime_wnaf(&self, width: u32) -> [i8; FIELD_BITS + 1] {
+        assert!(
+            (2..=8).contains(&width),
+            "wNAF width must keep every digit representable as i8"
+        );
+        let radix = 1_u64 << width;
+        let half = radix >> 1;
+        let mask = radix - 1;
+        let mut value = self.0;
+        let mut digits = [0_i8; FIELD_BITS + 1];
+        let mut index = 0;
+
+        while index < digits.len() {
+            if value.bit(0).to_bool_vartime() {
+                let low = value.to_words()[0] & mask;
+                let digit = if low >= half {
+                    low as i16 - radix as i16
+                } else {
+                    low as i16
+                };
+                digits[index] = digit as i8;
+                if digit < 0 {
+                    value = value.wrapping_add(&U320::from_u64((-digit) as u64));
+                } else {
+                    value = value.wrapping_sub(&U320::from_u64(digit as u64));
+                }
+            }
+            value = value.shr_vartime(1);
+            index += 1;
+        }
+        debug_assert!(value.is_zero().to_bool_vartime());
+        digits
     }
 }
 
@@ -169,27 +187,15 @@ fn uint_from_le38(bytes: &[u8; SCALAR_BYTES]) -> U320 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{decode_hex_array, splitmix64};
 
-    const L_BYTES: [u8; 38] =
-        hex_38(b"0396bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008");
-
-    const fn hex_38(hex: &[u8; 76]) -> [u8; 38] {
-        let mut output = [0_u8; 38];
-        let mut index = 0;
-        while index < 38 {
-            output[index] = (nibble(hex[index * 2]) << 4) | nibble(hex[index * 2 + 1]);
-            index += 1;
-        }
-        output
-    }
-
-    const fn nibble(value: u8) -> u8 {
-        match value {
-            b'0'..=b'9' => value - b'0',
-            b'a'..=b'f' => value - b'a' + 10,
-            _ => panic!("invalid test hex"),
-        }
-    }
+    const L_BYTES: [u8; 38] = decode_hex_array(
+        b"0396bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008",
+    );
+    // Independently reproduced with Python integers and Perl Math::BigInt.
+    const RADIX_304_REDUCED: U320 = U320::from_be_hex(
+        "000007fffffffffffffffffffffffffffffffffffd3b43c6f6426d8f4892040c65a66f67b8ebd5a3",
+    );
 
     fn division_oracle(bytes: &[u8; HASH_BYTES]) -> U320 {
         let mut low = [0_u8; U320::BYTES];
@@ -206,12 +212,18 @@ mod tests {
         assert_eq!(Scalar::reduce_hash_le(bytes).0, division_oracle(bytes));
     }
 
-    fn splitmix64(state: &mut u64) -> u64 {
-        *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut value = *state;
-        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        value ^ (value >> 31)
+    fn assert_half_reduction(value: U320) {
+        let encoded = value.to_le_bytes();
+        assert_eq!(&encoded[SCALAR_BYTES..], &[0_u8; 2]);
+        let mut half = [0_u8; SCALAR_BYTES];
+        half.copy_from_slice(&encoded[..SCALAR_BYTES]);
+        let expected = U320::rem_wide((value, U320::ZERO), &NONZERO_MODULUS);
+        assert_eq!(Scalar::reduce_pruned_le(&half).0, expected);
+        for offset in [0, SCALAR_BYTES] {
+            let mut bytes = [0_u8; HASH_BYTES];
+            bytes[offset..offset + SCALAR_BYTES].copy_from_slice(&encoded[..SCALAR_BYTES]);
+            assert_reduction(&bytes);
+        }
     }
 
     #[test]
@@ -229,8 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn fixed_ten_word_reducer_matches_wide_division() {
-        let mut cases = [[0_u8; HASH_BYTES]; 7];
+    fn fixed_radix_304_reducer_matches_wide_division() {
+        let mut cases = [[0_u8; HASH_BYTES]; 12];
         cases[1][0] = 1;
         cases[2][..38].copy_from_slice(&L_BYTES);
         cases[3][..38].copy_from_slice(&L_BYTES);
@@ -238,8 +250,32 @@ mod tests {
         cases[4][37] = 0x10;
         cases[5][75] = 0x80;
         cases[6].fill(0xff);
+        cases[7].fill(0xaa);
+        cases[8].fill(0x55);
+        cases[9][37] = 0x80;
+        cases[10][38] = 0x80;
+        cases[11][37] = 0x80;
+        cases[11][38] = 0x80;
         for case in &cases {
             assert_reduction(case);
+        }
+
+        let l_minus_one = MODULUS.wrapping_sub(&U320::ONE);
+        let l_plus_one = MODULUS.wrapping_add(&U320::ONE);
+        let two_l = MODULUS.wrapping_add(&MODULUS);
+        let two_l_minus_one = two_l.wrapping_sub(&U320::ONE);
+        let max_304 = U320::MAX.shr_vartime(16);
+        for value in [
+            U320::ZERO,
+            U320::ONE,
+            l_minus_one,
+            MODULUS,
+            l_plus_one,
+            two_l_minus_one,
+            two_l,
+            max_304,
+        ] {
+            assert_half_reduction(value);
         }
 
         let mut state = 0x4544_3330_312d_5231_u64;
@@ -251,6 +287,11 @@ mod tests {
             }
             assert_reduction(&bytes);
         }
+    }
+
+    #[test]
+    fn radix_304_matches_independently_computed_literal() {
+        assert_eq!(RADIX_304.retrieve(), RADIX_304_REDUCED);
     }
 
     #[test]
@@ -275,5 +316,11 @@ mod tests {
             bytes[bit >> 3] = 1_u8 << (bit & 7);
             assert_reduction(&bytes);
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "wNAF width must keep every digit representable as i8")]
+    fn wnaf_rejects_unrepresentable_width_in_release_builds() {
+        let _ = Scalar::ZERO.vartime_wnaf(9);
     }
 }

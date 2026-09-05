@@ -1,0 +1,6 @@
+worker_id=12
+counter_start=27648
+counter_end=27903
+tested=256
+elapsed_ms=67245
+hits=[]

@@ -1,28 +1,24 @@
-# Ed301-EdDSA
+# Ed301-EdDSA v1 core review step
 
-Experimental Rust implementation of `Ed301-EdDSA-draft-00` over the ED301
-elliptic curve.
+This first review commit contains the experimental Ed301-EdDSA-v1 Rust core,
+its frozen inputs, curve evidence, vendored dependencies and portable test
+sources. The next commit adds the complete OpenSSL provider, integration,
+packaging, authoritative gate launcher and final user documentation.
 
-- `no_std`
-- safe Rust
-- context-free one-shot signing and verification
-- locked, vendored and offline builds
-- draft vectors and edge cases included
+The active signature profile is `inputs/v1/`; `inputs/round4/` remains
+immutable historical draft-00 evidence. No wire format is changed by this
+history condensation. The full development history is retained on
+`provider-experiment` at commit
+`5c688206a15f6ab88a50d53fe503665a302cec4d`.
 
-## Test
+The root Cargo workspace is independently buildable with locked, vendored,
+offline dependencies. Its unit-test configurations are debug and release,
+each with and without `sign-self-verify`. Release overflow checks remain
+enabled for both the owned code and the repository's patched crypto-bigint.
+The profile guard and marker checker are included unchanged.
 
-```sh
-sh scripts/check.sh
-sh scripts/check-secret-taint.sh
-```
+These intermediate unit checks are not the final authoritative integration
+gate. This is a research and review candidate, not a production release,
+completed audit or universal constant-time or zeroization claim.
 
-## Status
-
-Round-2 pre-deep-scan candidate. Not production-ready.
-
-See `STATUS.md` and `ZEROIZATION_AND_CT_BOUNDARY.md` for the current assurance
-boundary.
-
-## License
-
-Apache-2.0. Vendored dependencies retain their own licenses.
+Apache-2.0; vendored dependencies retain their original licenses and notices.

@@ -1,7 +1,13 @@
-//! Public identifiers and sizes fixed by `Ed301-EdDSA-draft-00`.
+//! Public identifiers and sizes fixed by `Ed301-EdDSA-v1`.
 
-/// Versioned identifier of this signature draft.
-pub const SPECIFICATION: &str = "Ed301-EdDSA-draft-00";
+/// Versioned identifier of this signature profile.
+pub const SPECIFICATION: &str = "Ed301-EdDSA-v1";
+
+/// Native signature-domain label, following the RFC 8032 Ed448 `dom4` shape.
+pub const SIGNATURE_DOMAIN: &[u8; 11] = b"SigEd301-v1";
+
+/// Maximum native context length encoded by the one-octet domain field.
+pub const MAX_CONTEXT_BYTES: usize = u8::MAX as usize;
 
 /// Versioned identifier of the underlying curve and encoding parameter set.
 pub const PARAMETER_SET: &str = "ED301-v1";
@@ -24,7 +30,7 @@ pub const PUBLIC_KEY_BYTES: usize = FIELD_BYTES;
 /// Required signature length, `ENC(R) || ENC_SCALAR(S)`.
 pub const SIGNATURE_BYTES: usize = 2 * FIELD_BYTES;
 
-/// Exact SHAKE256 output length used by the draft.
+/// Exact SHAKE256 output length used by Ed301-EdDSA-v1.
 pub const HASH_BYTES: usize = 2 * FIELD_BYTES;
 
 /// Cofactor used by the sole verification equation.

@@ -5,16 +5,22 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-description = "Review candidate for the Ed301-EdDSA-draft-00 byte contract"
+description = "Review candidate for the Ed301-EdDSA-v1 byte contract"
+build = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 
 [lib]
 path = "src/lib.rs"
 
 [features]
 secret-taint-instrumentation = ["dep:ed301-valgrind-client"]
+sign-self-verify = []
 
 [dependencies]
-crypto-bigint = { version = "=0.7.5", default-features = false, features = ["zeroize"] }
+crypto-bigint = { path = "../../vendor/crypto-bigint", default-features = false, features = ["zeroize"] }
 ed301-valgrind-client = { path = "../../secret-taint/valgrind-client", optional = true }
 shake = { version = "=0.1.0", default-features = false, features = ["zeroize"] }
 zeroize = { version = "=1.9.0", default-features = false }

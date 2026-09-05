@@ -1,0 +1,60 @@
+python_version=Python 3.14.6
+test_command=PYTHONDONTWRITEBYTECODE=1 python3 -I -m unittest discover -s ed301_technischer_abschluss/tests -p 'test_*.py' -v
+test_exit_status=0
+test_basepoint_order (test_ed301_curve.EdwardsArithmeticTests.test_basepoint_order) ... ok
+test_identity (test_ed301_curve.EdwardsArithmeticTests.test_identity) ... ok
+test_negation_and_subtraction (test_ed301_curve.EdwardsArithmeticTests.test_negation_and_subtraction) ... ok
+test_order_four (test_ed301_curve.EdwardsArithmeticTests.test_order_four) ... ok
+test_order_two (test_ed301_curve.EdwardsArithmeticTests.test_order_two) ... ok
+test_reject_off_curve_inputs (test_ed301_curve.EdwardsArithmeticTests.test_reject_off_curve_inputs) ... ok
+test_field_rejections (test_ed301_curve.EncodingTests.test_field_rejections) ... ok
+test_field_roundtrips (test_ed301_curve.EncodingTests.test_field_roundtrips) ... ok
+test_point_rejections (test_ed301_curve.EncodingTests.test_point_rejections) ... ok
+test_point_roundtrips (test_ed301_curve.EncodingTests.test_point_roundtrips) ... ok
+test_scalar_rejections (test_ed301_curve.EncodingTests.test_scalar_rejections) ... ok
+test_scalar_roundtrips (test_ed301_curve.EncodingTests.test_scalar_roundtrips) ... ok
+test_strict_prime_order_decode (test_ed301_curve.EncodingTests.test_strict_prime_order_decode) ... ok
+test_edwards_montgomery_roundtrips (test_ed301_curve.MappingAndLadderTests.test_edwards_montgomery_roundtrips) ... ok
+test_ladder_infinity_and_input_rejections (test_ed301_curve.MappingAndLadderTests.test_ladder_infinity_and_input_rejections) ... ok
+test_ladder_matches_general_edwards_multiplication (test_ed301_curve.MappingAndLadderTests.test_ladder_matches_general_edwards_multiplication) ... ok
+test_mapping_exception_cases (test_ed301_curve.MappingAndLadderTests.test_mapping_exception_cases) ... ok
+test_basepoint_constants (test_ed301_curve.ParameterTests.test_basepoint_constants) ... ok
+test_montgomery_constants (test_ed301_curve.ParameterTests.test_montgomery_constants) ... ok
+test_reference_warning_and_parameters (test_ed301_curve.ParameterTests.test_reference_warning_and_parameters) ... ok
+test_context_boundary (test_ed301_sig.DeterministicSignatureTests.test_context_boundary) ... ok
+test_keygen_is_deterministic_and_seed_only (test_ed301_sig.DeterministicSignatureTests.test_keygen_is_deterministic_and_seed_only) ... ok
+test_message_context_key_and_signature_manipulations (test_ed301_sig.DeterministicSignatureTests.test_message_context_key_and_signature_manipulations) ... ok
+test_positive_verification (test_ed301_sig.DeterministicSignatureTests.test_positive_verification) ... ok
+test_sign_is_deterministic (test_ed301_sig.DeterministicSignatureTests.test_sign_is_deterministic) ... ok
+test_wrong_domains_fail (test_ed301_sig.DeterministicSignatureTests.test_wrong_domains_fail) ... ok
+test_challenge_frame_exact (test_ed301_sig.DomainAndFrameTests.test_challenge_frame_exact) ... ok
+test_field_lengths_are_u64_big_endian (test_ed301_sig.DomainAndFrameTests.test_field_lengths_are_u64_big_endian) ... ok
+test_fixed_suite_and_domain (test_ed301_sig.DomainAndFrameTests.test_fixed_suite_and_domain) ... ok
+test_nonce_frame_exact (test_ed301_sig.DomainAndFrameTests.test_nonce_frame_exact) ... ok
+test_prefix_frame_exact (test_ed301_sig.DomainAndFrameTests.test_prefix_frame_exact) ... ok
+test_secret_scalar_frame_exact (test_ed301_sig.DomainAndFrameTests.test_secret_scalar_frame_exact) ... ok
+test_nonce_zero_retries_from_zero (test_ed301_sig.RetryAndNullCaseTests.test_nonce_zero_retries_from_zero) ... ok
+test_retry_counter_never_wraps (test_ed301_sig.RetryAndNullCaseTests.test_retry_counter_never_wraps) ... ok
+test_secret_scalar_zero_retries_from_zero (test_ed301_sig.RetryAndNullCaseTests.test_secret_scalar_zero_retries_from_zero) ... ok
+test_zero_challenge_is_allowed (test_ed301_sig.RetryAndNullCaseTests.test_zero_challenge_is_allowed) ... ok
+test_zero_signature_scalar_is_allowed (test_ed301_sig.RetryAndNullCaseTests.test_zero_signature_scalar_is_allowed) ... ok
+test_bad_xof_length_is_rejected (test_ed301_sig.SecretKeyAndBackendErrorTests.test_bad_xof_length_is_rejected) ... ok
+test_secret_key_is_exactly_seed38 (test_ed301_sig.SecretKeyAndBackendErrorTests.test_secret_key_is_exactly_seed38) ... ok
+test_sign_rejects_bad_context_and_message_inputs (test_ed301_sig.SecretKeyAndBackendErrorTests.test_sign_rejects_bad_context_and_message_inputs) ... ok
+test_signer_self_verification_is_mandatory (test_ed301_sig.SecretKeyAndBackendErrorTests.test_signer_self_verification_is_mandatory) ... ok
+test_lengths_and_types (test_ed301_sig.StrictVerificationTests.test_lengths_and_types) ... ok
+test_noncanonical_y_and_identity_sign_are_rejected (test_ed301_sig.StrictVerificationTests.test_noncanonical_y_and_identity_sign_are_rejected) ... ok
+test_reserved_point_bits_are_rejected (test_ed301_sig.StrictVerificationTests.test_reserved_point_bits_are_rejected) ... ok
+test_s_equal_q_is_rejected (test_ed301_sig.StrictVerificationTests.test_s_equal_q_is_rejected) ... ok
+test_torsion_and_mixed_order_public_keys_are_rejected (test_ed301_sig.StrictVerificationTests.test_torsion_and_mixed_order_public_keys_are_rejected) ... ok
+test_torsion_and_mixed_order_r_are_rejected (test_ed301_sig.StrictVerificationTests.test_torsion_and_mixed_order_r_are_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 47 tests in 10.126s
+
+OK
+module_command=PYTHONDONTWRITEBYTECODE=1 python3 -I ed301_technischer_abschluss/referenz/ed301_sig.py
+module_exit_status=0
+REFERENCE ONLY: variable-time Ed301-Sig-v1; not production-ready
+suite=Ed301-Sig-v1
+dom=0c45643330312d5369672d76310100

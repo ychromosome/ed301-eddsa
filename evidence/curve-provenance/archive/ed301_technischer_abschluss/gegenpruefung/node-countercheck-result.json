@@ -1,0 +1,50 @@
+{
+  "schema": "Ed301-Sig-v1-independent-node-countercheck-v1",
+  "status": "PASS-NOT-FOR-PRODUCTION",
+  "completed_at": "2026-07-12T01:46:06+02:00",
+  "runtime": {
+    "implementation": "Node.js",
+    "version": "v22.22.2",
+    "external_dependencies": 0,
+    "shake256_provider": "node:crypto"
+  },
+  "independence": {
+    "implementation_sources": [
+      "parameter/ed301-v1.json",
+      "spezifikation/Ed301-Sig-v1.md"
+    ],
+    "python_reference_sources_read_or_imported": false,
+    "implementation_and_own_tests_completed_before_vectors_were_read": true,
+    "vectors_used_after_implementation_as_external_comparison": true
+  },
+  "results": {
+    "own_tests_passed": 42,
+    "own_tests_failed": 0,
+    "positive_vectors_passed": 5,
+    "positive_vectors_total": 5,
+    "negative_verify_vectors_passed": 41,
+    "negative_verify_vectors_total": 41,
+    "internal_negative_vectors_passed": 7,
+    "internal_negative_vectors_total": 7,
+    "vector_runner_assertions_passed": 330,
+    "vector_runner_assertions_failed": 0
+  },
+  "commands": [
+    "npm test",
+    "npm run vectors",
+    "node --check ed301.js",
+    "node --check test_independent.js",
+    "node --check run_vectors.js"
+  ],
+  "sha256": {
+    "gegenpruefung/ed301.js": "213ae7522f04a7520aa725dc0b21d492fe778696ea7607848cdda81f041afdd0",
+    "gegenpruefung/test_independent.js": "8cb33a9a1117d50984155d38f3594ebc7739bb1adfa864f06ccd288f3a45fbfc",
+    "gegenpruefung/run_vectors.js": "e45b4a0a846e564d6ac1d68405c9d9d18d26c0a3f733753ac6b66a12f79ba350",
+    "gegenpruefung/package.json": "ded1af7c2122868ef0308e87c292099e41bc54d14a2ba336d493ce9b8add2156",
+    "parameter/ed301-v1.json": "23cb60255848176320d8938cb1856d469eb91455868da4078526dfb26ef6806f",
+    "spezifikation/Ed301-Sig-v1.md": "743e26887edcdd2aab2825d91716e7d52a6da311fdf47c5d5dec092fdca82c64",
+    "vektoren/ed301-sig-v1-positive.json": "6faaf9e2e5ec6d0f66c90a886ce387ce0ca4eca5d0c7e82ab75cfe1b4fa0ce0c",
+    "vektoren/ed301-sig-v1-negative.json": "6fa3fcab422db0ec459fcb5db61987e25b53650705ec7ad1fadb56f94b7ac945"
+  },
+  "warning": "NOT FOR PRODUCTION: straightforward JavaScript BigInt arithmetic is not constant-time or side-channel audited"
+}

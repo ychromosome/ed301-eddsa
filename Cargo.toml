@@ -2,15 +2,17 @@
 members = ["crates/ed301-eddsa"]
 exclude = [
     "integration/downstream-workspace",
+    "provider",
     "secret-taint",
     "secret-taint/valgrind-client",
+    "vendor/crypto-bigint",
 ]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.91"
 license = "Apache-2.0"
 
 [profile.release]
@@ -19,12 +21,3 @@ lto = "thin"
 codegen-units = 1
 panic = "unwind"
 overflow-checks = true
-
-# crypto-bigint 0.7.5 contains mathematically unreachable overflow guards in
-# its constant-time arithmetic. With workspace-wide overflow checks enabled,
-# rustc may lower those guards to secret-tainted conditional panic branches.
-# Keep checks for ED301-owned code and the dependency's wrapping semantics.
-# Cargo profiles are not transitive: every consuming top-level release
-# workspace must repeat this override and revalidate its final codegen.
-[profile.release.package."crypto-bigint:0.7.5"]
-overflow-checks = false

@@ -1,0 +1,450 @@
+{
+  "point_cases": [
+    {
+      "encoding_hex": "6bf73f755a0c80653ce83fcf6d6ff7d7f347b1929224ac67552273419e6cf2c8a88a02d38898",
+      "expected": {
+        "commitment_policy": "accept",
+        "decode": "accept",
+        "public_key_policy": "accept"
+      },
+      "id": "basepoint"
+    },
+    {
+      "construction": {
+        "kind": "canonical-y-nonsquare",
+        "x_sign_bit": 0,
+        "y_decimal": "3"
+      },
+      "encoding_hex": "0300000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "commitment_policy": "reject",
+        "decode": "reject",
+        "public_key_policy": "reject"
+      },
+      "id": "canonical-y-3-nonsquare"
+    },
+    {
+      "encoding_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "commitment_policy": "accept",
+        "decode": "accept",
+        "public_key_policy": "reject"
+      },
+      "id": "identity"
+    },
+    {
+      "encoding_hex": "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+      "expected": {
+        "commitment_policy": "accept",
+        "decode": "accept",
+        "public_key_policy": "reject"
+      },
+      "id": "order-two"
+    },
+    {
+      "encoding_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000080",
+      "expected": {
+        "commitment_policy": "accept",
+        "decode": "accept",
+        "public_key_policy": "reject"
+      },
+      "id": "order-four"
+    },
+    {
+      "encoding_hex": "480cc08aa5f37f9ac317c0308a9008280cb84e6d6ddb5398aadd8cbe61930d375775fd2c7707",
+      "expected": {
+        "commitment_policy": "accept",
+        "decode": "accept",
+        "public_key_policy": "reject"
+      },
+      "id": "mixed-base-plus-order-two"
+    },
+    {
+      "construction": {
+        "kind": "base-plus-torsion",
+        "torsion_point_case": "order-four",
+        "torsion_point_order": 4
+      },
+      "encoding_hex": "3373a6039b6583c450910497e99e855dd7e20e877bc221b580d663671adb3f49ffd30524ed96",
+      "expected": {
+        "commitment_policy": "accept",
+        "decode": "accept",
+        "public_key_policy": "reject"
+      },
+      "id": "mixed-base-plus-order-four"
+    },
+    {
+      "encoding_hex": "761bfc14ae09194d1757b830810a9e9a47142f48db55a2b73bbad39517ca4e7c814db6ae3e9b",
+      "expected": {
+        "commitment_policy": "accept",
+        "decode": "accept",
+        "public_key_policy": "reject"
+      },
+      "id": "review-mixed-torsion-R"
+    },
+    {
+      "encoding_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000080",
+      "expected": {
+        "commitment_policy": "reject",
+        "decode": "reject",
+        "public_key_policy": "reject"
+      },
+      "id": "negative-zero-x"
+    },
+    {
+      "encoding_hex": "b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+      "expected": {
+        "commitment_policy": "reject",
+        "decode": "reject",
+        "public_key_policy": "reject"
+      },
+      "id": "y-equals-p"
+    },
+    {
+      "encoding_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000020",
+      "expected": {
+        "commitment_policy": "reject",
+        "decode": "reject",
+        "public_key_policy": "reject"
+      },
+      "id": "reserved-bit-301"
+    },
+    {
+      "encoding_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000040",
+      "expected": {
+        "commitment_policy": "reject",
+        "decode": "reject",
+        "public_key_policy": "reject"
+      },
+      "id": "reserved-bit-302"
+    },
+    {
+      "encoding_bytes": 37,
+      "encoding_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "commitment_policy": "reject",
+        "decode": "reject",
+        "public_key_policy": "reject"
+      },
+      "id": "point-length-37"
+    },
+    {
+      "encoding_bytes": 39,
+      "encoding_hex": "010000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "commitment_policy": "reject",
+        "decode": "reject",
+        "public_key_policy": "reject"
+      },
+      "id": "point-length-39"
+    }
+  ],
+  "scalar_cases": [
+    {
+      "encoding_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "accept",
+      "id": "zero"
+    },
+    {
+      "encoding_hex": "0296bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008",
+      "expected": "accept",
+      "id": "L-minus-one"
+    },
+    {
+      "encoding_hex": "0396bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008",
+      "expected": "reject",
+      "id": "L"
+    },
+    {
+      "encoding_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "expected": "reject",
+      "id": "max-304-bit"
+    },
+    {
+      "encoding_bytes": 37,
+      "encoding_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "reject",
+      "id": "scalar-length-37"
+    },
+    {
+      "encoding_bytes": 39,
+      "encoding_hex": "000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "reject",
+      "id": "scalar-length-39"
+    }
+  ],
+  "schema": "ed301-eddsa-v1-edge-v1",
+  "specification": "Ed301-EdDSA-v1",
+  "status": "experimental-review-vectors",
+  "verification_cases": [
+    {
+      "base_case": "empty",
+      "expected": "accept",
+      "id": "positive-empty",
+      "mutation": {
+        "operation": "none"
+      }
+    },
+    {
+      "base_case": "short-ascii",
+      "expected": "accept",
+      "id": "positive-short-ascii",
+      "mutation": {
+        "operation": "none"
+      }
+    },
+    {
+      "base_case": "binary",
+      "expected": "accept",
+      "id": "positive-binary",
+      "mutation": {
+        "operation": "none"
+      }
+    },
+    {
+      "construction": {
+        "challenge_hash_hex": "fd2b710a95225914cfc4c4ab8bf31191a7473210f5e52d5f0168dfae4e7a215b2e7cbc7a62429f3a5d3dba0d789827393ccbd560e991f10dbd202f8371e03e40a08f529f71a0f7f82e2f89ea",
+        "challenge_mod_L_le_hex": "3dc3c3538e4c257d81cf9c1446502ce8053b65a04c113845b294ce83588efbf950c3d6287904",
+        "commitment_R_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000",
+        "kind": "identity-commitment-equation",
+        "ordinary_signer_output": false,
+        "response_S_le_hex": "c920c140f4f58588429908208c1c8173dbf8a14b2d7880ecba17a45d942f53d49b227ed84601",
+        "response_rule": "S = k*s mod L",
+        "seed_case": "empty"
+      },
+      "expected": "accept",
+      "id": "valid-identity-commitment",
+      "input": {
+        "message_hex": "",
+        "public_key_hex": "8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890",
+        "signature_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000c920c140f4f58588429908208c1c8173dbf8a14b2d7880ecba17a45d942f53d49b227ed84601"
+      }
+    },
+    {
+      "construction": {
+        "R_prime_subgroup": false,
+        "challenge_hash_hex": "14d771f905e2b198dc2c81ec081053c85d90cbadaf759ae1ef98354f8fe7022de956bf97b93d5b044682fc8890a5bb4eea493659757a55ca5d12b9e791ac55ad9098aee57db17608334fcae9",
+        "challenge_mod_L_le_hex": "85d44865a1ab378a4e3b05cec97578d18bc5750c755dcd5b18e4496ffface073570cf92b3b07",
+        "commitment_R_hex": "761bfc14ae09194d1757b830810a9e9a47142f48db55a2b73bbad39517ca4e7c814db6ae3e9b",
+        "kind": "mixed-torsion-commitment-equation",
+        "nonce_hash_hex": "c00cf29e0c0f21d3f1e760714fe262f409bc581417e7fbc424f36465270cc081b9016ebddd0f707b3a35c156217d2e69d0606367ad190cb2796e63d98262dc79647fcd3c9dd374c927093958",
+        "nonce_mod_L_le_hex": "d932e50d215f72bc721c47dcf8987a11a87fe741b33971b9bbcd25c83b83706726dc5a435002",
+        "ordinary_signer_output": false,
+        "prime_commitment_R_hex": "3de803eb51f6e6b2e8a847cf76f56165b8ebd0b724aa5d48c4452c6ae835b1837eb24951c104",
+        "response_S_le_hex": "b71ffa8453e7cd10b2516f2299e8f0aa022e13facf1dc3b065bf9b5d111284abfc2457189a04",
+        "response_rule": "S = r + k*s mod L",
+        "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "torsion_point_case": "order-two"
+      },
+      "expected": "accept",
+      "id": "valid-review-mixed-torsion-commitment",
+      "input": {
+        "message_hex": "5246432d3830333220616363657074616e63652d73657420636f756e7465726578616d706c65",
+        "public_key_hex": "8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890",
+        "signature_hex": "761bfc14ae09194d1757b830810a9e9a47142f48db55a2b73bbad39517ca4e7c814db6ae3e9bb71ffa8453e7cd10b2516f2299e8f0aa022e13facf1dc3b065bf9b5d111284abfc2457189a04"
+      }
+    },
+    {
+      "construction": {
+        "R_prime_subgroup": false,
+        "challenge_hash_hex": "7a76d24f5044b9088534a40b6cdb6eb0374e5df7c26ce41727ed75506af4cffe5aa44b940e049532fb5fce04c889d4e88f2c1a9987a2a26d934c7c8bbc2fbb188f192ba15ce57253b59365b0",
+        "challenge_mod_L_le_hex": "ab195b2edffbfe5deab897e6597449d3ee67083f24c7a6328680513ec25b877bf3a88861bb06",
+        "commitment_R_hex": "ddffce3dc7442b0008754e4e9f7bad8e5694ed401023a9ce926d87da99ce715b5925f07d1906",
+        "equation_expectations": {
+          "factor_1": false,
+          "factor_2": false,
+          "factor_4": true
+        },
+        "kind": "mixed-torsion-commitment-equation",
+        "nonce_hash_hex": "adbf5188c69580d7ea2687770360814fe267b673497f22c7afef998852730232d046e34599ad092ba0e1d8b785ca668ca0f464964a1014f01451c6aec1cceced037ac80736ce4016944a5914",
+        "nonce_mod_L_le_hex": "d030150aea57d562a86cb8573752fecc63dc7b85a3e6a515ab5c3b4a9c195063a8466de7eb04",
+        "ordinary_signer_output": false,
+        "prime_commitment_R_hex": "d902a2e96e41780b8e7340715d0580ff25878f7678637342fc517422d041c5eba8f34144aa85",
+        "response_S_le_hex": "845e8069134f5cde060dbe504cb8295e26a745a537cd71917e12fc746fc3429d170d972daa04",
+        "response_rule": "S = r + k*s mod L",
+        "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+        "torsion_point_case": "order-four",
+        "torsion_point_order": 4
+      },
+      "expected": "accept",
+      "id": "valid-review-mixed-order-four-torsion-commitment",
+      "input": {
+        "message_hex": "76616c6964206d69786564206f726465722d3420636f6d6d69746d656e742072656772657373696f6e",
+        "public_key_hex": "8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890",
+        "signature_hex": "ddffce3dc7442b0008754e4e9f7bad8e5694ed401023a9ce926d87da99ce715b5925f07d1906845e8069134f5cde060dbe504cb8295e26a745a537cd71917e12fc746fc3429d170d972daa04"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "message-append-zero",
+      "mutation": {
+        "byte_hex": "00",
+        "field": "message",
+        "operation": "append-byte"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "commitment-bit-flip",
+      "mutation": {
+        "field": "signature",
+        "mask": 1,
+        "offset": 0,
+        "operation": "xor-byte"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "response-bit-flip",
+      "mutation": {
+        "field": "signature",
+        "mask": 1,
+        "offset": 38,
+        "operation": "xor-byte"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "public-key-bit-flip",
+      "mutation": {
+        "field": "public_key",
+        "mask": 1,
+        "offset": 0,
+        "operation": "xor-byte"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "response-zero-syntax-valid-equation-fails",
+      "mutation": {
+        "operation": "replace-response",
+        "scalar_case": "zero"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "response-L-minus-one-syntax-valid-equation-fails",
+      "mutation": {
+        "operation": "replace-response",
+        "scalar_case": "L-minus-one"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "response-equals-L",
+      "mutation": {
+        "operation": "replace-response",
+        "scalar_case": "L"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "identity-commitment-substitution",
+      "mutation": {
+        "operation": "replace-commitment",
+        "point_case": "identity"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "order-two-commitment-substitution",
+      "mutation": {
+        "operation": "replace-commitment",
+        "point_case": "order-two"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "identity-public-key-substitution",
+      "mutation": {
+        "operation": "replace-public-key",
+        "point_case": "identity"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "mixed-order-public-key-substitution",
+      "mutation": {
+        "operation": "replace-public-key",
+        "point_case": "mixed-base-plus-order-two"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "short-signature",
+      "input_lengths": {
+        "public_key": 38,
+        "signature": 75
+      },
+      "mutation": {
+        "bytes": 1,
+        "field": "signature",
+        "operation": "truncate"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "long-signature",
+      "input_lengths": {
+        "public_key": 38,
+        "signature": 77
+      },
+      "mutation": {
+        "byte_hex": "00",
+        "field": "signature",
+        "operation": "append-byte"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "short-public-key",
+      "input_lengths": {
+        "public_key": 37,
+        "signature": 76
+      },
+      "mutation": {
+        "bytes": 1,
+        "field": "public_key",
+        "operation": "truncate"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "long-public-key",
+      "input_lengths": {
+        "public_key": 39,
+        "signature": 76
+      },
+      "mutation": {
+        "byte_hex": "00",
+        "field": "public_key",
+        "operation": "append-byte"
+      }
+    },
+    {
+      "base_case": "empty",
+      "expected": "reject",
+      "id": "cross-vector-signature",
+      "mutation": {
+        "operation": "replace-signature",
+        "source_case": "short-ascii"
+      }
+    }
+  ],
+  "warning": "These cases encode draft edge-policy expectations. They are not independent cryptographic validation material."
+}

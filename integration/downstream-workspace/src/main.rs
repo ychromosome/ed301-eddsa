@@ -12,7 +12,7 @@ fn run_known_answer_check() {
         b"8cad07b4f9a308523a8df9bee22a721b8ff5e597c1ce47e39df67f97a475fd018013fc188890",
     );
     let expected_signature = hex_array::<76>(
-        b"2964a4e22d5ed6e41ad5d5bbfdf4d518bb067b8982f3f8f5900d074a6bee97567b95810336944dfdce74dd889ee9d9db3c10bd1f9da0799bad501c8f3e9260020ad64fa6b02a8c27ce837d00",
+        b"cc1a59719a20680baf3c78afce09b2ffec2072af5966cbbe67d4403c5d41f59c24ac74242a0e4fab53485a56455e195e71deda3152d8347eb08d4f7e8cd3a83aea25c7072ba872b8aa519800",
     );
     let key = SigningKey::from_seed(&seed).expect("fixed seed length");
     let public_key = key

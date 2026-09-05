@@ -7,15 +7,17 @@ use super::{
     parameters::{HASH_BYTES, PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
     scalar::Scalar,
     signature::{Signature, SigningKey, VerifyingKey, test_support::trace},
-    signature_hash::{challenge_hash, hash_to_scalar},
-    validate_public_key, verify,
+    signature_hash::{Domain, challenge_hash, hash_to_scalar},
+    validate_public_key, verify, verify_with_context,
 };
 
 fn decode_hex(value: &str) -> Vec<u8> {
     assert_eq!(value.len() % 2, 0);
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (nibble(pair[0]) << 4) | nibble(pair[1]))
         .collect()
 }
@@ -33,17 +35,20 @@ fn array<const N: usize>(value: &str) -> [u8; N] {
 }
 
 fn fixture() -> serde_json::Value {
-    serde_json::from_str(include_str!(
-        "../../../inputs/round4/ed301-eddsa-draft-00.json"
-    ))
-    .expect("positive vectors parse")
+    serde_json::from_str(include_str!("../../../inputs/v1/ed301-eddsa-v1.json"))
+        .expect("positive vectors parse")
 }
 
 fn edges() -> serde_json::Value {
+    serde_json::from_str(include_str!("../../../inputs/v1/ed301-eddsa-edge-v1.json"))
+        .expect("edge vectors parse")
+}
+
+fn blind_oracle_vectors() -> serde_json::Value {
     serde_json::from_str(include_str!(
-        "../../../inputs/round4/ed301-eddsa-edge-draft-00.json"
+        "../../../provider-tests/oracle/blind-0c482948/blind_oracle_vectors.json"
     ))
-    .expect("edge vectors parse")
+    .expect("blind differential vectors parse")
 }
 
 fn by_id<'a>(items: &'a [serde_json::Value], id: &str) -> &'a serde_json::Value {
@@ -56,7 +61,10 @@ fn by_id<'a>(items: &'a [serde_json::Value], id: &str) -> &'a serde_json::Value 
 #[test]
 fn all_positive_vectors_and_intermediates_match() {
     let document = fixture();
-    assert_eq!(document["specification"], "Ed301-EdDSA-draft-00");
+    assert_eq!(document["specification"], "Ed301-EdDSA-v1");
+    assert_eq!(document["parameters"]["domain_prefix_ascii"], "SigEd301-v1");
+    assert_eq!(document["parameters"]["phflag"], 0);
+    assert_eq!(document["parameters"]["max_context_bytes"], 255);
     assert_eq!(document["parameters"]["hash_output_bytes"], HASH_BYTES);
     assert_eq!(document["parameters"]["seed_bytes"], SEED_BYTES);
     assert_eq!(document["parameters"]["public_key_bytes"], PUBLIC_KEY_BYTES);
@@ -117,6 +125,120 @@ fn all_positive_vectors_and_intermediates_match() {
             expected_signature
         );
     }
+}
+
+#[test]
+fn frozen_draft00_blind_oracle_is_separated_from_v1() {
+    let document = blind_oracle_vectors();
+    assert_eq!(document["schema"], "ed301-eddsa-blind-differential-v1");
+    assert_eq!(
+        document["blind_source_sha256"],
+        "2364f483696c81dba7b81f0cc37f4037983a2c6795c204586e6c09f6a3669bf3"
+    );
+
+    let cases = document["cases"].as_array().expect("blind cases");
+    assert_eq!(cases.len(), 8);
+    for case in cases {
+        let seed = array::<38>(case["seed_hex"].as_str().expect("seed"));
+        let message = decode_hex(case["message_hex"].as_str().expect("message"));
+        let expected_public = array::<38>(case["public_key_hex"].as_str().expect("public key"));
+        let expected_signature = array::<76>(case["signature_hex"].as_str().expect("signature"));
+        let signing_key = SigningKey::from_seed(&seed).expect("valid blind seed");
+
+        assert_eq!(
+            signing_key
+                .verifying_key()
+                .expect("blind public key")
+                .to_bytes(),
+            expected_public,
+            "{} public key",
+            case["id"]
+        );
+        let v1_signature = signing_key.sign(&message).expect("v1 signature").to_bytes();
+        assert_ne!(v1_signature, expected_signature, "{} signature", case["id"]);
+        assert!(!verify(&expected_public, &message, &expected_signature));
+        assert!(verify(&expected_public, &message, &v1_signature));
+    }
+}
+
+#[test]
+fn native_context_vectors_and_boundaries_match() {
+    let document = fixture();
+    let cases = document["context_cases"].as_array().expect("context cases");
+    assert_eq!(cases.len(), 3);
+    for case in cases {
+        let seed = array::<38>(case["seed_hex"].as_str().expect("seed"));
+        let message = decode_hex(case["message_hex"].as_str().expect("message"));
+        let context = decode_hex(case["context_hex"].as_str().expect("context"));
+        let public_key = array::<38>(case["public_key_hex"].as_str().expect("public key"));
+        let signature = array::<76>(case["signature_hex"].as_str().expect("signature"));
+        let key = SigningKey::from_seed(&seed).expect("seed");
+
+        assert_eq!(
+            key.sign_with_context(&message, &context)
+                .expect("context signature")
+                .to_bytes(),
+            signature,
+            "{}",
+            case["id"]
+        );
+        assert!(verify_with_context(
+            &public_key,
+            &message,
+            &context,
+            &signature
+        ));
+        let mut different_context = context.clone();
+        different_context[0] ^= 1;
+        assert!(!verify_with_context(
+            &public_key,
+            &message,
+            &different_context,
+            &signature
+        ));
+        assert!(!verify(&public_key, &message, &signature));
+    }
+
+    let seed = [0x42_u8; 38];
+    let key = SigningKey::from_seed(&seed).expect("seed");
+    assert!(key.sign_with_context(b"message", &[0x5a; 255]).is_ok());
+    assert!(matches!(
+        key.sign_with_context(b"message", &[0x5a; 256]),
+        Err(super::signature::SignatureError::InvalidContextLength)
+    ));
+    let public_key = key.verifying_key().expect("public key").to_bytes();
+    let signature = key.sign(b"message").expect("signature").to_bytes();
+    assert!(!verify_with_context(
+        &public_key,
+        b"message",
+        &[0x5a; 256],
+        &signature
+    ));
+}
+
+#[test]
+fn verify_rejects_a_noncanonical_commitment_encoding() {
+    let positives = fixture();
+    let points = edges();
+    let case = &positives["cases"][0];
+    let point_cases = points["point_cases"].as_array().expect("point cases");
+    let mut signature = array::<76>(case["signature_hex"].as_str().expect("positive signature"));
+    let noncanonical = array::<38>(
+        by_id(point_cases, "y-equals-p")["encoding_hex"]
+            .as_str()
+            .expect("noncanonical point"),
+    );
+    signature[..38].copy_from_slice(&noncanonical);
+
+    assert!(!verify(
+        &array::<38>(
+            case["public_key_hex"]
+                .as_str()
+                .expect("positive public key"),
+        ),
+        &decode_hex(case["message_hex"].as_str().expect("positive message")),
+        &signature,
+    ));
 }
 
 #[test]
@@ -356,7 +478,7 @@ fn cofactor_equation(
     let response_encoding: &[u8; 38] = signature[38..].try_into().expect("S");
     let commitment = EdwardsPoint::decode(commitment_encoding).expect("valid test R");
     let response = Scalar::from_canonical_bytes(response_encoding).expect_copied("valid test S");
-    let digest = challenge_hash(commitment_encoding, public_key, message);
+    let digest = challenge_hash(Domain::EMPTY, commitment_encoding, public_key, message);
     let challenge = hash_to_scalar(digest);
     let mut left = EdwardsPoint::BASEPOINT.scalar_mul(&response);
     let mut right = commitment.add(public.scalar_mul(&challenge));
@@ -385,7 +507,12 @@ fn pure_torsion_commitments_are_accepted_only_by_the_factor_four_language() {
         ("minus-order-four", minus_order_four, false, false),
     ] {
         let message = label.as_bytes();
-        let digest = challenge_hash(&commitment, &public_trace.public_key, message);
+        let digest = challenge_hash(
+            Domain::EMPTY,
+            &commitment,
+            &public_trace.public_key,
+            message,
+        );
         let challenge = hash_to_scalar(digest);
         let response = challenge.mul(&secret).canonical_bytes();
         let mut signature = [0_u8; 76];
@@ -442,7 +569,12 @@ fn mixed_torsion_matrix_distinguishes_factors_one_two_and_four() {
             .add(torsion)
             .encode()
             .expect("mixed commitment encoding");
-        let digest = challenge_hash(&commitment, &base.public_key, b"torsion-matrix");
+        let digest = challenge_hash(
+            Domain::EMPTY,
+            &commitment,
+            &base.public_key,
+            b"torsion-matrix",
+        );
         let challenge = hash_to_scalar(digest);
         let secret_response_term = challenge.mul(&secret);
         let response = nonce.add(&secret_response_term).canonical_bytes();

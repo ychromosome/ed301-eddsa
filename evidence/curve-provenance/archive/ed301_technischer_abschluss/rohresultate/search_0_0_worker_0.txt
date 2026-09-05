@@ -1,0 +1,6 @@
+worker_id=0
+counter_start=0
+counter_end=0
+tested=1
+elapsed_ms=27
+hits=[]

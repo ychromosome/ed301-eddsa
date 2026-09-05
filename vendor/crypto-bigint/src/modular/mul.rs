@@ -95,7 +95,7 @@ pub const fn montgomery_multiply_inner(
     while i < nlimbs {
         let xi = x[i];
         // A[0] + x[i]y[0] <= (2^64 - 1)^2 + (2^64 - 1) = 2^128 - 2^64
-        let axy = (xi.0 as WideWord) * (y[0].0 as WideWord) + out[0].0 as WideWord;
+        let axy = ((xi.0 as WideWord) * (y[0].0 as WideWord)).wrapping_add(out[0].0 as WideWord);
         let u = (axy as Word).wrapping_mul(mod_neg_inv.0);
 
         let mut carry;
@@ -107,9 +107,10 @@ pub const fn montgomery_multiply_inner(
         let mut j = 1;
         while j < nlimbs {
             // A[j] + x[i]y[j] <= (2^64 - 1)^2 + (2^64 - 1) = 2^128 - 2^64
-            let axy = (xi.0 as WideWord) * (y[j].0 as WideWord) + out[j].0 as WideWord;
+            let axy =
+                ((xi.0 as WideWord) * (y[j].0 as WideWord)).wrapping_add(out[j].0 as WideWord);
             // um[j] + carry <= (2^64 - 1)^2 + (2^65 - 2) = 2^128 - 1
-            let umc = (u as WideWord) * (modulus[j].0 as WideWord) + carry;
+            let umc = ((u as WideWord) * (modulus[j].0 as WideWord)).wrapping_add(carry);
             let (ab, c) = axy.overflowing_add(umc);
             out[j - 1] = Limb(ab as Word);
             // carry <= (2^129 - 2^64 - 1) / 2^64 <= 2^65 - 2
@@ -117,7 +118,7 @@ pub const fn montgomery_multiply_inner(
             j += 1;
         }
 
-        carry += meta_carry;
+        carry = carry.wrapping_add(meta_carry);
         (out[nlimbs - 1], meta_carry) = (Limb(carry as Word), carry >> Word::BITS);
 
         i += 1;

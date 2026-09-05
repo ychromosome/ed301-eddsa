@@ -1,0 +1,1261 @@
+//! Specialized five-limb arithmetic for `p = 2^301 - 2^99 + 947`.
+//!
+//! Group arithmetic uses this canonical `[u64; 5]` representation and its
+//! fixed two-fold pseudo-Mersenne reduction.  The retained crypto-bigint
+//! Montgomery implementation in [`crate::field`] remains the independent
+//! differential oracle and supplies the variable-time-free inversion used by
+//! projective encoding.  Fixed-exponent square-root ratios stay inside this
+//! backend, are independently verified, and are differentially tested against
+//! the Montgomery oracle.
+
+use crypto_bigint::{Choice, CtAssign, CtEq, CtOption};
+
+use crate::parameters::FIELD_BYTES;
+
+const LIMBS: usize = 5;
+const TOP_BITS: u32 = 45;
+const TOP_MASK: u64 = (1_u64 << TOP_BITS) - 1;
+const FOLD_SUBTRAHEND: u64 = 947;
+
+// p in little-endian radix 2^64.
+const MODULUS: [u64; LIMBS] = [
+    0x0000_0000_0000_03b3,
+    0xffff_fff8_0000_0000,
+    0xffff_ffff_ffff_ffff,
+    0xffff_ffff_ffff_ffff,
+    0x0000_1fff_ffff_ffff,
+];
+
+// p - 2, used only while constructing immutable affine tables at compile time.
+const INVERSION_EXPONENT: [u64; LIMBS] = [
+    0x0000_0000_0000_03b1,
+    0xffff_fff8_0000_0000,
+    0xffff_ffff_ffff_ffff,
+    0xffff_ffff_ffff_ffff,
+    0x0000_1fff_ffff_ffff,
+];
+
+// (p - 3) / 4 in little-endian limbs.  This public fixed exponent computes
+// square roots of ratios for p = 3 (mod 4).
+const SQRT_RATIO_EXPONENT: [u64; LIMBS] = [
+    0x0000_0000_0000_00ec,
+    0xffff_fffe_0000_0000,
+    0xffff_ffff_ffff_ffff,
+    0xffff_ffff_ffff_ffff,
+    0x0000_07ff_ffff_ffff,
+];
+
+/// Canonical field element in five little-endian limbs.
+#[derive(Clone, Copy)]
+pub(crate) struct Fe301([u64; LIMBS]);
+
+impl Fe301 {
+    pub(crate) const ZERO: Self = Self([0; LIMBS]);
+    pub(crate) const ONE: Self = Self([1, 0, 0, 0, 0]);
+
+    pub(crate) fn from_canonical_bytes(bytes: &[u8; FIELD_BYTES]) -> CtOption<Self> {
+        let mut limbs = [0_u64; LIMBS];
+        let mut index = 0;
+        while index < LIMBS - 1 {
+            let mut encoded = [0_u8; 8];
+            encoded.copy_from_slice(&bytes[index * 8..(index + 1) * 8]);
+            limbs[index] = u64::from_le_bytes(encoded);
+            index += 1;
+        }
+        let mut top = [0_u8; 8];
+        top[..FIELD_BYTES - 32].copy_from_slice(&bytes[32..]);
+        limbs[4] = u64::from_le_bytes(top);
+        let (_, borrow) = subtract_limbs_runtime(limbs, MODULUS);
+        CtOption::new(Self(limbs), Choice::from_u8_lsb(borrow as u8))
+    }
+
+    pub(crate) const fn from_u64(value: u64) -> Self {
+        Self([value, 0, 0, 0, 0])
+    }
+
+    pub(crate) const fn from_canonical_words(words: [u64; LIMBS]) -> Self {
+        Self(words)
+    }
+
+    pub(crate) fn to_canonical_bytes(self) -> [u8; FIELD_BYTES] {
+        let mut encoded = [0_u8; FIELD_BYTES];
+        let mut index = 0;
+        while index < LIMBS - 1 {
+            encoded[index * 8..(index + 1) * 8].copy_from_slice(&self.0[index].to_le_bytes());
+            index += 1;
+        }
+        encoded[32..].copy_from_slice(&self.0[4].to_le_bytes()[..FIELD_BYTES - 32]);
+        encoded
+    }
+
+    #[inline(always)]
+    pub(crate) fn add(self, rhs: Self) -> Self {
+        let (sum, _) = add_limbs(self.0, rhs.0);
+        Self(conditional_subtract_modulus_ct(sum))
+    }
+
+    #[inline(always)]
+    pub(crate) fn sub(self, rhs: Self) -> Self {
+        let (difference, borrow) = subtract_limbs_runtime(self.0, rhs.0);
+        let (corrected, _) = add_limbs(difference, MODULUS);
+        let mut output = difference;
+        output.ct_assign(&corrected, Choice::from_u8_lsb(borrow as u8));
+        Self(output)
+    }
+
+    #[inline(always)]
+    pub(crate) fn neg(self) -> Self {
+        Self::ZERO.sub(self)
+    }
+
+    #[inline(always)]
+    pub(crate) fn mul(self, rhs: Self) -> Self {
+        Self(reduce_wide(multiply_wide(self.0, rhs.0)))
+    }
+
+    /// Multiply by a small integer without routing the sparse five-limb
+    /// product through the general 602-bit reducer.
+    ///
+    /// The group formulas use this for the two public curve constants.  For
+    /// `value <= u32::MAX`, the product has at most 333 bits, so one fold of
+    /// `2^301 = 2^99 - 947` followed by one conditional subtraction is
+    /// sufficient.
+    #[inline(always)]
+    pub(crate) fn mul_small(self, value: u32) -> Self {
+        Self(conditional_subtract_modulus_ct(
+            reduce_small_product_unreduced(multiply_five_by_u32(self.0, value)),
+        ))
+    }
+
+    #[inline(always)]
+    pub(crate) fn square(self) -> Self {
+        Self(reduce_wide(square_wide(self.0)))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn add_const(self, rhs: Self) -> Self {
+        let (sum, _) = add_limbs(self.0, rhs.0);
+        Self(conditional_subtract_modulus_const(sum))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn sub_const(self, rhs: Self) -> Self {
+        let (difference, borrow) = subtract_limbs(self.0, rhs.0);
+        let mask = 0_u64.wrapping_sub(borrow);
+        let mut corrected = [0_u64; LIMBS];
+        let mut carry = 0_u64;
+        let mut index = 0;
+        while index < LIMBS {
+            let accumulator =
+                difference[index] as u128 + (MODULUS[index] & mask) as u128 + carry as u128;
+            corrected[index] = accumulator as u64;
+            carry = (accumulator >> 64) as u64;
+            index += 1;
+        }
+        Self(corrected)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn mul_const(self, rhs: Self) -> Self {
+        Self(reduce_wide_const(multiply_wide(self.0, rhs.0)))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn mul_small_const(self, value: u32) -> Self {
+        self.mul_const(Self::from_u64(value as u64))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn square_const(self) -> Self {
+        Self(reduce_wide_const(square_wide(self.0)))
+    }
+
+    pub(crate) fn invert(self) -> CtOption<Self> {
+        let oracle = crate::field::FieldElement::from_canonical_bytes(&self.to_canonical_bytes())
+            .to_inner_unchecked();
+        let inverse = oracle.invert();
+        let present = inverse.is_some();
+        let converted =
+            Self::from_canonical_bytes(&inverse.to_inner_unchecked().to_canonical_bytes())
+                .to_inner_unchecked();
+        CtOption::new(converted, present)
+    }
+
+    /// Invert a known-nonzero compile-time table denominator with Fermat's
+    /// theorem.  Runtime decoding continues to use the independent
+    /// Montgomery/safegcd boundary above; this fixed exponentiation exists so
+    /// immutable Niels tables can be batch-normalized during const evaluation.
+    pub(crate) const fn invert_const_nonzero(self) -> Self {
+        self.pow_fixed_window4_const(INVERSION_EXPONENT, 301)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sqrt(self) -> CtOption<Self> {
+        let oracle = crate::field::FieldElement::from_canonical_bytes(&self.to_canonical_bytes())
+            .to_inner_unchecked();
+        let root = oracle.sqrt();
+        let present = root.is_some();
+        let converted = Self::from_canonical_bytes(&root.to_inner_unchecked().to_canonical_bytes())
+            .to_inner_unchecked();
+        CtOption::new(converted, present)
+    }
+
+    /// Compute and verify a square root of `numerator / denominator`.
+    ///
+    /// The exponent is public and fixed.  A four-bit table reduces the number
+    /// of five-limb multiplications without introducing input-dependent
+    /// control flow or table indices.
+    pub(crate) fn sqrt_ratio(numerator: Self, denominator: Self) -> CtOption<Self> {
+        let product = numerator.mul(denominator);
+        let candidate = numerator.mul(product.pow_fixed_window4(SQRT_RATIO_EXPONENT, 299));
+        let is_root = candidate
+            .square()
+            .mul(denominator)
+            .ct_eq(&numerator)
+            .and(denominator.is_zero().not());
+        CtOption::new(candidate, is_root)
+    }
+
+    /// Exponentiate by a public compile-time value using four-bit windows.
+    fn pow_fixed_window4(self, exponent: [u64; LIMBS], exponent_bits: usize) -> Self {
+        let mut powers = [Self::ONE; 16];
+        let mut index = 1;
+        while index < powers.len() {
+            powers[index] = powers[index - 1].mul(self);
+            index += 1;
+        }
+
+        let mut result = Self::ONE;
+        let mut window = exponent_bits.div_ceil(4);
+        while window != 0 {
+            window -= 1;
+            result = result.square().square().square().square();
+            let digit = ((exponent[window >> 4] >> ((window & 15) << 2)) & 15) as usize;
+            if digit != 0 {
+                result = result.mul(powers[digit]);
+            }
+        }
+        result
+    }
+
+    const fn pow_fixed_window4_const(self, exponent: [u64; LIMBS], exponent_bits: usize) -> Self {
+        let mut powers = [Self::ONE; 16];
+        let mut index = 1;
+        while index < powers.len() {
+            powers[index] = powers[index - 1].mul_const(self);
+            index += 1;
+        }
+
+        let mut result = Self::ONE;
+        let mut window = exponent_bits.div_ceil(4);
+        while window != 0 {
+            window -= 1;
+            result = result
+                .square_const()
+                .square_const()
+                .square_const()
+                .square_const();
+            let digit = ((exponent[window >> 4] >> ((window & 15) << 2)) & 15) as usize;
+            if digit != 0 {
+                result = result.mul_const(powers[digit]);
+            }
+        }
+        result
+    }
+
+    pub(crate) fn is_odd(&self) -> Choice {
+        Choice::from_u8_lsb(self.0[0] as u8)
+    }
+
+    pub(crate) fn ct_eq(&self, rhs: &Self) -> Choice {
+        let mut different = 0_u64;
+        let mut index = 0;
+        while index < LIMBS {
+            different |= self.0[index] ^ rhs.0[index];
+            index += 1;
+        }
+        different.ct_eq(&0)
+    }
+
+    pub(crate) fn is_zero(&self) -> Choice {
+        self.ct_eq(&Self::ZERO)
+    }
+
+    pub(crate) fn conditional_select(when_false: Self, when_true: Self, choice: Choice) -> Self {
+        let mut selected = when_false.0;
+        selected.ct_assign(&when_true.0, choice);
+        Self(selected)
+    }
+}
+
+impl Default for Fe301 {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+/// Fold a sparse six-limb product below `2^334` into `[0, 2p)`.
+///
+/// One fold of `2^301 = 2^99 - 947` leaves `low + high * 2^99 - high * 947`
+/// with `high < 2^33`; adding `p` back after an underflow keeps the result
+/// non-negative and below `2p`.  Callers that need a canonical value apply one
+/// conditional subtraction.
+#[inline(always)]
+fn reduce_small_product_unreduced(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
+    let high = (product[4] >> TOP_BITS) | (product[5] << (64 - TOP_BITS));
+    let mut reduced = [
+        product[0],
+        product[1],
+        product[2],
+        product[3],
+        product[4] & TOP_MASK,
+    ];
+
+    // Add high * 2^99.
+    let add_low = high << 35;
+    let add_high = high >> 29;
+    let sum = reduced[1] as u128 + add_low as u128;
+    reduced[1] = sum as u64;
+    let sum = reduced[2] as u128 + add_high as u128 + (sum >> 64);
+    reduced[2] = sum as u64;
+    let mut carry = (sum >> 64) as u64;
+    let mut index = 3;
+    while index < LIMBS {
+        let sum = reduced[index] as u128 + carry as u128;
+        reduced[index] = sum as u64;
+        carry = (sum >> 64) as u64;
+        index += 1;
+    }
+
+    // Subtract high * 947 and add p back if that underflowed.
+    let penalty = high as u128 * FOLD_SUBTRAHEND as u128;
+    let (word, first_borrow) = sub_with_borrow_runtime(reduced[0], penalty as u64, 0);
+    reduced[0] = word;
+    let mut borrow = first_borrow;
+    index = 1;
+    while index < LIMBS {
+        let (word, next_borrow) = sub_with_borrow_runtime(reduced[index], 0, borrow);
+        reduced[index] = word;
+        borrow = next_borrow;
+        index += 1;
+    }
+    let (corrected, _) = add_limbs(reduced, MODULUS);
+    reduced.ct_assign(&corrected, Choice::from_u8_lsb(borrow as u8));
+    reduced
+}
+
+// 2p in little-endian radix 2^64: the offset of the lazy subtraction and the
+// bound of every lazily reduced value.
+const MODULUS_TIMES_TWO: [u64; LIMBS] = [
+    0x0000_0000_0000_0766,
+    0xffff_fff0_0000_0000,
+    0xffff_ffff_ffff_ffff,
+    0xffff_ffff_ffff_ffff,
+    0x0000_3fff_ffff_ffff,
+];
+
+/// Lazily reduced field element in `[0, 2p)`.
+///
+/// The group formulas keep their intermediate products in this form and
+/// canonicalise only the four coordinates they return, so the canonical
+/// `Fe301` stays the sole representation outside a single formula.
+#[derive(Clone, Copy)]
+pub(crate) struct Fe301Lazy([u64; LIMBS]);
+
+/// Sum or difference of two lazy values, in `[0, 4p)`.
+///
+/// It has no encoding or comparison API and is consumed by exactly one
+/// product, square or tightening step.
+#[derive(Clone, Copy)]
+pub(crate) struct Fe301LazyLinear([u64; LIMBS]);
+
+impl Fe301Lazy {
+    #[inline(always)]
+    pub(crate) const fn from_fe301(value: Fe301) -> Self {
+        Self(value.0)
+    }
+
+    /// Canonicalise to `[0, p)` with one conditional subtraction.
+    #[inline(always)]
+    pub(crate) fn canonical(self) -> Fe301 {
+        Fe301(conditional_subtract_modulus_ct(self.0))
+    }
+
+    /// Form a bounded sum below `4p` without reducing it.
+    #[inline(always)]
+    pub(crate) fn add_loose(self, rhs: Self) -> Fe301LazyLinear {
+        let (sum, carry) = add_limbs(self.0, rhs.0);
+        debug_assert_eq!(carry, 0);
+        Fe301LazyLinear(sum)
+    }
+
+    /// Form `self + 2p - rhs`, a non-negative representative below `4p`.
+    #[inline(always)]
+    pub(crate) fn sub_loose(self, rhs: Self) -> Fe301LazyLinear {
+        let (augmented, carry) = add_limbs(self.0, MODULUS_TIMES_TWO);
+        debug_assert_eq!(carry, 0);
+        let (difference, borrow) = subtract_limbs_runtime(augmented, rhs.0);
+        debug_assert_eq!(borrow, 0);
+        Fe301LazyLinear(difference)
+    }
+
+    /// Multiply two lazy values, retaining the `[0, 2p)` bound.
+    #[inline(always)]
+    pub(crate) fn mul(self, rhs: Self) -> Self {
+        Self(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
+    }
+
+    /// Square a lazy value, retaining the `[0, 2p)` bound.
+    #[inline(always)]
+    pub(crate) fn square(self) -> Self {
+        Self(reduce_wide_unreduced(square_wide(self.0)))
+    }
+
+    /// Multiply by a public 32-bit constant, retaining the `[0, 2p)` bound.
+    #[inline(always)]
+    pub(crate) fn mul_small(self, value: u32) -> Self {
+        Self(reduce_small_product_unreduced(multiply_five_by_u32(
+            self.0, value,
+        )))
+    }
+}
+
+impl Fe301LazyLinear {
+    /// Multiply two values below `4p`, retaining a result below `2p`.
+    #[inline(always)]
+    pub(crate) fn mul(self, rhs: Self) -> Fe301Lazy {
+        Fe301Lazy(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
+    }
+
+    /// Multiply a value below `4p` by a lazy value below `2p`.
+    #[inline(always)]
+    pub(crate) fn mul_tight(self, rhs: Fe301Lazy) -> Fe301Lazy {
+        Fe301Lazy(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
+    }
+
+    /// Square a value below `4p`, retaining a result below `2p`.
+    #[inline(always)]
+    pub(crate) fn square(self) -> Fe301Lazy {
+        Fe301Lazy(reduce_wide_unreduced(square_wide(self.0)))
+    }
+
+    /// Bring a value below `4p` back below `2p` with one conditional
+    /// subtraction of `2p`, for use as a subtrahend or as a further summand.
+    #[inline(always)]
+    pub(crate) fn tighten(self) -> Fe301Lazy {
+        let (reduced, borrow) = subtract_limbs_runtime(self.0, MODULUS_TIMES_TWO);
+        let mut output = self.0;
+        output.ct_assign(&reduced, Choice::from_u8_lsb((borrow as u8) ^ 1));
+        Fe301Lazy(output)
+    }
+}
+
+const fn add_limbs(left: [u64; LIMBS], right: [u64; LIMBS]) -> ([u64; LIMBS], u64) {
+    let mut output = [0_u64; LIMBS];
+    let mut carry = 0_u64;
+    let mut index = 0;
+    while index < LIMBS {
+        let accumulator = left[index] as u128 + right[index] as u128 + carry as u128;
+        output[index] = accumulator as u64;
+        carry = (accumulator >> 64) as u64;
+        index += 1;
+    }
+    (output, carry)
+}
+
+const fn subtract_limbs(left: [u64; LIMBS], right: [u64; LIMBS]) -> ([u64; LIMBS], u64) {
+    let mut output = [0_u64; LIMBS];
+    let mut borrow = 0_u64;
+    let mut index = 0;
+    while index < LIMBS {
+        let (difference, next_borrow) = sub_with_borrow(left[index], right[index], borrow);
+        output[index] = difference;
+        borrow = next_borrow;
+        index += 1;
+    }
+    (output, borrow)
+}
+
+/// Subtract two words and an incoming 0/1 borrow using only wrapping and
+/// bitwise operations.
+///
+/// This is the unsigned less-than identity from Hacker's Delight, section
+/// 2-12.  It avoids the compiler-dependent lowering of `overflowing_sub`
+/// which produced secret-tainted control flow under a previously tested Rust
+/// code generator. Runtime arithmetic uses the separately checked standard
+/// borrowing operation below; this identity remains for constant evaluation.
+#[inline(always)]
+const fn sub_with_borrow(left: u64, right: u64, borrow: u64) -> (u64, u64) {
+    let first = left.wrapping_sub(right);
+    let first_borrow = (((!left & right) | ((!left | right) & first)) >> 63) & 1;
+    let difference = first.wrapping_sub(borrow);
+    let second_borrow = (((!first & borrow) | ((!first | borrow) & difference)) >> 63) & 1;
+    (difference, first_borrow | second_borrow)
+}
+
+const fn conditional_subtract_modulus_const(input: [u64; LIMBS]) -> [u64; LIMBS] {
+    let (reduced, borrow) = subtract_limbs(input, MODULUS);
+    let mask = 0_u64.wrapping_sub(borrow ^ 1);
+    let mut output = [0_u64; LIMBS];
+    let mut index = 0;
+    while index < LIMBS {
+        output[index] = (input[index] & !mask) | (reduced[index] & mask);
+        index += 1;
+    }
+    output
+}
+
+#[inline(always)]
+fn conditional_subtract_modulus_ct(input: [u64; LIMBS]) -> [u64; LIMBS] {
+    let (reduced, borrow) = subtract_limbs_runtime(input, MODULUS);
+    let mut output = input;
+    output.ct_assign(&reduced, Choice::from_u8_lsb((borrow as u8) ^ 1));
+    output
+}
+
+/// Runtime-only multi-limb subtraction using the standard safe borrow API.
+///
+/// `u64::borrowing_sub` is not yet usable in the compile-time table builder,
+/// so the const path above retains the explicit bitwise identity. The current
+/// Fedora Rust code generator lowers this runtime chain to `sub`/`sbb`
+/// instructions without data-dependent control flow; the final binary is
+/// still bound by the disassembly and secret-taint gates.
+#[inline(always)]
+fn subtract_limbs_runtime(left: [u64; LIMBS], right: [u64; LIMBS]) -> ([u64; LIMBS], u64) {
+    let mut output = [0_u64; LIMBS];
+    let mut borrow = 0_u64;
+    let mut index = 0;
+    while index < LIMBS {
+        let (difference, next_borrow) = sub_with_borrow_runtime(left[index], right[index], borrow);
+        output[index] = difference;
+        borrow = next_borrow;
+        index += 1;
+    }
+    (output, borrow)
+}
+
+#[inline(always)]
+fn sub_with_borrow_runtime(left: u64, right: u64, borrow: u64) -> (u64, u64) {
+    let (difference, next_borrow) = left.borrowing_sub(right, borrow != 0);
+    (difference, next_borrow as u64)
+}
+
+#[inline(always)]
+const fn multiply_wide(left: [u64; LIMBS], right: [u64; LIMBS]) -> [u64; LIMBS * 2] {
+    let mut output = [0_u64; LIMBS * 2];
+    let mut left_index = 0;
+    while left_index < LIMBS {
+        let mut carry = 0_u64;
+        let mut right_index = 0;
+        while right_index < LIMBS {
+            let output_index = left_index + right_index;
+            let accumulator = left[left_index] as u128 * right[right_index] as u128
+                + output[output_index] as u128
+                + carry as u128;
+            output[output_index] = accumulator as u64;
+            carry = (accumulator >> 64) as u64;
+            right_index += 1;
+        }
+        output[left_index + LIMBS] = carry;
+        left_index += 1;
+    }
+    output
+}
+
+#[inline(always)]
+const fn multiply_five_by_u32(value: [u64; LIMBS], multiplier: u32) -> [u64; LIMBS + 1] {
+    let mut output = [0_u64; LIMBS + 1];
+    let mut carry = 0_u64;
+    let mut index = 0;
+    while index < LIMBS {
+        let product = value[index] as u128 * multiplier as u128 + carry as u128;
+        output[index] = product as u64;
+        carry = (product >> 64) as u64;
+        index += 1;
+    }
+    output[LIMBS] = carry;
+    output
+}
+
+#[inline(always)]
+const fn square_wide(value: [u64; LIMBS]) -> [u64; LIMBS * 2] {
+    let mut output = [0_u64; LIMBS * 2];
+    let mut accumulator = [0_u64; 3];
+
+    accumulate_product(&mut accumulator, value[0], value[0]);
+    emit_square_column(&mut output, 0, &mut accumulator);
+    accumulate_double_product(&mut accumulator, value[0], value[1]);
+    emit_square_column(&mut output, 1, &mut accumulator);
+    accumulate_double_product(&mut accumulator, value[0], value[2]);
+    accumulate_product(&mut accumulator, value[1], value[1]);
+    emit_square_column(&mut output, 2, &mut accumulator);
+    accumulate_double_product(&mut accumulator, value[0], value[3]);
+    accumulate_double_product(&mut accumulator, value[1], value[2]);
+    emit_square_column(&mut output, 3, &mut accumulator);
+    accumulate_double_product(&mut accumulator, value[0], value[4]);
+    accumulate_double_product(&mut accumulator, value[1], value[3]);
+    accumulate_product(&mut accumulator, value[2], value[2]);
+    emit_square_column(&mut output, 4, &mut accumulator);
+    accumulate_double_product(&mut accumulator, value[1], value[4]);
+    accumulate_double_product(&mut accumulator, value[2], value[3]);
+    emit_square_column(&mut output, 5, &mut accumulator);
+    accumulate_double_product(&mut accumulator, value[2], value[4]);
+    accumulate_product(&mut accumulator, value[3], value[3]);
+    emit_square_column(&mut output, 6, &mut accumulator);
+    accumulate_double_product(&mut accumulator, value[3], value[4]);
+    emit_square_column(&mut output, 7, &mut accumulator);
+    accumulate_product(&mut accumulator, value[4], value[4]);
+    emit_square_column(&mut output, 8, &mut accumulator);
+    output[9] = accumulator[0];
+    output
+}
+
+#[inline(always)]
+const fn accumulate_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
+    let product = left as u128 * right as u128;
+    accumulate_192(accumulator, product as u64, (product >> 64) as u64, 0);
+}
+
+#[inline(always)]
+const fn accumulate_double_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
+    let product = left as u128 * right as u128;
+    let low = product as u64;
+    let high = (product >> 64) as u64;
+    accumulate_192(accumulator, low << 1, (high << 1) | (low >> 63), high >> 63);
+}
+
+#[inline(always)]
+const fn accumulate_192(accumulator: &mut [u64; 3], low: u64, middle: u64, high: u64) {
+    let sum = accumulator[0] as u128 + low as u128;
+    accumulator[0] = sum as u64;
+    let sum = accumulator[1] as u128 + middle as u128 + (sum >> 64);
+    accumulator[1] = sum as u64;
+    accumulator[2] = accumulator[2]
+        .wrapping_add(high)
+        .wrapping_add((sum >> 64) as u64);
+}
+
+#[inline(always)]
+const fn emit_square_column(
+    output: &mut [u64; LIMBS * 2],
+    column: usize,
+    accumulator: &mut [u64; 3],
+) {
+    output[column] = accumulator[0];
+    accumulator[0] = accumulator[1];
+    accumulator[1] = accumulator[2];
+    accumulator[2] = 0;
+}
+
+#[inline(always)]
+fn reduce_wide(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
+    conditional_subtract_modulus_ct(reduce_wide_unreduced(product))
+}
+
+const fn reduce_wide_const(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
+    conditional_subtract_modulus_const(reduce_wide_unreduced(product))
+}
+
+/// Fold a wide product into five limbs using the additive identity
+/// `2^301 = 2^99 - 947 (mod p)`.
+///
+/// The subtrahend-free formulation multiplies the high part by the positive
+/// two-limb constant `K = 2^99 - 947` and accumulates it onto the low part,
+/// so every carry chain is an addition with a fixed trip count. For operands
+/// below `4p < 2^303`, hence a wide product below `2^606`, the high part of
+/// the first fold is below `2^305` and fits five limbs, the first fold is
+/// below `2^301 + 2^404` and fits seven limbs, the remaining high part is
+/// below `2^103` and fits two limbs, and the final value is below
+/// `2^301 + 2^202 < 2p`, so one conditional subtraction canonicalises it.
+#[inline(always)]
+const fn reduce_wide_unreduced(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
+    let low = [
+        product[0],
+        product[1],
+        product[2],
+        product[3],
+        product[4] & TOP_MASK,
+    ];
+    let high = [
+        (product[4] >> TOP_BITS) | (product[5] << (64 - TOP_BITS)),
+        (product[5] >> TOP_BITS) | (product[6] << (64 - TOP_BITS)),
+        (product[6] >> TOP_BITS) | (product[7] << (64 - TOP_BITS)),
+        (product[7] >> TOP_BITS) | (product[8] << (64 - TOP_BITS)),
+        (product[8] >> TOP_BITS) | (product[9] << (64 - TOP_BITS)),
+    ];
+    let mut first_fold = [0_u64; 7];
+    accumulate_fold(&low, &high, &mut first_fold);
+
+    let second_low = [
+        first_fold[0],
+        first_fold[1],
+        first_fold[2],
+        first_fold[3],
+        first_fold[4] & TOP_MASK,
+    ];
+    let second_high = [
+        (first_fold[4] >> TOP_BITS) | (first_fold[5] << (64 - TOP_BITS)),
+        (first_fold[5] >> TOP_BITS) | (first_fold[6] << (64 - TOP_BITS)),
+    ];
+    let mut reduced = [0_u64; 5];
+    accumulate_fold(&second_low, &second_high, &mut reduced);
+    reduced
+}
+
+/// Low limb of the positive fold constant `K = 2^99 - 947`.
+const FOLD_CONSTANT_LOW: u64 = 0_u64.wrapping_sub(FOLD_SUBTRAHEND);
+/// High limb of the positive fold constant `K = 2^99 - 947`.
+const FOLD_CONSTANT_HIGH: u64 = (1_u64 << 35) - 1;
+
+/// Compute `output = low + high * K` with addition-only carry chains.
+///
+/// Every loop bound is a compile-time constant and every carry is propagated
+/// through the full remaining width, so the instruction schedule is
+/// independent of the operand values.
+#[inline(always)]
+const fn accumulate_fold<const HIGH: usize, const OUTPUT: usize>(
+    low: &[u64],
+    high: &[u64; HIGH],
+    output: &mut [u64; OUTPUT],
+) {
+    let mut index = 0;
+    while index < low.len() {
+        output[index] = low[index];
+        index += 1;
+    }
+    let mut carry = 0_u64;
+    index = 0;
+    while index < HIGH {
+        let accumulator =
+            output[index] as u128 + high[index] as u128 * FOLD_CONSTANT_LOW as u128 + carry as u128;
+        output[index] = accumulator as u64;
+        carry = (accumulator >> 64) as u64;
+        index += 1;
+    }
+    while index < OUTPUT {
+        let accumulator = output[index] as u128 + carry as u128;
+        output[index] = accumulator as u64;
+        carry = (accumulator >> 64) as u64;
+        index += 1;
+    }
+    carry = 0;
+    index = 0;
+    while index < HIGH {
+        let accumulator = output[index + 1] as u128
+            + high[index] as u128 * FOLD_CONSTANT_HIGH as u128
+            + carry as u128;
+        output[index + 1] = accumulator as u64;
+        carry = (accumulator >> 64) as u64;
+        index += 1;
+    }
+    index += 1;
+    while index < OUTPUT {
+        let accumulator = output[index] as u128 + carry as u128;
+        output[index] = accumulator as u64;
+        carry = (accumulator >> 64) as u64;
+        index += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::FieldElement as Oracle;
+    use crate::test_support::splitmix64;
+
+    fn oracle(value: Fe301) -> Oracle {
+        Oracle::from_canonical_bytes(&value.to_canonical_bytes())
+            .expect_copied("Fe301 values are canonical")
+    }
+
+    fn generated(state: &mut u64) -> Fe301 {
+        let mut words = [0_u64; LIMBS];
+        let mut index = 0;
+        while index < LIMBS {
+            words[index] = splitmix64(state);
+            index += 1;
+        }
+        words[4] &= TOP_MASK;
+        Fe301(conditional_subtract_modulus_const(words))
+    }
+
+    /// Reduce an arbitrary wide value with the independent Montgomery oracle:
+    /// `value = low + high * 2^301` with both halves fed through the oracle.
+    fn oracle_reduce_wide(wide: [u64; LIMBS * 2]) -> [u8; FIELD_BYTES] {
+        fn oracle_from_limbs(limbs: [u64; LIMBS]) -> Oracle {
+            // A raw half is below 2^301 < 2p; one conditional subtraction of
+            // the long-standing helper canonicalizes it for the oracle.
+            let canonical = conditional_subtract_modulus_const(limbs);
+            let mut bytes = [0_u8; FIELD_BYTES];
+            let mut index = 0;
+            while index < FIELD_BYTES {
+                bytes[index] = (canonical[index / 8] >> ((index % 8) * 8)) as u8;
+                index += 1;
+            }
+            Oracle::from_canonical_bytes(&bytes).expect_copied("canonicalized halves are below p")
+        }
+        let low = [wide[0], wide[1], wide[2], wide[3], wide[4] & TOP_MASK];
+        let high = [
+            (wide[4] >> TOP_BITS) | (wide[5] << (64 - TOP_BITS)),
+            (wide[5] >> TOP_BITS) | (wide[6] << (64 - TOP_BITS)),
+            (wide[6] >> TOP_BITS) | (wide[7] << (64 - TOP_BITS)),
+            (wide[7] >> TOP_BITS) | (wide[8] << (64 - TOP_BITS)),
+            (wide[8] >> TOP_BITS) | (wide[9] << (64 - TOP_BITS)),
+        ];
+        // 2^301 mod p as a canonical oracle constant: 2^99 - 947.
+        let mut shift_bytes = [0_u8; FIELD_BYTES];
+        shift_bytes[0] = 0x4d;
+        shift_bytes[1] = 0xfc;
+        let mut index = 2;
+        while index < 12 {
+            shift_bytes[index] = 0xff;
+            index += 1;
+        }
+        shift_bytes[12] = 0x07;
+        let shift =
+            Oracle::from_canonical_bytes(&shift_bytes).expect_copied("2^99 - 947 is canonical");
+        let expected = oracle_from_limbs(low).add(oracle_from_limbs(high).mul(shift));
+        expected.to_canonical_bytes()
+    }
+
+    #[test]
+    fn wide_reduction_matches_the_montgomery_oracle_on_boundaries() {
+        let top_limb_mask = (1_u64 << 26) - 1;
+        let mut state = 0x4d41_4346_4f4c_4432_u64;
+        let mut case_index = 0_usize;
+        // 602 one-hot patterns, named boundaries, and randomized wide values,
+        // all limited to the reachable product range below 2^602.
+        while case_index < 50_000 {
+            let mut wide = [0_u64; LIMBS * 2];
+            if case_index < 602 {
+                wide[case_index / 64] = 1_u64 << (case_index % 64);
+            } else if case_index == 602 {
+                // all reachable bits set
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = u64::MAX;
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] = top_limb_mask;
+            } else if case_index == 603 {
+                wide[LIMBS * 2 - 1] = top_limb_mask;
+            } else if case_index == 604 {
+                // alternating bit pattern across the full reachable width
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = 0xaaaa_aaaa_aaaa_aaaa;
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] &= top_limb_mask;
+            } else if case_index == 605 {
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = 0x5555_5555_5555_5555;
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] &= top_limb_mask;
+            } else {
+                let mut limb = 0;
+                while limb < LIMBS * 2 {
+                    wide[limb] = splitmix64(&mut state);
+                    limb += 1;
+                }
+                wide[LIMBS * 2 - 1] &= top_limb_mask;
+            }
+            let reduced = conditional_subtract_modulus_const(reduce_wide_unreduced(wide));
+            let via_new = Fe301(reduced).to_canonical_bytes();
+            assert_eq!(
+                via_new,
+                oracle_reduce_wide(wide),
+                "wide reduction diverged from the Montgomery oracle"
+            );
+            case_index += 1;
+        }
+    }
+
+    #[test]
+    fn specialized_arithmetic_matches_the_montgomery_oracle() {
+        let mut state = 0x4645_3330_312d_5231_u64;
+        for _ in 0..10_000 {
+            let left = generated(&mut state);
+            let right = generated(&mut state);
+            let left_oracle = oracle(left);
+            let right_oracle = oracle(right);
+            assert_eq!(
+                left.add(right).to_canonical_bytes(),
+                left_oracle.add(right_oracle).to_canonical_bytes()
+            );
+            assert_eq!(
+                left.sub(right).to_canonical_bytes(),
+                left_oracle.sub(right_oracle).to_canonical_bytes()
+            );
+            assert_eq!(
+                left.mul(right).to_canonical_bytes(),
+                left_oracle.mul(right_oracle).to_canonical_bytes()
+            );
+            assert_eq!(
+                left.square().to_canonical_bytes(),
+                left_oracle.square().to_canonical_bytes()
+            );
+            for multiplier in [0_u32, 1, 301, 2_086_388_329, u32::MAX] {
+                assert_eq!(
+                    left.mul_small(multiplier).to_canonical_bytes(),
+                    left_oracle
+                        .mul(Oracle::from_u64(multiplier as u64))
+                        .to_canonical_bytes()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lazy_arithmetic_matches_the_montgomery_oracle_and_bounds() {
+        fn assert_below_two_p(value: Fe301Lazy) {
+            let (_, borrow) = subtract_limbs(value.0, MODULUS_TIMES_TWO);
+            assert_eq!(borrow, 1, "lazy value escaped the [0, 2p) bound");
+        }
+        fn assert_below_four_p(value: Fe301LazyLinear) {
+            let (doubled, carry) = add_limbs(MODULUS_TIMES_TWO, MODULUS_TIMES_TWO);
+            assert_eq!(carry, 0);
+            let (_, borrow) = subtract_limbs(value.0, doubled);
+            assert_eq!(borrow, 1, "loose value escaped the [0, 4p) bound");
+        }
+
+        // Extreme operands: the largest lazy value 2p - 1 (not reachable from
+        // a canonical element, so constructed directly), its loose sum
+        // 4p - 2, and their products and squares.
+        let mut two_p_minus_one = MODULUS_TIMES_TWO;
+        two_p_minus_one[0] -= 1;
+        let lazy_max = Fe301Lazy(two_p_minus_one);
+        let lazy_max_oracle = oracle(lazy_max.canonical());
+        let loose_max = lazy_max.add_loose(lazy_max);
+        assert_below_four_p(loose_max);
+        let squared = loose_max.square();
+        let product = loose_max.mul(loose_max);
+        let mixed = loose_max.mul_tight(lazy_max);
+        let tightened = loose_max.tighten();
+        let small = lazy_max.mul_small(u32::MAX);
+        for value in [squared, product, mixed, tightened, small] {
+            assert_below_two_p(value);
+        }
+        let doubled_oracle = lazy_max_oracle.add(lazy_max_oracle);
+        assert_eq!(
+            squared.canonical().to_canonical_bytes(),
+            doubled_oracle.square().to_canonical_bytes()
+        );
+        assert_eq!(
+            product.canonical().to_canonical_bytes(),
+            doubled_oracle.mul(doubled_oracle).to_canonical_bytes()
+        );
+        assert_eq!(
+            mixed.canonical().to_canonical_bytes(),
+            doubled_oracle.mul(lazy_max_oracle).to_canonical_bytes()
+        );
+        assert_eq!(
+            tightened.canonical().to_canonical_bytes(),
+            doubled_oracle.to_canonical_bytes()
+        );
+        assert_eq!(
+            small.canonical().to_canonical_bytes(),
+            lazy_max_oracle
+                .mul(Oracle::from_u64(u32::MAX as u64))
+                .to_canonical_bytes()
+        );
+        assert_eq!(
+            lazy_max
+                .sub_loose(lazy_max)
+                .tighten()
+                .canonical()
+                .to_canonical_bytes(),
+            Fe301::ZERO.to_canonical_bytes()
+        );
+
+        // Random operands through every lazy operation the group formulas use.
+        let mut state = 0x4c41_5a59_4544_3330_u64;
+        for _ in 0..10_000 {
+            let left = generated(&mut state);
+            let right = generated(&mut state);
+            let third = generated(&mut state);
+            let fourth = generated(&mut state);
+            let (left_oracle, right_oracle, third_oracle, fourth_oracle) =
+                (oracle(left), oracle(right), oracle(third), oracle(fourth));
+            let left_lazy = Fe301Lazy::from_fe301(left);
+            let right_lazy = Fe301Lazy::from_fe301(right);
+            let third_lazy = Fe301Lazy::from_fe301(third);
+            let fourth_lazy = Fe301Lazy::from_fe301(fourth);
+
+            let lazy_product = left_lazy.mul(right_lazy);
+            let lazy_square = third_lazy.square();
+            let lazy_small = fourth_lazy.mul_small(2_086_388_329);
+            let loose_sum = lazy_product.add_loose(lazy_square);
+            let loose_difference = lazy_small.sub_loose(lazy_product);
+            assert_below_four_p(loose_sum);
+            assert_below_four_p(loose_difference);
+            let square = loose_sum.square();
+            let product = loose_sum.mul(loose_difference);
+            let mixed = loose_difference.mul_tight(lazy_square);
+            let tight = loose_sum.tighten();
+            for value in [
+                lazy_product,
+                lazy_square,
+                lazy_small,
+                square,
+                product,
+                mixed,
+                tight,
+            ] {
+                assert_below_two_p(value);
+            }
+            let product_oracle = left_oracle.mul(right_oracle);
+            let square_oracle = third_oracle.square();
+            let small_oracle = fourth_oracle.mul(Oracle::from_u64(2_086_388_329));
+            let sum_oracle = product_oracle.add(square_oracle);
+            let difference_oracle = small_oracle.sub(product_oracle);
+            assert_eq!(
+                square.canonical().to_canonical_bytes(),
+                sum_oracle.square().to_canonical_bytes()
+            );
+            assert_eq!(
+                product.canonical().to_canonical_bytes(),
+                sum_oracle.mul(difference_oracle).to_canonical_bytes()
+            );
+            assert_eq!(
+                mixed.canonical().to_canonical_bytes(),
+                difference_oracle.mul(square_oracle).to_canonical_bytes()
+            );
+            assert_eq!(
+                tight.canonical().to_canonical_bytes(),
+                sum_oracle.to_canonical_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn full_lazy_domain_matches_independent_wide_oracle() {
+        fn below(left: [u64; LIMBS], right: [u64; LIMBS]) -> bool {
+            subtract_limbs(left, right).1 == 1
+        }
+
+        fn random_below(state: &mut u64, bound: [u64; LIMBS]) -> [u64; LIMBS] {
+            loop {
+                let mut value = [0_u64; LIMBS];
+                let mut index = 0;
+                while index < LIMBS {
+                    value[index] = splitmix64(state);
+                    index += 1;
+                }
+                value[4] &= (1_u64 << 47) - 1;
+                if below(value, bound) {
+                    return value;
+                }
+            }
+        }
+
+        fn minus_one(mut value: [u64; LIMBS]) -> [u64; LIMBS] {
+            let mut index = 0;
+            loop {
+                let (word, borrow) = value[index].overflowing_sub(1);
+                value[index] = word;
+                if !borrow {
+                    return value;
+                }
+                index += 1;
+            }
+        }
+
+        fn oracle_reduce_wide(wide: [u64; LIMBS * 2]) -> [u8; FIELD_BYTES] {
+            let mut radix_bytes = [0_u8; FIELD_BYTES];
+            radix_bytes[8] = 1;
+            let radix =
+                Oracle::from_canonical_bytes(&radix_bytes).expect_copied("2^64 is canonical");
+            let mut value = Oracle::ZERO;
+            let mut index = LIMBS * 2;
+            while index != 0 {
+                index -= 1;
+                value = value.mul(radix).add(Oracle::from_u64(wide[index]));
+            }
+            value.to_canonical_bytes()
+        }
+
+        fn oracle_from_words(words: [u64; LIMBS]) -> Oracle {
+            let mut wide = [0_u64; LIMBS * 2];
+            wide[..LIMBS].copy_from_slice(&words);
+            Oracle::from_canonical_bytes(&oracle_reduce_wide(wide))
+                .expect_copied("wide oracle output is canonical")
+        }
+
+        fn assert_reduced_wide(wide: [u64; LIMBS * 2]) {
+            let reduced = reduce_wide_unreduced(wide);
+            assert!(below(reduced, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced)).to_canonical_bytes(),
+                oracle_reduce_wide(wide)
+            );
+        }
+
+        fn assert_reduced_product(left: [u64; LIMBS], right: [u64; LIMBS]) {
+            let wide = multiply_wide(left, right);
+            let reduced = reduce_wide_unreduced(wide);
+            assert!(below(reduced, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced)).to_canonical_bytes(),
+                oracle_from_words(left)
+                    .mul(oracle_from_words(right))
+                    .to_canonical_bytes()
+            );
+        }
+
+        let (four_p, carry) = add_limbs(MODULUS_TIMES_TWO, MODULUS_TIMES_TWO);
+        assert_eq!(carry, 0);
+        let (three_p, carry) = add_limbs(MODULUS_TIMES_TWO, MODULUS);
+        assert_eq!(carry, 0);
+        let directed = [
+            [0_u64; LIMBS],
+            [1, 0, 0, 0, 0],
+            minus_one(MODULUS),
+            MODULUS,
+            minus_one(MODULUS_TIMES_TWO),
+            MODULUS_TIMES_TWO,
+            minus_one(three_p),
+            three_p,
+            minus_one(four_p),
+        ];
+        for left in directed {
+            for right in directed {
+                assert_reduced_product(left, right);
+            }
+        }
+
+        for bit in 0..606 {
+            let mut wide = [0_u64; LIMBS * 2];
+            wide[bit / 64] = 1_u64 << (bit % 64);
+            assert_reduced_wide(wide);
+        }
+
+        let mut state = 0x4852_2d46_554c_4c34_u64;
+        for _ in 0..100_000 {
+            let left = random_below(&mut state, four_p);
+            let right = random_below(&mut state, four_p);
+            assert_reduced_product(left, right);
+
+            let square = square_wide(left);
+            let reduced_square = reduce_wide_unreduced(square);
+            assert!(below(reduced_square, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced_square)).to_canonical_bytes(),
+                oracle_from_words(left).square().to_canonical_bytes()
+            );
+
+            let lazy = random_below(&mut state, MODULUS_TIMES_TWO);
+            let multiplier = splitmix64(&mut state) as u32;
+            let sparse = multiply_five_by_u32(lazy, multiplier);
+            let reduced_small = reduce_small_product_unreduced(sparse);
+            assert!(below(reduced_small, MODULUS_TIMES_TWO));
+            assert_eq!(
+                Fe301(conditional_subtract_modulus_const(reduced_small)).to_canonical_bytes(),
+                oracle_from_words(lazy)
+                    .mul(Oracle::from_u64(multiplier as u64))
+                    .to_canonical_bytes()
+            );
+
+            let tightened = Fe301LazyLinear(left).tighten();
+            assert!(below(tightened.0, MODULUS_TIMES_TWO));
+            let mut raw_wide = [0_u64; LIMBS * 2];
+            raw_wide[..LIMBS].copy_from_slice(&left);
+            assert_eq!(
+                tightened.canonical().to_canonical_bytes(),
+                oracle_reduce_wide(raw_wide)
+            );
+
+            let mut arbitrary_wide = [0_u64; LIMBS * 2];
+            for word in &mut arbitrary_wide {
+                *word = splitmix64(&mut state);
+            }
+            arbitrary_wide[9] &= (1_u64 << 30) - 1;
+            assert_reduced_wide(arbitrary_wide);
+        }
+    }
+
+    #[test]
+    fn specialized_inversion_and_square_root_retain_oracle_results() {
+        fn assert_inversion_paths_match(value: Fe301) {
+            let safegcd = value.invert();
+            if value.is_zero().to_bool() {
+                assert!(safegcd.is_none().to_bool());
+                return;
+            }
+
+            let safegcd = safegcd.expect_copied("a nonzero field element is invertible");
+            let fermat = value.invert_const_nonzero();
+            assert_eq!(
+                safegcd.to_canonical_bytes(),
+                fermat.to_canonical_bytes(),
+                "safegcd and Fermat inversion must agree"
+            );
+            assert!(value.mul(safegcd).ct_eq(&Fe301::ONE).to_bool());
+            assert!(value.mul(fermat).ct_eq(&Fe301::ONE).to_bool());
+        }
+
+        let mut largest = MODULUS;
+        largest[0] -= 1;
+        for value in [
+            Fe301::ZERO,
+            Fe301::ONE,
+            Fe301::from_u64(2),
+            Fe301::from_canonical_words(largest),
+        ] {
+            assert_inversion_paths_match(value);
+        }
+
+        let mut state = 0x4645_3330_312d_494e_u64;
+        for _ in 0..128 {
+            let value = generated(&mut state);
+            assert_inversion_paths_match(value);
+            let square = value.square();
+            let root = square.sqrt().expect_copied("a square has a root");
+            assert!(root.square().ct_eq(&square).to_bool());
+
+            let mut denominator = generated(&mut state);
+            if denominator.is_zero().to_bool() {
+                denominator = Fe301::ONE;
+            }
+
+            let ratio = Fe301::sqrt_ratio(value, denominator);
+            let oracle_ratio = Oracle::sqrt_ratio(oracle(value), oracle(denominator));
+            assert_eq!(
+                ratio.is_some().to_bool(),
+                oracle_ratio.is_some().to_bool(),
+                "the optimized ratio decoder must retain oracle acceptance"
+            );
+            if ratio.is_some().to_bool() {
+                assert_eq!(
+                    ratio.to_inner_unchecked().to_canonical_bytes(),
+                    oracle_ratio.to_inner_unchecked().to_canonical_bytes(),
+                    "the optimized fixed exponent must retain the oracle root"
+                );
+            }
+
+            let numerator = square.mul(denominator);
+            let ratio_root = Fe301::sqrt_ratio(numerator, denominator)
+                .expect_copied("a constructed square ratio has a root");
+            assert!(
+                ratio_root
+                    .square()
+                    .mul(denominator)
+                    .ct_eq(&numerator)
+                    .to_bool()
+            );
+        }
+
+        assert!(
+            Fe301::sqrt_ratio(Fe301::ONE, Fe301::ZERO)
+                .is_none()
+                .to_bool()
+        );
+        assert!(
+            Fe301::sqrt_ratio(Fe301::ZERO, Fe301::ZERO)
+                .is_none()
+                .to_bool()
+        );
+    }
+}

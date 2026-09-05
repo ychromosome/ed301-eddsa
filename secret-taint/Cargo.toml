@@ -2,10 +2,15 @@
 name = "ed301-eddsa-secret-taint"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.91"
 license = "Apache-2.0"
 publish = false
-description = "Valgrind secret-taint harness for Ed301-EdDSA-draft-00"
+description = "Valgrind secret-taint harness for Ed301-EdDSA-v1"
+build = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 
 [features]
 default = ["instrumented"]
@@ -30,6 +35,3 @@ codegen-units = 1
 panic = "unwind"
 overflow-checks = true
 debug = 1
-
-[profile.release.package."crypto-bigint:0.7.5"]
-overflow-checks = false
